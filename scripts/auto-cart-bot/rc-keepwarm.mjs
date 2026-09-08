@@ -99,7 +99,7 @@ import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
 import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
 import { createRequestCounter, describeRequestCounts } from './rc-request-count.mjs';
-import { readLatestMemory, rampBailDecision, rampBailLine, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
+import { readLatestMemory, rampBailDecision, rampBailLine, rampDumpGrace, MEM_DUMP_GRACE_MS_DEFAULT, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
 import { takeMemoryDump, renderMemDump, summariseMemDump } from './rc-mem-dump.mjs';
 import {
   attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot,
@@ -587,6 +587,14 @@ const RAMP_MB = Number(process.env.RC_KEEPWARM_RAMP_MB || 3000);
  * different calls). It must stay STRICTLY BELOW `RAMP_MB` or the race returns.
  */
 const MEM_DUMP_RAMP_MB = Number(process.env.RC_MEM_DUMP_RAMP_MB || 1500);
+/**
+ * HOW LONG THE BAIL WILL HOLD FOR THE RAMP DUMP. See rampDumpGrace for why a hold exists at
+ * all: the threshold gap above is measured in megabytes and paid in SAMPLER TICKS, and on
+ * 2026-09-08 the ramp crossed the whole gap between two samples (238 MB -> 3,423 MB in one
+ * two-minute interval), so both arms went true on one tick again and the dump was never
+ * called. No threshold separation can prevent that; granting the tick can.
+ */
+const MEM_DUMP_GRACE_MS = Number(process.env.RC_MEM_DUMP_GRACE_MS || MEM_DUMP_GRACE_MS_DEFAULT);
 const RAMP_READING_MAX_AGE_MS = Number(process.env.RC_KEEPWARM_RAMP_READING_MAX_AGE_MS || 5 * 60_000);
 /**
  * HOW OLD THE BROWSER MUST BE BEFORE ITS BASELINE MEMORY DUMP IS WORTH TAKING.
@@ -2631,7 +2639,7 @@ async function warmResident() {
      * somebody who never read why it was reversed.
      */
     let browserLifeSince = 0;
-    let memDump = { baseline: false, ramp: false, inFlight: false };
+    let memDump = { baseline: false, ramp: false, inFlight: false, graceUntil: null };
     /**
      * THE RESIDENT PAGE'S REQUESTS, counted from the moment the page exists. Attached where
      * `residentPage = page` is assigned, so a reopen — a new context, a new page — gets a new
@@ -2871,6 +2879,40 @@ async function warmResident() {
           stalledMs, memory, stallMs: RAMP_STALL_MS, thresholdMb: RAMP_MB,
         });
         if (ramp.fire) {
+          /**
+           * THE DUMP GETS THE TICK. See rampDumpGrace: the threshold below `RAMP_MB` was meant
+           * to put the dump a sampler tick ahead of the exit, and on 2026-09-08 the whole ramp
+           * happened between two samples, so the only reading was over BOTH bars and the arm
+           * returned before the dump was called — for the third ramp running.
+           *
+           * BOUNDED, ONCE PER BROWSER LIFE, AND IT CANNOT PREVENT THE BAIL. The decision is a
+           * pure function so the branch that only runs during a ramp is testable at all.
+           */
+          const grace = rampDumpGrace({
+            now: Date.now(),
+            dumpTaken: memDump.ramp,
+            graceUntil: memDump.graceUntil,
+            canDump: Boolean(heapProbe),
+            graceMs: MEM_DUMP_GRACE_MS,
+          });
+          if (grace.hold) {
+            memDump.graceUntil = grace.until;
+            if (grace.started) log(`  * ${grace.why}`);
+            maybeMemoryDump(memory);
+            // A HELD TICK SKIPS THE SAMPLING BELOW, AND THAT IS A KNOWN COST RATHER THAN AN
+            // OVERSIGHT: one heap-trail, RAM-trail and alloc-trail sample, one RUNAWAY check
+            // and one lock renewal, for at most two ticks. The RAM trail is the instrument
+            // that can time the onset, so a ~10-20s gap in it sits exactly where a reader
+            // will notice one — expect it beside a `holding the bail` line. The pre-existing
+            // bail path returns past the same code and then prints every trail, and the
+            // RUNAWAY arm has sat out sixteen consecutive ramps because untouched commit does
+            // not move free RAM, so nothing observable is lost. `STALE_MS` on the profile
+            // lock is ten minutes against a skipped ten-second renewal.
+            return;
+          }
+          // NAMED WHEN IT WAS SPENT FOR NOTHING. "the grace ran and the dump never landed" and
+          // "no grace was granted" are different failures and a silence merges them.
+          if (grace.until != null && !memDump.ramp) log(`  ${grace.why}`);
           reportAndBail(rampBailLine(ramp), '  (see the ramp line above)', 'ramp');
           return;
         }
@@ -2981,7 +3023,7 @@ async function warmResident() {
       // memDump. Reset with the counter below and for the same reason: a reopen is a new
       // context, a new page and a new renderer, so last life's baseline describes nothing.
       browserLifeSince = Date.now();
-      memDump = { baseline: false, ramp: false, inFlight: false };
+      memDump = { baseline: false, ramp: false, inFlight: false, graceUntil: null };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
       mark('initial RC load');

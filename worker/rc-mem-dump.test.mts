@@ -31,6 +31,7 @@ import {
   MEM_DUMP_TIMEOUT_MS, MEM_DUMP_CLEANUP_MS,
 } from '../scripts/auto-cart-bot/rc-mem-dump.mjs';
 import { MAX_DETAIL_CHARS, BOT_EVENT_KINDS } from '../src/lib/bot-events';
+import { rampDumpGrace, MEM_DUMP_GRACE_MS_DEFAULT } from '../scripts/auto-cart-bot/ramp-bail.mjs';
 
 const KEEPWARM = readFileSync(new URL('../scripts/auto-cart-bot/rc-keepwarm.mjs', import.meta.url), 'utf8');
 const READOUT = readFileSync(new URL('../scripts/bot-events-readout.mts', import.meta.url), 'utf8');
@@ -344,10 +345,17 @@ test('it uses the SAME reading as the ramp arm, at its own threshold', () => {
   assert.ok(!/readLatestMemory/.test(fn), 'it must be handed the arm\'s reading, not take a second one');
 });
 
-test('it fires BEFORE the bail, not inside it — the bail\'s budget is what loses a cart', () => {
-  const call = KW.indexOf('maybeMemoryDump(memory);');
-  const bailArm = KW.indexOf("reportAndBail(rampBailLine(ramp)");
-  assert.ok(bailArm > -1 && call > bailArm, 'expected the dump after the ramp arm returns');
+test('it is never inside reportAndBail — the bail\'s budget is what loses a cart', () => {
+  // THE FIRST HALF OF THIS GUARD WAS DROPPED 2026-09-08, AND IT IS THE SECOND HALF THAT WAS
+  // ever load-bearing. It asserted the dump call sits AFTER `reportAndBail(rampBailLine(ramp)`
+  // in source order, which was a restatement of "only the threshold creates the gap" — the
+  // premise falsified twice below. The grace deliberately starts the dump before that call on
+  // the firing tick, so the old assertion would now require the regression.
+  //
+  // What still matters, and is not negotiable: the dump must not sit INSIDE `reportAndBail`.
+  // That path releases the profile lock, and the lock held past 08:00 is what loses a cart.
+  // The grace holds the whole bail for a bounded tick instead, which is a different thing:
+  // the exit is delayed, never lengthened.
   // BOUNDED ON CODE, NOT ON A COMMENT. The first version of this line ended the slice at the
   // string 'THE WEDGE ARM' — which `code()` has already stripped, so indexOf returned -1, the
   // slice ran to the end of the file and swallowed the call site it was checking was absent.
@@ -370,7 +378,11 @@ test('each phase fires at most once per BROWSER life, and the flags reset with t
   const fn = KW.slice(KW.indexOf('const maybeMemoryDump ='), KW.indexOf('const renew = setInterval(() => {\n      const stalledMs'));
   assert.match(fn, /if \(memDump\[phase\]\) return;/);
   const open = KW.indexOf('residentPage = page;');
-  const reset = KW.indexOf('memDump = { baseline: false, ramp: false, inFlight: false };', open);
+  // ANCHORED ON THE PREFIX, not the whole literal: adding a field to it (`graceUntil`,
+  // 2026-09-08) invalidated the exact-match version over unchanged behaviour, which is the
+  // re-anchoring tax this repo has paid twenty-odd times. What matters is that the three
+  // phase flags are reset with the browser, not the literal's punctuation.
+  const reset = KW.indexOf('memDump = { baseline: false, ramp: false, inFlight: false', open);
   assert.ok(reset > open && reset - open < 600, 'the reset must sit with the browser-life marker, or last life\'s baseline describes nothing');
   // Unconditional, on its own line: a bare match also accepts `if (!browserLifeSince) ...`,
   // which latches on the first browser and never resets. Verified by mutation 2026-09-07.
@@ -470,20 +482,113 @@ test('the dump reads its OWN threshold, not the bail\'s', () => {
     'sharing RAMP_MB is the regression — the arm returns before this is reached');
 });
 
-test('the bail still returns before the dump, so only the threshold creates the gap', () => {
-  // NOT a suggestion to move the dump into the bail: it must stay off the path that releases
-  // the profile lock, which is what loses a cart at 08:00. Pinned so a future edit cannot
-  // "fix" the race by reordering these instead, and quietly put a multi-second CDP call in
-  // front of the exit.
+// ── AND THE THRESHOLD ALONE CANNOT BUY THE GAP EITHER — the grace is what does ─────────────
+//
+// INVERTED 2026-09-08, NOT RELAXED. The guard here asserted "the bail still returns before the
+// dump, so ONLY the threshold creates the gap", which is the premise the third consecutive
+// missed ramp falsified. `MEM_DUMP_RAMP_MB` (1500) is a gap measured in MEGABYTES and PAID IN
+// SAMPLER TICKS: both arms read one file that `bot.mjs` writes every two minutes, so a lower
+// threshold only helps when a SAMPLE lands between the two numbers. On 2026-09-08 none did:
+//
+//     09:01:10  rc =   238 MB   commit  7,273 / 17,150
+//     09:03:11  rc = 3,423 MB   commit 43,760 / 44,960   <- the only sample of the whole ramp
+//     09:05:11  rc =   205 MB   commit  7,000 / 17,150
+//
+// Onset, peak and bail inside ONE interval — ≥1,580 MB/min against the ~850 the gap was sized
+// for. The single reading above 1500 was also above 3000, both arms went true on that tick,
+// and `maybeMemoryDump` sat after the arm's `return` exactly as it did on 09-07. Moving the
+// number left the mechanism, which is the shape #296 was itself written to end.
+//
+// The threshold is KEPT — it still wins the ~half of ramps where a sample does land in the gap,
+// and it takes the dump while the browser is healthier. It is simply not sufficient.
+
+test('the bail grants the dump a bounded grace, because the threshold cannot guarantee a tick', () => {
   const arm = KW.indexOf('if (ramp.fire)');
-  const call = KW.indexOf('maybeMemoryDump(memory)');
-  assert.ok(arm > -1 && call > arm,
-    'the ramp arm must still fire first; the dump gets its head start from MEM_DUMP_RAMP_MB');
-  // AND THE CALL MUST BE REACHABLE. Every guard here anchors with indexOf, which matches just
-  // as happily inside `if (false) maybeMemoryDump(memory);` — verified: that mutation passed
-  // all 33 tests. So the statement is pinned as a BARE statement on its own line, nothing
-  // between the newline and the call. Fix-present-and-inert, caught in the guard written to
-  // stop the previous instance of it.
+  assert.ok(arm > -1, 'the ramp arm moved — re-anchor this guard');
+  const armEnd = KW.indexOf("reportAndBail(rampBailLine(ramp)", arm);
+  assert.ok(armEnd > arm, 'the ramp arm no longer bails — re-anchor this guard');
+  const block = KW.slice(arm, armEnd);
+  assert.match(block, /rampDumpGrace\(\{/, 'the firing tick must consult the grace before it bails');
+  assert.match(block, /if \(grace\.hold\) \{/, 'a granted grace must actually hold the bail');
+  assert.match(block, /\n\s*maybeMemoryDump\(memory\);/,
+    'the held tick must START the dump, or the grace buys a delay and no reading');
+  assert.match(block, /return;/, 'a held tick must not fall through into the bail on the same tick');
+});
+
+test('the grace is stored and reset with the browser life, so it cannot be granted twice', () => {
+  assert.match(KW, /memDump\.graceUntil = grace\.until;/, 'the deadline must be stored, or every tick re-grants it');
+  // Reset WITH the browser, like the two phase flags: a deadline carried across a reopen would
+  // deny the next browser its grace on the strength of the last one's.
+  const open = KW.indexOf('residentPage = page;');
+  const reset = KW.indexOf('graceUntil: null', open);
+  assert.ok(reset > open && reset - open < 600, 'the grace deadline must reset with the browser life');
+});
+
+test('the dump call after the arm survives, and it is REACHABLE', () => {
+  // Every guard here anchors with indexOf, which matches just as happily inside
+  // `if (false) maybeMemoryDump(memory);` — verified: that mutation passed all 33 tests. So the
+  // statement is pinned as a BARE statement on its own line. Fix-present-and-inert, caught in
+  // the guard written to stop the previous instance of it.
   assert.match(KW, /\n\s*maybeMemoryDump\(memory\);/,
     'the dump must be called unconditionally, not from behind a condition');
+  // The non-firing tick still takes it: the grace covers the tick where the arm fires, and the
+  // ordinary case — a sample that DOES land in the gap — is still this call.
+  const armEnd = KW.indexOf("reportAndBail(rampBailLine(ramp)");
+  assert.ok(KW.indexOf('maybeMemoryDump(memory);', armEnd) > armEnd,
+    'the call below the arm is what fires when a sample lands in the threshold gap');
+});
+
+// ── The grace itself ───────────────────────────────────────────────────────────────────────
+
+test('a firing tick with no dump yet HOLDS, and names the deadline it just set', () => {
+  const g = rampDumpGrace({ now: 1_000, dumpTaken: false, graceUntil: null, canDump: true, graceMs: 15_000 });
+  assert.equal(g.hold, true);
+  assert.equal(g.started, true, 'the first hold must report that it started the grace');
+  assert.equal(g.until, 16_000);
+});
+
+test('the ordinary path holds exactly one tick — a dump that STARTED spends it', () => {
+  // `dumpTaken` is set when the dump starts, not when it lands, so the very next tick bails.
+  const g = rampDumpGrace({ now: 11_000, dumpTaken: true, graceUntil: 16_000, canDump: true });
+  assert.equal(g.hold, false);
+  assert.match(g.why, /already under way/);
+});
+
+test('a refusal is retried inside the deadline — that is why it is not one tick', () => {
+  // `maybeMemoryDump` puts the phase back on a refusal, and a BASELINE dump can be in flight
+  // when the arm fires: the baseline is due three minutes into a browser life and every
+  // burst-carrying ramp so far has landed in a browser 2-3 minutes old.
+  const g = rampDumpGrace({ now: 11_000, dumpTaken: false, graceUntil: 16_000, canDump: true });
+  assert.equal(g.hold, true);
+  assert.equal(g.started, false, 'a continued hold must not look like a fresh grant');
+  assert.equal(g.until, 16_000, 'the deadline must not be pushed out — that is an unbounded hold');
+});
+
+test('the deadline BINDS — an expired grace bails and says the reading was lost', () => {
+  const g = rampDumpGrace({ now: 99_000, dumpTaken: false, graceUntil: 16_000, canDump: true });
+  assert.equal(g.hold, false);
+  assert.match(g.why, /expired/, 'a grace that ran and bought nothing must be distinguishable from one never granted');
+});
+
+test('no CDP probe means no hold — there is nothing to wait for', () => {
+  const g = rampDumpGrace({ now: 1_000, dumpTaken: false, graceUntil: null, canDump: false });
+  assert.equal(g.hold, false);
+  assert.equal(g.until, null);
+});
+
+test('the grace cannot outlast the wedge it exists to pre-empt', () => {
+  // ONE DEFINITION: the keep-warm must fall back to the module's default rather than carry a
+  // number of its own. Two copies of a bound is how `nextHoldRelease` came to disagree with
+  // `dueHolds`, and `envDefault` cannot read a symbol, so this is asserted rather than parsed.
+  assert.match(KW, /RC_MEM_DUMP_GRACE_MS \|\| MEM_DUMP_GRACE_MS_DEFAULT/,
+    'the grace default must come from ramp-bail.mjs, not from a second literal here');
+  const grace = MEM_DUMP_GRACE_MS_DEFAULT;
+  const tick = envDefault(KEEPWARM, 'RC_KEEPWARM_WATCHDOG_MS');
+  // Longer than one tick, or the retry arm above can never run and a baseline in flight eats
+  // the whole grace.
+  assert.ok(grace > tick, `${grace}ms must exceed one ${tick}ms tick or the refusal can never be retried`);
+  // And short enough that the profile lock is not meaningfully later. The bail's own
+  // diagnostics already cost 2-8s against a stall that is 120s old by definition; three ticks
+  // is the ceiling at which this stops being a rounding error on that.
+  assert.ok(grace <= 3 * tick, `${grace}ms holds the profile lock too long — the lock past 08:00 is what loses a cart`);
 });

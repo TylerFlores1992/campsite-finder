@@ -612,8 +612,17 @@ test('RAMP: the arm lives in the TIMER, between the WEDGE arm and the RAM arm, a
   assert.ok(wedge < ramp && ramp < ram, `order must be WEDGE, RAMP, RAM — got ${[wedge, ramp, ram]}`);
   assert.equal(code.indexOf('rampBailDecision(', code.indexOf('}, WATCHDOG_MS);')), -1,
     'the check must not ALSO live in the loop body — the loop is by definition not advancing during a ramp');
-  assert.match(body, /if \(ramp\.fire\) \{\s*reportAndBail\(rampBailLine\(ramp\)/,
+  // RE-ANCHORED 2026-09-08, NOT RELAXED. This pinned `reportAndBail` as the arm's FIRST
+  // statement, which the memory dump's bounded grace now precedes — see rc-mem-dump.test.mts
+  // for why the threshold alone could not buy the dump its tick. What the guard is for is that
+  // the arm exits through `reportAndBail` like the other two, so the heap facts, both trails,
+  // the alloc flush and the request counts are taken before the process dies. Adjacency was
+  // never the property; the callee is.
+  const arm = body.slice(ramp, body.indexOf('stalledMs > MEM_STALL_MS'));
+  assert.match(arm, /reportAndBail\(rampBailLine\(ramp\)/,
     'it goes through reportAndBail like the other two — heap facts, both trails, the alloc flush, the request counts, THEN bail');
+  assert.ok(!/\bbail\(|process\.exit/.test(arm),
+    'it must never call bail or exit directly — that skips every reading this arm exists to take');
 });
 
 test('RAMP: the memory reading is a FILE read from the timer — never a spawn, never os.freemem()', () => {

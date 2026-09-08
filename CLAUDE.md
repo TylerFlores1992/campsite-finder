@@ -2705,6 +2705,48 @@ ran one.** The run timestamps settle it:
 - **CONFIRMED BY RE-RUNNING LOCALLY ON THE SAME SHA once no CI was in flight: 1381/1381.**
   That is the discriminator between litter and a regression, and it was taken rather than
   assumed.
+
+###### AND ONE PUSH IS ENOUGH — `push` AND `pull_request` RUN CONCURRENTLY FOR ~90s (2026-09-08)
+The account above blames pushing twice, and its remedy is *"do not push again while your own CI
+is still running"*. **Measured on a SINGLE `git push`, twice in one afternoon: that is not
+sufficient, because one push starts TWO runs on the SAME SHA and they overlap.**
+```
+run 1208  event=push          created 13:22:40   CANCELLED 13:24:13   <- 93s in, mid-suite
+run 1209  event=pull_request  created 13:23:14   FAILURE   13:33:59   <- 1 of 1985, name unreachable
+                              ^^^^^^^^^^^^^^^^ both live 13:23:14 -> 13:24:13
+```
+- **`verify.yml` fires on `push: claude/**` AND on `pull_request`**, and with a PR open a single
+  push matches both. The concurrency group (`verify-${{ github.head_ref || github.ref_name }}`,
+  `cancel-in-progress: true`) is what stops them running to completion together — **and
+  cancellation is not instant.**
+- **THE OVERLAP IS 3-301 SECONDS, MEASURED FOUR TIMES, AND IT IS NOT A CONSTANT.** 93s, 89s,
+  **301s**, then 3s — four pushes in one afternoon. **Quote the range, not the first number**:
+  this entry said "~90 seconds" until the third measurement arrived, and it is the LONG ones
+  that are the hazard. At five minutes the window covers most of a 535-second test run rather
+  than its opening half-minute, which is a different claim about where to look; at three
+  seconds the cancel landed before the run did anything, which is the group working well.
+- **SO IT IS NOT MERELY LITTER, IT IS GENUINE CONCURRENT EXECUTION.** For that window two verify
+  jobs were running `npm test` against the production database — the exact failure
+  `--test-concurrency=1` prevents WITHIN a run and the concurrency group was added to prevent
+  ACROSS runs. The group closes the long overlap and leaves a variable one open on every push.
+- **AND THE WINDOW LANDS WHERE THE FAILURE DID.** Typecheck is ~25s, so a 301-second overlap
+  covers ~4.5 minutes of `npm test` — and the 09-08 failure was bounded to **12..1155** by the
+  `ok`-number technique, which is most of the front of the suite. It could not be named (`not ok`
+  appears zero times in everything `get_job_logs` will return), so this is consistent rather
+  than proof — but the longer window fits it far better than a half-minute one did.
+- **THE SAME TREE THEN PASSED IN A CLEAN WINDOW**, which is the discriminator: red at 13:33:59
+  while the **Nightly RIDB Sync** also spanned the whole run (13:10:51 → 13:48:03), green at
+  14:00:32 with neither writer present. Two named mechanisms, one confirmation.
+- **AND THE TEN NEW GUARDS OF THAT VERY DIFF WERE READ AS `ok` IN THE RED RUN** (TAP 1345,
+  1353-1361, inside the log's visible window). **That is what makes the re-run honest when the
+  diff DOES touch code** — the file's own three conditions require a diff that cannot reach the
+  failure, and this substitutes a stronger fact: the changed behaviour is individually green in
+  the failing run.
+- **RECORDED, NOT FIXED.** Narrowing the triggers (dropping `push` for branches with an open PR)
+  is a change to the only automated signal a `claude/**` branch gets before merge, and
+  `verify.yml`'s own header explains why both are there. **Do not "simplify" the triggers on the
+  strength of this entry** — what it buys is knowing that a red run within ~90 seconds of a push
+  has a named cause, and that the remedy is a re-run in a clean window rather than a hunt.
 - **THE OPERATIONAL RULE IS THE WHOLE REMEDY, and it is a second one: do not push again while
   your own CI is still running.** `docs/LANES.md` says one test run at a time and both lanes
   read that as "don't run two commands". **A second push IS a second run**, and cancel-on-push
@@ -5078,6 +5120,94 @@ walk showing 32 GB of `commit/mapped` retires discardable, mojo and the GPU tran
 together. **Both fixes are BOT-SIDE and inert until the box updates** — confirm with
 `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`.
 
+#### THE THIRD MISS: THE HEAD START IS MEASURED IN MEGABYTES AND PAID IN SAMPLER TICKS (2026-09-08)
+A natural ramp arrived at **02:03 PT with `MEM_DUMP_RAMP_MB = 1500` live on the box**
+(`6843973`, confirmed by `git-status`), the region walk fired and completed, and there is
+**still no `ramp` dump** — one in the whole table, and it is the VOID one from 09-07. Third
+consecutive miss, third distinct mechanism, and the third one is inside the fix for the second.
+
+**THE MEMORY SERIES IS THE WHOLE DIAGNOSIS, AND IT TAKES THREE ROWS.**
+```
+09:01:10 UTC  rc =   238 MB   commit  7,273 / 17,150   pid 8468
+09:03:11 UTC  rc = 3,423 MB   commit 43,760 / 44,960   pid 1640   <- the ONLY sample of the ramp
+09:05:11 UTC  rc =   205 MB   commit  7,000 / 17,150   pid 6012
+```
+- **ONSET, PEAK AND BAIL INSIDE ONE TWO-MINUTE INTERVAL.** 238 → 3,423 MB is **≥1,580 MB/min**,
+  nearly double the ~850 MB/min the threshold gap was sized against, and the `request-counts`
+  event puts the browser at **2m old** when it bailed.
+- **SO THERE WAS NO SAMPLE BETWEEN 1500 AND 3000.** The single reading above the dump's bar was
+  above the arm's bar too, both arms went true on that tick, the arm `return`ed, and
+  `maybeMemoryDump` sat below it exactly as it did on 09-07.
+- **THE GAP IS MEASURED IN MEGABYTES AND PAID IN SAMPLER TICKS.** Both arms read ONE file that
+  `bot.mjs` writes every two minutes, so a lower threshold only helps when a SAMPLE happens to
+  land between the two numbers. **No threshold separation can guarantee that** — the ramp can
+  cross the entire gap between two samples, and here it crossed nearly four times the gap.
+  **#296 moved the number and left the mechanism**, which is the shape #296 was itself written
+  to end. Its own guard even records the arithmetic that predicts this (*"the onset takes the
+  family past 2,800 MB inside one two-minute sampler tick"*) and then sized a 1,500 MB gap
+  against it.
+- **IT IS A COIN FLIP, NOT A DEAD LEVER.** On 09-07 20:38 a sample DID land in the gap
+  (2,811 MB at 20:40:13), so with the fix live that ramp would have been caught. The threshold
+  is **KEPT** — it wins the ~half of ramps where a sample lands in the gap, and it takes the
+  dump while the browser is healthier — it is simply not sufficient on its own.
+
+**FIXED BY GRANTING THE TICK RATHER THAN THE MEGABYTES.** `rampDumpGrace` (`ramp-bail.mjs`):
+on a tick where the arm would fire and no ramp dump has been taken for this browser life, the
+bail **HOLDS** and the dump is started instead. `dumpTaken` is set when the dump STARTS, so the
+ordinary path holds exactly **one tick**.
+- **BOUNDED BY A DEADLINE, ONCE PER BROWSER LIFE, AND THE DEADLINE IS THE POINT.** `HUNG_MS`
+  already tolerates twelve minutes and this arm exists to cut that to two; an unbounded hold
+  hands the twelve minutes back. The cost is the **profile lock** — the bail is what releases
+  it, and the lock held past 08:00 is what loses a cart — so it is capped at ≤2 ticks against a
+  stall already 120s old and a bail whose own diagnostics cost 2-8s. The guard bounds it from
+  BOTH sides: longer than one `WATCHDOG_MS` or the retry can never run, at most three or it
+  stops being a rounding error on the exit.
+- **TWO TICKS AND NOT ONE, deliberately.** A refusal puts the phase back and the next tick
+  retries; and a **baseline** dump can be in flight when the arm fires, which is not rare —
+  the baseline is due three minutes into a browser life and **every burst-carrying ramp so far
+  has landed in a browser 2-3 minutes old** (2m, 3m, 2m). One tick would spend the grace on a
+  call that could not start.
+- **THE DUMP STAYS OUT OF `reportAndBail`, unchanged and still pinned.** The grace delays the
+  whole exit for a bounded tick; it does not put a multi-second CDP call on the path that
+  releases the lock. It can delay the bail, never prevent it: the grace is spent whether or not
+  the dump lands, and an expired one **says so** rather than going quiet.
+- **`Number(null)` IS 0 AND `Number.isFinite(0)` IS TRUE**, so the first version read "no grace
+  granted" as "the grace expired at the epoch" and bailed on the first firing tick — the fix
+  present and inert, in the fix for the previous instance of it. **Caught by the guard on its
+  first run**, which is what a behavioural test on a pure function is for.
+- **TWO EXISTING GUARDS WERE RE-ANCHORED, NOT RELAXED, AND ONE WAS INVERTED.**
+  `rc-mem-dump.test.mts`'s *"the bail still returns before the dump, so ONLY the threshold
+  creates the gap"* **required the premise this ramp falsified** — the `held-offer-scope` shape
+  again — so it is inverted with the reason written in; its sibling lost the half that asserted
+  source-order adjacency and kept the half that matters (never inside `reportAndBail`). And
+  `keepwarm-recycle.test.mts` pinned `reportAndBail` as the arm's FIRST statement, which the
+  grace now precedes; re-anchored on the CALLEE (and strengthened: the arm may never call
+  `bail`/`process.exit` directly).
+- **13 mutations, each verified to APPLY and each caught** — the consult deleted, the held tick
+  starting no dump, the deadline never stored, the grace not reset per browser life,
+  `dumpTaken` ignored, the deadline pushed out on every hold (an unbounded hold wearing a
+  bound's clothes), an expired grace still holding, `canDump` ignored, the `Number(null)` trap
+  restored, the default raised past three ticks, the keep-warm carrying its own copy of that
+  default, the held tick falling through to the bail on the same tick, and the dump moved
+  inside `reportAndBail`.
+- **BOT-SIDE, so it is inert until the box updates**, and then it needs a ramp. Ramps have
+  arrived every 5-28 hours; one can be ordered (see the recipe above).
+
+#### AND THE SECOND WALK CORROBORATES THE FIRST, WITH THE CENSUS ATTACHED (2026-09-08)
+The 09-05 walk was the only one carrying the `2-4M` census; the 09-08 02:03 ramp is the second,
+and it agrees to within a per-cent:
+
+| | regions in 2-4M | MB | allocation bases | protection | name census |
+|---|---|---|---|---|---|
+| 09-07 20:42 | 15,494 | 31,005 | **15,493** | 15,491 READWRITE | 64 sampled, **all anonymous** |
+| **09-08 02:03** | **16,213** | **32,443** | **16,212** | 16,210 READWRITE | 64 sampled, **all anonymous** |
+| control, same scan | 4 | 18 | 3 | 1 READWRITE | 1 of 4 **FILE-BACKED** |
+
+One allocation base per region on both, so it is N separate `MapViewOfFile` calls and not one
+mapping carved into views — twice, on two different browsers, two days apart. **The control's
+file-backed entry is the census's own positive control** and it appeared both times, so
+"all anonymous" is a reading and not a broken scan.
+
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
 healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
@@ -6333,6 +6463,36 @@ half.
   **flat** (0 in 120s, 109 lifetime). Independent in both directions, now three times over.
 - **BOT-SIDE, so it reads `statuses not reported` until the box updates.**
 
+##### IT ANSWERED ON ITS FIRST BURST, AND THE ANSWER IS NONE OF THE THREE (2026-09-08)
+The status counter reached the box and the very next burst used it. **69,060 asks on that one
+path and NOT ONE answer of any kind** — no 2xx, no 401, no `failed`:
+```
+50000 in 120s   69060 lifetime  .../webaccessfacility/futurebookingstartsendsdates   {}      <- no answers
+    0 in 120s       2 lifetime  .../webaccesscustomer/empty/shoppingcart             401x2
+    0 in 120s       2 lifetime  https://www.reservecalifornia.com/config.json        200x2
+    0 in 120s       1 lifetime  .../webaccesscustomer/load/enterprise                401x1
+```
+- **THE COUNTER IS DEMONSTRABLY WORKING IN THE SAME EVENT**, which is what makes the empty map
+  a reading rather than a gap: every other path in the same snapshot carries a code, and the
+  09-07 20:42 event shows `failed` being counted too (`200x4 failedx1` on split.io's SSE). So
+  `{}` is not "we did not look".
+- **`{}` AND `null` ARE DIFFERENT AND THE INSTRUMENT KEEPS THEM APART.** The 09-07 event —
+  taken by a box that predated the counter — stores `null` per path and renders *"this bundle
+  does not report statuses"*. The absent-reading rule, honoured on its first live test.
+- **AND THE READOUT REACHED THE VERDICT ITSELF**, without anyone editing it: *"nothing came
+  back for any of the 69060 ask(s) — Chromium is not being answered at all, which is neither of
+  the two candidates and is its own finding."* That is the fourth branch, and it was written
+  into `loopAnswerReading` before there was an event to render it against.
+- **SO THE THREE READING RULES ABOVE ALL MISS.** It is not a retry loop against a rejection
+  (no 401/403), not an SPA being served (no 2xx), and not Chromium refusing them (no `failed`).
+  **A CANDIDATE, LABELLED AS ONE:** requests issued faster than the connection pool can drain
+  and queued in the renderer — ~800/s against six sockets per host — which would leave tens of
+  thousands neither answered nor failed. **Nothing tests that yet**, and three mechanisms have
+  been guessed on this box's problems, each costing a session.
+- **DO NOT RE-LINK IT TO THE LEAK.** The same 09-08 ramp carried both, and 09-07 20:42 carried
+  the same 32 GB mapping with a **flat** counter. Independent in both directions, four times
+  over now.
+
 #### AND ITEM 3 — "THE SESSION DIES WITHIN ~2 MINUTES OF EVERY QUEUE" — IS INSTRUMENTED AND UNANSWERED (2026-09-06)
 Checked in source rather than waited on. **The instrument shipped 2026-09-03 and every outcome
 of the yield now speaks**, including a fourth that did not exist when the four deaths were
@@ -7406,6 +7566,41 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-08 — THE DUMP MISSED A THIRD TIME, AND THE THIRD MECHANISM IS THE SAMPLER'S CADENCE
+>
+> **Master `6843973`, mini-PC `6843973` (read by `git-status`, not `autocart.bot_version`),
+> 3/3 shards, no holds queued, highest migration 076, main's block 077-079.** Health 17 of 19;
+> `detect:ridb` read **fail** at the start of this session (*"0 campsites across 15 campgrounds
+> — API likely down"*) and was **ok** an hour later with `consecutive_failures: 0`. Transient,
+> and the reading-goes-stale-faster-than-a-conclusion rule applied — not an incident.
+>
+> **A NATURAL RAMP ARRIVED AT 02:03 PT WITH #296 LIVE, AND THERE IS STILL NO `ramp` DUMP.** One
+> in the whole table and it is the VOID one from 09-07. The memory series is the diagnosis and
+> it takes three rows: **238 MB → 3,423 MB → 205 MB across two two-minute samples.** The onset,
+> peak and bail all fit inside ONE sampler interval, so **no sample landed between the dump's
+> 1500 and the arm's 3000**, the single reading was over both, and the arm returned before the
+> dump was called — exactly as on 09-07. **The head start is measured in megabytes and paid in
+> SAMPLER TICKS**, and no threshold separation can guarantee one. Full account and the fix:
+> **"THE THIRD MISS: THE HEAD START IS MEASURED IN MEGABYTES AND PAID IN SAMPLER TICKS"**.
+>
+> **FIXED BY GRANTING THE TICK: the bail now HOLDS for the dump, bounded, once per browser
+> life** (`rampDumpGrace`). **BOT-SIDE — it needs a box update before it means anything**, and
+> then a ramp. The threshold is kept: it still wins the ~half of ramps where a sample does land
+> in the gap (09-07 20:40 read 2,811 MB, which would have been caught).
+>
+> **THE SECOND WALK CORROBORATES THE FIRST**: 16,213 regions / 16,212 allocation bases /
+> 32,443 MB in `2-4M`, all READWRITE, all anonymous, with the control's file-backed entry
+> present both times as the census's own positive control. N separate `MapViewOfFile` calls,
+> twice, two days apart. **The walk needs no repeating.**
+>
+> **AND THE STATUS COUNTER ANSWERED ON ITS FIRST BURST — with a fourth branch nobody had.**
+> **69,060 asks on `futurebookingstartsendsdates` and not one answer of any kind**: no 2xx, no
+> 401, no `failed`, while every other path in the same snapshot carries a code. So the three
+> recorded reading rules all miss. Candidate, labelled as one: requests issued faster than the
+> connection pool can drain. **Do not re-link it to the leak** — the same ramp carried both and
+> 09-07 20:42 carried the same 32 GB with a flat counter. Full entry: **"IT ANSWERED ON ITS
+> FIRST BURST, AND THE ANSWER IS NONE OF THE THREE"**.
+>
 > ### 2026-09-07 — THE RAMP CAME, THE DUMP FIRED, AND IT MEASURED THE WRONG BROWSER
 >
 > **Master `3867988` (#291 + #292 merged), no holds queued, migrations still highest 076 with
