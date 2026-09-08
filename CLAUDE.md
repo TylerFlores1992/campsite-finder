@@ -4878,10 +4878,11 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
   cadence of ~5-7h before that. The trail has still never seen one. **That is not a cure**;
   every "not reproduced this session" reading in this file was a window that missed one.
 
-#### CONFIRMED ON DEMAND 2026-09-07: A RAMP CANNOT BE FORCED, AND THE ATTEMPT COSTS AN HOUR
-Asked to force a ramp so the one-shot capture could be exercised immediately. **The one safe
-lever was fired and it did not ramp**, which makes the paragraph above a finding rather than a
-single observation.
+#### FORCING IS A COIN FLIP, AND ONLY ONE RECIPE HAS EVER WON (2026-09-07)
+Asked to force a ramp so the one-shot capture could be exercised immediately. `test-login` was
+fired — the only remote lever that drives an Okta trip on the **RESIDENT** renderer, which is
+the renderer the 09-04 measurement says ramps (the renewal runs in a throwaway tab whose trail
+reads `-4 MB`). It cost **eleven seconds and nothing**:
 ```
 19:16:45 PT  Session before the test: DEAD — no token in localStorage
 19:16:52       → password field, password entered, submitting
@@ -4889,27 +4890,39 @@ single observation.
 19:16:56     ✓ the bot can still sign itself in
 19:17     rc 320 MB (new pid, the post-Okta recycle) · commit 7.1/17.1 GB · free RAM 10.6 GB
 ```
-**Eleven seconds, a real credential submitted, and the memory series never left ~315 MB.**
-- **`test-login` IS THE ONLY REMOTE LEVER THAT DRIVES AN OKTA TRIP ON THE *RESIDENT*
-  RENDERER**, which is the renderer the 09-04 measurement says ramps — the renewal runs in a
-  throwaway tab (#142) whose trail reads `-4 MB`. So this is the best-aimed forcing attempt
-  available, not a long shot, and it still produced nothing.
-- **THE MECHANISM RULES OUT FORCING, and it is already written above: duration and cost track
-  each other.** 11s and 32s cost zero; the 8-9 GB events are ten-to-twelve-minute climbs.
-  **The ramp is not caused by the Okta trip, it is caused by the trip GOING WRONG** — and a
-  navigation stalling is not a thing anybody can stage.
-- **THE ATTEMPT HAS A PRICE, so weigh it before repeating.** The rehearsal minted a fresh
-  60-minute token, so `planRenewal` now stands down for an hour — i.e. it **postponed** the
-  next ramp-bearing event rather than bringing one forward. The box also rations it to one
-  on-demand run per 6h on its own clock.
-- **IT DID REPAIR A DEAD SESSION, which is the one thing it reliably buys.** The log
-  immediately before read `⚠ RC SESSION IS DEAD … okta session STILL ALIVE`; afterwards
-  `token exp in 60m`. That is the legitimate reason to reach for this lever.
-- **WHAT IS STILL FORBIDDEN AND WHY.** Queueing a test hold locks a real campsite AND, per the
-  entry above, does not reliably produce a ramp either. `restart-rc`/`kill-chrome` only reopen
-  a browser; the renewal is the ramp-bearing event and a fresh token pushes it an hour out.
-  **The answer remains: wait.** Cadence is 5-28h; the capture is armed on the box.
-
+- **THAT READING IS FROM THE CHEAP CELL AND SAYS NOTHING ABOUT THE EXPENSIVE ONE — the first
+  write-up of this run got that wrong and it is corrected here.** The health line immediately
+  before it reads `⚠ RC SESSION IS DEAD … okta session STILL ALIVE`, so Okta was **ALIVE**:
+  `prompt=login` forced a form and a real credential was submitted, but Okta answered from the
+  existing session. Eleven seconds is the cookie-answered band exactly (08-21: 11s, +24 MB).
+  **It does not pair with 2026-08-26**, which was the `okta=GONE` full-password cell.
+- **THE GONE CELL HAS RAMPED TWO TIMES IN THREE**: 08-20 (12 min, 9,434 MB), 08-24 (11 min,
+  9,338 MB — the ordered ramp, at the predicted minute), 08-26 (32 s, zero). So *"a ramp cannot
+  be manufactured on demand"* is too strong as written on 08-26; the honest figure is a coin
+  flip with the odds slightly in favour.
+- **THE ONE RECIPE THAT HAS EVER WON IS A TEST HOLD.** `maybeWarmupLogin` fires at T−3h **only
+  when Okta is GONE**, and that is by construction the full password form. That is what was
+  ordered on 08-23 and delivered a 9,338 MB ramp at 05:00 PT the next morning. Nothing else
+  reaches that cell on demand: `test-login` is answered from the cookie while Okta lives, and
+  `restart-rc`/`kill-chrome` only reopen a browser.
+- **AND IT COSTS A REAL CAMPSITE.** `scripts/rc-test-hold.mts` takes a real numeric unit id by
+  design — that is what makes the chain real — so a staged ramp locks a site until the claim
+  releases it or RC drops the cart, and it shuts the box's 02:00–05:00 update window for the
+  6h before the release. **That is the standing reason not to do it casually, and it is a
+  decision for the owner rather than a lever to reach for.**
+- **THE OKTA CAP DID NOT RESET ACROSS THIS PASSWORD SIGN-IN — third corroboration.**
+  `okta_expires_at` read **19:30 PT** against a sign-in at 19:16:56, i.e. thirteen minutes,
+  unmoved by a fresh credential. 08-16 found the same across a password sign-in and 08-21
+  across a cookie-answered one. **So the GONE precondition arrives on its own schedule and
+  cannot be brought forward by signing in either.**
+- **WHAT THE ATTEMPT DID BUY, AND IT IS NOT NOTHING:** it repaired a genuinely dead RC session
+  (`token exp in 60m` afterwards). That is the legitimate reason to reach for this lever, and
+  the box rations it to one on-demand run per 6h on its own clock.
+- **A CANDIDATE COST, LABELLED AS ONE:** the fresh 60-minute token stands `planRenewal` down
+  for an hour, and every recorded onset has sat beside a renewal — so the attempt plausibly
+  pushes the next natural ramp further out rather than nearer. The 09-04 walk puts the ramp in
+  the resident renderer while the renewal ran in a tab, so the two are adjacent rather than
+  identical; do not write this in as the mechanism.
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
 healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
@@ -7281,13 +7294,18 @@ tree, the deploy and the fleet were all correct.
 >
 >
 > **AND IT IS ON THE BOX — `aae25bd`, applied 2026-09-07 19:01 PT, confirmed by `git-status`.**
-> **A RAMP WAS THEN DELIBERATELY FORCED AND COULD NOT BE.** `test-login` — the only remote lever
-> that drives an Okta trip on the RESIDENT renderer — signed in with a real password in
-> **eleven seconds for zero memory**, second such reading after 08-26. **Do not re-fire it
-> hoping for a ramp:** it is rationed to one per 6h, and the fresh 60-minute token it mints
-> stands `planRenewal` down for an hour, i.e. it POSTPONES the next ramp-bearing event. Full
-> entry: "CONFIRMED ON DEMAND 2026-09-07". **The capture is armed and waiting on a natural
-> ramp** — last one 09-07 02:03 PT, cadence 5-28h.
+> **A FORCING ATTEMPT WAS MADE AND IT LANDED IN THE WRONG CELL.** `test-login` signed in with a
+> real password in **eleven seconds for zero memory** — but the health line beside it reads
+> `okta session STILL ALIVE`, so Okta answered from the cookie and that is the CHEAP variant.
+> It is not a reading about the expensive one and it does not pair with 08-26. **Do not re-fire
+> it hoping for a ramp** — while Okta lives it can only ever be answered from the cookie, and
+> it is rationed to one per 6h anyway.
+> **THE ONE RECIPE THAT HAS EVER FORCED A RAMP IS A TEST HOLD** — the T−3h warm-up fires a full
+> password sign-in, but only when Okta is GONE, and that cell has ramped **two times in three**
+> (08-20 9.4 GB, 08-24 9.3 GB, 08-26 nothing). **It locks a real campsite and shuts the box's
+> update window for 6h, so it is the owner's call and not a lever to reach for.** Full entry:
+> "FORCING IS A COIN FLIP". **Otherwise the capture is armed and waiting on a natural ramp** —
+> last one 09-07 02:03 PT, cadence 5-28h.
 >
 > **THE RDR BURST GOT BIGGER AND IT IS STILL THE NEXT REAL BUG.** The 09-07 bail carried
 > **49,237 hits in 120s / 75,195 lifetime** on `futurebookingstartsendsdates`, on a browser three
