@@ -5416,6 +5416,13 @@ renderer kept BUSY for twenty seconds while the dump was taken from the browser 
   produces the 2 MB signature. The box's uniform 2.0 MB means **many allocations each under
   2 MB**. Recorded because the obvious load is the misleading one.
 
+- ~~**BOT-SIDE, so it is inert until the box updates.**~~ **MERGED AS #302 AND ON THE BOX
+  (`c0b222c`, 2026-09-08 20:5x UTC, confirmed by `bot-ask git-status`).** Worker deploy green,
+  3/3 shards, 10s heartbeat, health 17 of 19. Struck rather than deleted — "inert until the box
+  updates" is the sentence a later reader quotes as a task. **And the stall trigger fires on the
+  next stall over 90 seconds, which is far more often than a ramp: the first evidence that it
+  works arrives without waiting for one.**
+
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
 healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
@@ -7776,8 +7783,10 @@ tree, the deploy and the fleet were all correct.
 
 > ### 2026-09-08 (latest) — THE METHOD CHANGED; THE TRIGGER NO LONGER NEEDS A RAMP TO TEST
 >
-> **Master and mini-PC both `<pending>`; 3/3 shards; no holds queued; highest migration 076;
-> main's block 077-079.**
+> **Master and mini-PC both `c0b222c` (`bot-ask git-status`, never `autocart.bot_version`);
+> 3/3 shards; no holds queued; highest migration 076; main's block 077-079. Health 17 of 19,
+> the two warns being `rc_session` (dead between releases — the update killed the browser) and
+> `rc_login` (standing down inside the quiet window after a restart), both documented-benign.**
 >
 > **ASKED WHY WE KEEP MISSING THINGS. THE ANSWER IS COUNTABLE: all four missed ramps were in
 > the dump's TRIGGER, never in the dump.** It has never failed when it was allowed to run — six

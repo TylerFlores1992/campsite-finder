@@ -5,9 +5,10 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ## THE TRIGGER NO LONGER NEEDS A RAMP TO TEST (2026-09-08, latest)
 >
-> **State: master and mini-PC both `<pending>` (read by `bot-ask git-status`, never
+> **State: master and mini-PC both `c0b222c` (read by `bot-ask git-status`, never
 > `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
-> 077-079.**
+> 077-079. Health 17 of 19 — `rc_session` and `rc_login` are the documented-benign pair after
+> an update.**
 >
 > **READ `CLAUDE.md` → "THE METHOD WAS THE PROBLEM, NOT THE LEAK" FIRST.** Asked why we keep
 > missing things; the answer is countable and it changes how the next session should work.
