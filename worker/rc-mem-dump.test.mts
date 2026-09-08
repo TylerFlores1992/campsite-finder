@@ -327,9 +327,20 @@ test('the dump is fired from the watchdog TIMER, not the loop body', () => {
   assert.ok(call > timer, 'a check in the loop body cannot run while the loop is stalled, which is every ramp');
 });
 
-test('it uses the SAME reading and the SAME comparison as the ramp arm', () => {
+test('it uses the SAME reading as the ramp arm, at its own threshold', () => {
+  // INVERTED 2026-09-07, NOT RELAXED — this guard REQUIRED the bug. It asserted
+  // `memory.rcMb > RAMP_MB`, i.e. that the dump share the arm's threshold, on the reasoning
+  // that "two comparisons one megabyte apart put the dump and the bail on different sides of
+  // one event". The premise is right and the conclusion was wrong: sharing the threshold does
+  // not put them on one side of the event, it puts them on the SAME TICK — and the arm
+  // `return`s before the dump is called, so the dump never ran on the first ramp anybody
+  // ordered. Same shape as held-offer-scope, where a test required the storm.
+  //
+  // What still matters is the READING: one `memory` object, so the two arms cannot disagree
+  // about which event they are looking at. That half is kept verbatim.
   const fn = KW.slice(KW.indexOf('const maybeMemoryDump ='), KW.indexOf('const renew = setInterval(() => {\n      const stalledMs'));
-  assert.match(fn, /memory\.rcMb > RAMP_MB/, 'two comparisons one megabyte apart put the dump and the bail on different sides of one event');
+  assert.match(fn, /memory\.rcMb > MEM_DUMP_RAMP_MB/, 'the dump must compare against its own, lower threshold');
+  assert.doesNotMatch(fn, /memory\.rcMb > RAMP_MB/, 'sharing the arm\'s threshold is the 2026-09-07 race');
   assert.ok(!/readLatestMemory/.test(fn), 'it must be handed the arm\'s reading, not take a second one');
 });
 
@@ -409,4 +420,70 @@ test('the readout renders it, and BOTH verdict branches are there', () => {
   assert.match(READOUT, /join\.kind === 'void'/);
   // And an empty table must say what absence means rather than reading as "no leak".
   assert.match(READOUT, /Ordinary until the box runs rc-mem-dump\.mjs/);
+});
+
+// ── The dump's head start is a THRESHOLD, not the bail's extra stall condition ─────────────
+//
+// It shared RAMP_MB until 2026-09-07 and argued that the ramp arm's additional 120s-stall
+// condition put the dump ~2 minutes ahead of the exit. THAT WAS FALSE, and it cost the first
+// forced ramp its owner column: the loop stalls the instant the Okta trip begins, so by the
+// time the family crosses the bar the stall is already minutes old, both arms go true on one
+// tick, and `maybeMemoryDump` sits AFTER the arm's `return` and is never called.
+//
+//     20:42:23  ramp-scan       rc 4805 MB, walk complete
+//     20:42:24  request-counts  reason=bail:ramp
+//               (no mem-dump, on the one ramp anybody had ordered)
+
+function envDefault(code: string, name: string): number {
+  // See keepwarm-diagnosis.test.mts: a bare (\d+) stops at the underscore in 60_000 and a
+  // [\d_]+ stops at the space in `40 * 60_000`. Both have silently read the wrong number here.
+  const m = new RegExp(`${name} \\|\\| ([\\d_ *]+?)\\s*\\)`).exec(code);
+  assert.ok(m, `no default found for ${name}`);
+  const factors = m![1].split('*').map((x) => Number(x.trim().replace(/_/g, '')));
+  assert.ok(factors.every(Number.isFinite), `could not parse the default for ${name}: ${m![1]}`);
+  return factors.reduce((a, b) => a * b, 1);
+}
+
+test('the dump fires below the bail, or the arm races it away', () => {
+  const dump = envDefault(KEEPWARM, 'RC_MEM_DUMP_RAMP_MB');
+  const bail = envDefault(KEEPWARM, 'RC_KEEPWARM_RAMP_MB');
+  assert.ok(dump < bail,
+    `the dump threshold (${dump}) must be STRICTLY below the bail's (${bail}) — equal is the `
+    + '2026-09-07 race, where the dump was never called at all');
+  // Bounded from below too: the family idles at 200-330 MB, so a threshold near that fires on
+  // every ordinary tick and buries the reading it exists to take.
+  assert.ok(dump > 800, `${dump} is close enough to the idle baseline to fire on nothing`);
+  // And it must still be a RAMP. The onset takes the family past 2,800 MB inside one two-
+  // minute sampler tick, so anything at or above that has no head start left to give.
+  assert.ok(dump <= 2500, `${dump} is too close to the onset's own climb to buy a tick`);
+});
+
+test('the dump reads its OWN threshold, not the bail\'s', () => {
+  const from = KW.indexOf('const maybeMemoryDump');
+  assert.ok(from > -1, 'maybeMemoryDump must exist — anchor not found');
+  const to = KW.indexOf('const renew = setInterval', from);
+  assert.ok(to > from, 'the end anchor must be found AFTER the start');
+  const body = KW.slice(from, to);
+  assert.match(body, /memory\.rcMb > MEM_DUMP_RAMP_MB/,
+    'the phase must be decided by the dump\'s own threshold');
+  assert.doesNotMatch(body, /memory\.rcMb > RAMP_MB/,
+    'sharing RAMP_MB is the regression — the arm returns before this is reached');
+});
+
+test('the bail still returns before the dump, so only the threshold creates the gap', () => {
+  // NOT a suggestion to move the dump into the bail: it must stay off the path that releases
+  // the profile lock, which is what loses a cart at 08:00. Pinned so a future edit cannot
+  // "fix" the race by reordering these instead, and quietly put a multi-second CDP call in
+  // front of the exit.
+  const arm = KW.indexOf('if (ramp.fire)');
+  const call = KW.indexOf('maybeMemoryDump(memory)');
+  assert.ok(arm > -1 && call > arm,
+    'the ramp arm must still fire first; the dump gets its head start from MEM_DUMP_RAMP_MB');
+  // AND THE CALL MUST BE REACHABLE. Every guard here anchors with indexOf, which matches just
+  // as happily inside `if (false) maybeMemoryDump(memory);` — verified: that mutation passed
+  // all 33 tests. So the statement is pinned as a BARE statement on its own line, nothing
+  // between the newline and the call. Fix-present-and-inert, caught in the guard written to
+  // stop the previous instance of it.
+  assert.match(KW, /\n\s*maybeMemoryDump\(memory\);/,
+    'the dump must be called unconditionally, not from behind a condition');
 });
