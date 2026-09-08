@@ -4923,6 +4923,110 @@ reads `-4 MB`). It cost **eleven seconds and nothing**:
   pushes the next natural ramp further out rather than nearer. The 09-04 walk puts the ramp in
   the resident renderer while the renewal ran in a tab, so the two are adjacent rather than
   identical; do not write this in as the mechanism.
+#### THE RAMP WAS FORCED TO ORDER, THE WALK ANSWERED, AND THE DUMP WAS RACED AWAY (2026-09-07)
+The owner asked for a ramp on demand so #294's one-shot capture could be exercised now rather
+than waiting out the 5-28h cadence. **It was produced, at 20:38 PT, second attempt** — and the
+first attempt is a finding of its own.
+
+**THE RECIPE, AND IT IS NARROWER THAN THE WARM-UP'S OWN GATE.** `maybeWarmupLogin` needs
+**Okta GONE *and* RC's own token dead.** The entry above says only the first, and that is not
+enough:
+```
+20:06:23  hold queued (release +120m)          <- rc-test-hold.mts --in 120
+20:06:35  warming up the session: the release is 120m away and Okta is GONE - signing in now
+20:06:40      -> already signed in - nothing to do
+20:06:40    x warm-up did not establish an Okta session: already signed in
+            RAM 10846 -> 10731 MB (-115) => this navigation did NOT ramp
+20:07:54     warm-up stood down: the warm-up has already had its 1 turn for this release
+```
+`attemptLogin` short-circuits on a live RC token, so the trip no-opped in **4.5 seconds** and
+spent the module's one turn on it. **`--in 120` is the right offset**: it opens the T-3h..T-30
+window immediately and leaves ninety minutes of margin, so the hold is deleted long before it
+can cart — **no campsite was ever locked**, unlike the 08-23 experiment which let one run to
+the cart. The warm-up fired **17 seconds** after the insert.
+
+**THAT IS A PRODUCTION DEFECT, NOT AN ARTIFACT OF THE TEST.** Okta's ABSOLUTE cap can expire
+while a 60-minute token is still running — measured here: a 19:16:56 sign-in whose Okta session
+died at the cap at 19:30 and whose token lived to 20:17. In that state the warm-up is
+structurally incapable of succeeding, burns its turn learning so, and stands down — **so the
+twelve-minute password trip lands at T-30 anyway, which is the exact failure the module exists
+to prevent.** Fixed with a fourth gate in `warmupPlan`: a POSITIVELY alive token stands down
+**keeping the turn**. It converges by construction (a 150-minute window against a 60-minute
+token), and **only a positive reading blocks** — `readLiveToken` returns `{token: null}` for
+"no token" and "the page would not answer" alike, so blocking on null would silently disable
+the warm-up on any unresponsive page. A refund was rejected: it retries every 60s, and each
+no-op is ~50 responses / 2.8 MB to RC from the address that has eaten a twelve-hour block.
+
+**ATTEMPT TWO, WITH THE TOKEN GENUINELY DEAD, RAMPED — ON CUE.**
+```
+20:37:59  keep-warm probe: RC rejected the session - token exp in -21m; okta=GONE(404)
+20:38:30  hold queued (release 22:38:30), deleted at 20:41 once the trip was under way
+20:38:13  rc   301 MB  pid 14332  commit  7,054/17,150  free RAM 10,841
+20:40:13  rc 2,811 MB  pid  1916  commit 41,397/41,871  free RAM  7,709
+20:42:14  rc 4,805 MB  pid  1916  commit 43,758/44,960  free RAM  5,859
+20:44:14  rc   208 MB  pid  3528  commit  6,991/17,150  free RAM 10,916
+```
+The ~35 GB commit step inside one two-minute tick, on a renderer that did not exist two minutes
+earlier. **So the GONE cell's record is three ramps in four** (08-20, 08-24, this; 08-26 is the
+miss), and forcing is worth doing when a reading is wanted. **The RAMP arm contained it to
+4,805 MB in about four minutes** against the 8-9 GB of an untreated event.
+
+**THE NEW CENSUS ANSWERED BOTH OF ITS BRANCHES ON ITS FIRST FIRING.**
+```
+2-4M mapped: 15494 region(s) across 15493 allocation base(s) - each is its OWN mapping, so
+             this is N separate sections, not one carved up.
+2-4M protection: 0x1x2 0x2x1 0x4x15491        (0x4 READWRITE)
+name census: 64 sampled, ALL ANONYMOUS - pagefile-backed sections with no file behind them.
+```
+- **IT IS N SEPARATE `MapViewOfFile` CALLS, NOT A FEW LARGE MAPPINGS CARVED INTO VIEWS.** One
+  base per region, 15,493 of them, 31,005 MB. The fork #294 was built to settle is settled.
+  The CONTROL in the same scan reads **5 regions across 4 bases**, which is what makes this a
+  comparison rather than an assertion.
+- **ALL READWRITE**, consistent with per-object shared buffers rather than anything mapped for
+  execution or read-only data.
+- **ALL ANONYMOUS, so the branch that would have ended this outright did not fire.** The name
+  census is not silently returning nothing: **one of the control's five IS file-backed**
+  (`SortDefault.nls`), which is the positive control for the instrument itself. That hands the
+  question to the memory dump's owner column — and the dump is what did not run.
+
+**AND THE DUMP WAS RACED AWAY BY THE BAIL, WHICH IS THE HOUSE SHAPE IN THE LAST INSTRUMENT
+STANDING.**
+```
+20:42:23  ramp-scan       rc 4805 MB, vmwalk complete
+20:42:24  request-counts  reason=bail:ramp
+          (no mem-dump, on the one ramp anybody had ordered)
+```
+`maybeMemoryDump` sat AFTER the arm's `return` and shared its `RAMP_MB`, on the recorded
+reasoning that *"the ramp arm needs a 120s stall on top of this same threshold, so this
+typically runs ~2 minutes ahead of the exit"*. **That assumes the stall starts when the memory
+does.** It does not: the loop is stuck inside the Okta trip from its first second, so by the
+time the family crosses the bar the stall is already ~215s old, both arms go true on ONE tick,
+and the dump is never called at all. Not a lost POST — a call that never happens.
+- **Fixed with `MEM_DUMP_RAMP_MB` (1500), strictly below the bail's 3000.** The head start is
+  bought with a threshold, not with the arm's extra condition. Chosen from this event's own
+  series: rc read 2,811 MB at 20:40:13 and 4,805 MB at 20:42:14, so it now fires a **full
+  sampler tick earlier** — and while the renderer still answers CDP, which is the other thing
+  that stops working as a ramp peaks (measured twice, on two different calls).
+- **The dump stays OUT of `reportAndBail`, deliberately**, and that is pinned: a multi-second
+  CDP call on the path that releases the profile lock is what loses a cart at 08:00.
+- **A PRE-EXISTING GUARD REQUIRED THE BUG.** *"it uses the SAME reading and the SAME comparison
+  as the ramp arm"* asserted `memory.rcMb > RAMP_MB` by name. Its premise was right — the two
+  arms must not disagree about which EVENT they see — and its conclusion was wrong: sharing the
+  threshold does not put them on one side of an event, it puts them on the same TICK.
+  **INVERTED, not deleted**, with the reason written in; the one-reading half is kept verbatim.
+  Same shape as `held-offer-scope` requiring the 26-text storm.
+- **AND A MUTATION SURVIVED: `if (false) maybeMemoryDump(memory);` PASSED ALL 33 TESTS.** Every
+  guard anchors with `indexOf`, which matches just as happily inside a dead branch, so nothing
+  asserted the call was REACHABLE. Pinned as a bare statement on its own line now. Sixth-odd
+  instance of fix-present-and-inert, this time inside the guard written for the previous one.
+
+**HOW TO READ THE NEXT ONE.** The walk half is answered and does not need repeating; what is
+outstanding is one `mem-dump` with `phase: ramp` whose `MDPROC` pids contain the walk's TARGET.
+`discardable/segment` at ~32 GB names the subsystem; a small `shared_memory` total against a
+walk showing 32 GB of `commit/mapped` retires discardable, mojo and the GPU transfer path
+together. **Both fixes are BOT-SIDE and inert until the box updates** — confirm with
+`npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`.
+
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
 healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
@@ -7294,7 +7398,21 @@ tree, the deploy and the fleet were all correct.
 >
 >
 > **AND IT IS ON THE BOX — `aae25bd`, applied 2026-09-07 19:01 PT, confirmed by `git-status`.**
-> **A FORCING ATTEMPT WAS MADE AND IT LANDED IN THE WRONG CELL.** `test-login` signed in with a
+>
+> **A RAMP WAS THEN FORCED SUCCESSFULLY AT 20:38 PT AND THE WALK ANSWERED BOTH ITS BRANCHES:
+> 15,493 separate anonymous READWRITE sections, one allocation base each, 31,005 MB — N
+> separate `MapViewOfFile` calls, not a few large mappings carved into views.** The name census
+> found no file behind them, so the owner column is what names the creator. **The mem-dump was
+> RACED AWAY by the bail arm on the same tick and did not run** — fixed here with
+> `MEM_DUMP_RAMP_MB` (1500, strictly below the bail's 3000), **bot-side, so it needs a box
+> update before the next ramp can answer.** Full account: "THE RAMP WAS FORCED TO ORDER".
+>
+> **THE RECIPE, so it is not re-derived: `rc-test-hold.mts --in 120` with Okta GONE *and* the
+> RC token DEAD.** Okta alone is what `warmupPlan` checks and it is NOT enough — a live token
+> makes `attemptLogin` short-circuit, which no-ops in 4.5s and spends the warm-up's only turn
+> (fixed here too). Delete the hold once the trip is under way; nothing is ever carted.
+>
+> **A FIRST FORCING ATTEMPT, EARLIER THE SAME EVENING, LANDED IN THE WRONG CELL.** `test-login` signed in with a
 > real password in **eleven seconds for zero memory** — but the health line beside it reads
 > `okta session STILL ALIVE`, so Okta answered from the cookie and that is the CHEAP variant.
 > It is not a reading about the expensive one and it does not pair with 08-26. **Do not re-fire

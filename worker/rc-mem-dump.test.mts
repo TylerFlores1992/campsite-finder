@@ -479,4 +479,11 @@ test('the bail still returns before the dump, so only the threshold creates the 
   const call = KW.indexOf('maybeMemoryDump(memory)');
   assert.ok(arm > -1 && call > arm,
     'the ramp arm must still fire first; the dump gets its head start from MEM_DUMP_RAMP_MB');
+  // AND THE CALL MUST BE REACHABLE. Every guard here anchors with indexOf, which matches just
+  // as happily inside `if (false) maybeMemoryDump(memory);` — verified: that mutation passed
+  // all 33 tests. So the statement is pinned as a BARE statement on its own line, nothing
+  // between the newline and the call. Fix-present-and-inert, caught in the guard written to
+  // stop the previous instance of it.
+  assert.match(KW, /\n\s*maybeMemoryDump\(memory\);/,
+    'the dump must be called unconditionally, not from behind a condition');
 });
