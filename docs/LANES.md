@@ -180,8 +180,9 @@ commands". **A single `git push` to a `claude/**` branch with a PR open breaks i
 
 `verify.yml` fires on `push: claude/**` **and** on `pull_request`, so one push matches both and
 starts two runs on the same SHA. The concurrency group cancels one — and cancellation is not
-instant. Measured twice in one afternoon: **93 seconds** and **89 seconds** of two verify jobs
-running `npm test` against the production database at the same time.
+instant. Measured three times in one afternoon: **93s, 89s and 301s** of two verify jobs running
+`npm test` against the production database at the same time. **It is a range, not a constant** —
+at five minutes the window covers most of a 535-second test run, not merely its opening.
 
 ```
 run 1208  event=push          created 13:22:40   CANCELLED 13:24:13
@@ -189,8 +190,8 @@ run 1209  event=pull_request  created 13:23:14   FAILURE   13:33:59  (1 of 1985)
                               both live 13:23:14 -> 13:24:13
 ```
 
-- **Typecheck is ~25s, so the overlap covers roughly the first half-minute of `npm test`** — the
-  low TAP numbers, which is where the 09-08 failure was bounded to (12..1155, name unreachable).
+- **Typecheck is ~25s, so a 301-second overlap covers ~4.5 minutes of `npm test`** — which is
+  where the 09-08 failure was bounded to (12..1155, name unreachable).
 - **Nothing a lane can do prevents it**, which is the point: announcing, waiting and serialising
   all fail here, because the second run is started by GitHub off your own single push.
 - **The remedy is the reading, not a schedule.** A red run whose job started within ~90 seconds

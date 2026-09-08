@@ -2718,15 +2718,21 @@ run 1209  event=pull_request  created 13:23:14   FAILURE   13:33:59   <- 1 of 19
 - **`verify.yml` fires on `push: claude/**` AND on `pull_request`**, and with a PR open a single
   push matches both. The concurrency group (`verify-${{ github.head_ref || github.ref_name }}`,
   `cancel-in-progress: true`) is what stops them running to completion together — **and
-  cancellation is not instant.** It took **93 seconds** here and **89** on the next push.
-- **SO IT IS NOT MERELY LITTER, IT IS GENUINE CONCURRENT EXECUTION.** For that minute and a half
-  two verify jobs were running `npm test` against the production database — the exact failure
+  cancellation is not instant.**
+- **THE OVERLAP IS 89-301 SECONDS, MEASURED THREE TIMES, AND IT IS NOT A CONSTANT.** 93s, then
+  89s, then **301s** on the third push of the same afternoon. **Quote the range, not the first
+  number** — the entry said "~90 seconds" until the third measurement arrived, and at five
+  minutes the window is a different claim: it covers most of a 535-second test run rather than
+  its first half-minute.
+- **SO IT IS NOT MERELY LITTER, IT IS GENUINE CONCURRENT EXECUTION.** For that window two verify
+  jobs were running `npm test` against the production database — the exact failure
   `--test-concurrency=1` prevents WITHIN a run and the concurrency group was added to prevent
-  ACROSS runs. The group closes the long overlap and leaves a ~90-second one open on every push.
-- **AND THE WINDOW LANDS WHERE THE FAILURES DO.** Typecheck is ~25s, so the overlap covers
-  roughly the first half-minute of `npm test` — the low TAP numbers. The 09-08 failure was
-  bounded to **12..1155** by the `ok`-number technique and could not be named (`not ok` appears
-  zero times in everything `get_job_logs` will return), which is consistent and is not proof.
+  ACROSS runs. The group closes the long overlap and leaves a variable one open on every push.
+- **AND THE WINDOW LANDS WHERE THE FAILURE DID.** Typecheck is ~25s, so a 301-second overlap
+  covers ~4.5 minutes of `npm test` — and the 09-08 failure was bounded to **12..1155** by the
+  `ok`-number technique, which is most of the front of the suite. It could not be named (`not ok`
+  appears zero times in everything `get_job_logs` will return), so this is consistent rather
+  than proof — but the longer window fits it far better than a half-minute one did.
 - **THE SAME TREE THEN PASSED IN A CLEAN WINDOW**, which is the discriminator: red at 13:33:59
   while the **Nightly RIDB Sync** also spanned the whole run (13:10:51 → 13:48:03), green at
   14:00:32 with neither writer present. Two named mechanisms, one confirmation.
