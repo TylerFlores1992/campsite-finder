@@ -45,6 +45,18 @@
  *             largest process by private bytes — which at the trigger IS the ramping
  *             renderer — and an ordinary renderer as a CONTROL, because 32,780 MB is a
  *             difference and a difference needs both terms.
+ *   VMMAP2M   (added 2026-09-08) the 2-4M mapped population described three ways, because
+ *   VMPROT    every ramp so far has cost a round trip of five to twenty-eight hours to answer
+ *   VMNAME    ONE question. `AllocationBase` is already in the MEMORY_BASIC_INFORMATION the
+ *             walk reads, so counting distinct bases is free and settles what the histogram
+ *             cannot: 16k regions with 16k bases is 16k separate sections, 16k regions over
+ *             four bases is a few large mappings carved into views, and those are different
+ *             bugs. The protection histogram comes from the same struct. And
+ *             `K32GetMappedFileNameW` on a BOUNDED sample asks the one question that needs
+ *             nobody's cooperation: is there a FILE behind these mappings? Anonymous is what
+ *             base::SharedMemory, discardable segments and mojo data pipes all are, so it
+ *             hands the question to the memory dump; a named one names the creator outright.
+ *             Together with the dump's owner column that closes BOTH branches in one ramp.
  *
  * ── RULES ──────────────────────────────────────────────────────────────────────────────────
  * • Runs at the ONSET, not the peak. At 3 GB the box is at ~40% commit and a PowerShell
