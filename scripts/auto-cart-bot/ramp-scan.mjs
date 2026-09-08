@@ -129,7 +129,14 @@ export const RAMP_SCAN_PS = [
   "  ' public uint Align2; }' +",
   "  ' [DllImport(' + $q + 'kernel32.dll' + $q + ', SetLastError=true)] public static extern IntPtr OpenProcess(uint a, bool i, int p);' +",
   "  ' [DllImport(' + $q + 'kernel32.dll' + $q + ', SetLastError=true)] public static extern bool CloseHandle(IntPtr h);' +",
-  "  ' [DllImport(' + $q + 'kernel32.dll' + $q + ', SetLastError=true)] public static extern IntPtr VirtualQueryEx(IntPtr h, IntPtr a, out MBI m, IntPtr l); }';",
+  "  ' [DllImport(' + $q + 'kernel32.dll' + $q + ', SetLastError=true)] public static extern IntPtr VirtualQueryEx(IntPtr h, IntPtr a, out MBI m, IntPtr l);' +",
+  // K32GetMappedFileNameW names the FILE behind a mapping, and returns 0 for one that has no
+  // file — which is the whole question. A pagefile-backed anonymous section is what
+  // `base::SharedMemory`, discardable segments and mojo data pipes all are; a NAMED one is a
+  // font cache, a driver's data file or a DLL, and names the creator outright without anybody
+  // having to ask Chromium. It needs PROCESS_VM_READ on top of QUERY_INFORMATION, which is
+  // why the open below asks for 0x410 first and reports which access it actually got.
+  "  ' [DllImport(' + $q + 'kernel32.dll' + $q + ', CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint K32GetMappedFileNameW(IntPtr h, IntPtr a, System.Text.StringBuilder b, uint n); }';",
   '$vmOk = $true;',
   // A 32-bit PowerShell can only see a 32-bit slice of a 64-bit process, so its walk would
   // report a small address space and no 32 GB region — a false negative that reads exactly
@@ -156,8 +163,13 @@ export const RAMP_SCAN_PS = [
   // These are our own children under our own user, so the first should be granted; a refusal
   // is REPORTED with its error code and never rounded to an empty walk. The elevation
   // blindness that has corrupted three readings here reads as $null, and $null is not zero.
-  '  $h = [ChMem]::OpenProcess(1024, $false, $tp.Pid);',
-  '  if ($h -eq [IntPtr]::Zero) { $h = [ChMem]::OpenProcess(4096, $false, $tp.Pid) };',
+  // 0x410 = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, which is what GetMappedFileName
+  // needs. The two narrower rights still walk the address space, so a refusal costs the NAMES
+  // and never the walk — and `access=` says which we got, so an absent VMNAME explains itself
+  // instead of reading as `no region has a file behind it`.
+  '  $acc = 1040; $h = [ChMem]::OpenProcess(1040, $false, $tp.Pid);',
+  '  if ($h -eq [IntPtr]::Zero) { $acc = 1024; $h = [ChMem]::OpenProcess(1024, $false, $tp.Pid) };',
+  '  if ($h -eq [IntPtr]::Zero) { $acc = 4096; $h = [ChMem]::OpenProcess(4096, $false, $tp.Pid) };',
   "  if ($h -eq [IntPtr]::Zero) { 'VMWALK pid=' + $tp.Pid + ' status=open-failed err=' + [Runtime.InteropServices.Marshal]::GetLastWin32Error(); continue };",
   // The try starts AFTER the open and ends BEFORE the close, so a throw inside the walk costs
   // one process's reading and never the handle, the other process, or the END marker.
@@ -171,6 +183,11 @@ export const RAMP_SCAN_PS = [
   '  $sz = [IntPtr][Runtime.InteropServices.Marshal]::SizeOf($mbi);',
   '  $addr = [IntPtr]::Zero; $it = 0; $cap = 400000; $regions = 0; $capped = $false;',
   '  $tot = @{}; $cnt = @{}; $hist = @{}; $hcnt = @{}; $big = @();',
+  // The 2-4M mapped bucket is the population under investigation (31-33 GB of it, 15-16k
+  // regions, twice). Three facts about it, all from fields VirtualQueryEx already returns or
+  // one bounded extra call, so a ramp answers every branch at once instead of one per event.
+  '  $ab = @{}; $prot = @{}; $nm = @{}; $n2m = 0; $nSamp = 0; $nNamed = 0; $nAnon = 0;',
+  '  $sb = New-Object System.Text.StringBuilder 300;',
   '  while ($true) {',
   '    if ($it -ge $cap) { $capped = $true; break };',
   '    $it++;',
@@ -194,6 +211,29 @@ export const RAMP_SCAN_PS = [
   "        if ($rs -lt 65536) { $b = 'a lt64K' } elseif ($rs -lt 1048576) { $b = 'b 64K-1M' } elseif ($rs -lt 2097152) { $b = 'c 1-2M' } elseif ($rs -le 4194304) { $b = 'd 2-4M' } elseif ($rs -le 16777216) { $b = 'e 4-16M' } elseif ($rs -le 268435456) { $b = 'f 16-256M' } elseif ($rs -le 1073741824) { $b = 'g 256M-1G' };",
   '        if (-not $hist.ContainsKey($b)) { $hist[$b] = [double]0; $hcnt[$b] = 0 };',
   '        $hist[$b] = $hist[$b] + $rs; $hcnt[$b] = $hcnt[$b] + 1;',
+  // MEM_MAPPED (262144) in the 2-4M band. AllocationBase is the discriminator that costs
+  // nothing: 16k DISTINCT bases is 16k separate MapViewOfFile calls against 16k sections,
+  // while a handful of bases would mean a few big mappings carved into 2 MB views - a
+  // different bug with a different fix, and the walk has never distinguished them.
+  // The bounds are the histogram's `d 2-4M` bucket EXACTLY, so `VMMAP2M regions` and
+  // `VMHIST ... d 2-4M count` are the same population and a reader can diff them. A band
+  // that merely looked similar would make two lines about one bucket disagree by design.
+  '        if ($mbi.Type -eq 262144 -and $rs -ge 2097152 -and $rs -le 4194304) {',
+  '          $n2m++;',
+  "          $abk = '0x' + $mbi.AllocationBase.ToInt64().ToString('x');",
+  '          if (-not $ab.ContainsKey($abk)) { $ab[$abk] = 0 }; $ab[$abk] = $ab[$abk] + 1;',
+  "          $pk = '0x' + $mbi.Protect.ToString('x');",
+  '          if (-not $prot.ContainsKey($pk)) { $prot[$pk] = 0 }; $prot[$pk] = $prot[$pk] + 1;',
+  // BOUNDED. One call per region over 16k regions would turn a diagnostic into a cost on a
+  // box that is already at 40% commit; 64 is enough to tell an all-anonymous population from
+  // a named one, and the sample size is printed so the reader knows it is a sample.
+  '          if ($acc -ge 1040 -and $nSamp -lt 64) {',
+  '            $nSamp++; [void]$sb.Clear();',
+  '            $ln = [ChMem]::K32GetMappedFileNameW($h, $mbi.BaseAddress, $sb, 300);',
+  '            if ($ln -gt 0) { $nNamed++; $nk = $sb.ToString();',
+  '              if (-not $nm.ContainsKey($nk)) { $nm[$nk] = 0 }; $nm[$nk] = $nm[$nk] + 1 } else { $nAnon++ };',
+  '          };',
+  '        };',
   '      };',
   '      if ($rs -ge 268435456) { $big += New-Object PSObject -Property @{ Base = $ba; Size = [double]$rs; St = $st; Ty = $ty2 } };',
   '    };',
@@ -212,6 +252,13 @@ export const RAMP_SCAN_PS = [
   "  foreach ($k in ($hist.Keys | Sort-Object)) { 'VMHIST pid=' + $tp.Pid + ' commit ' + $k + ' count=' + $hcnt[$k] + ' totalMB=' + [int]($hist[$k] / 1MB) };",
   '  $bt = @($big | Sort-Object -Property Size -Descending | Select-Object -First 10);',
   "  foreach ($bg in $bt) { 'VMTOP pid=' + $tp.Pid + ' base=0x' + $bg.Base.ToString('x') + ' sizeMB=' + [int]($bg.Size / 1MB) + ' ' + $bg.St + '/' + $bg.Ty };",
+  // The 2-4M mapped population, described three ways. `sampled` and `access` are printed on
+  // the healthy path too: a name census that could not run and one that ran and found every
+  // region anonymous are opposite readings, and without both numbers they render identically.
+  "  'VMMAP2M pid=' + $tp.Pid + ' regions=' + $n2m + ' allocBases=' + $ab.Keys.Count + ' access=' + $acc + ' sampled=' + $nSamp + ' named=' + $nNamed + ' anon=' + $nAnon;",
+  "  foreach ($pk in ($prot.Keys | Sort-Object)) { 'VMPROT pid=' + $tp.Pid + ' protect=' + $pk + ' count=' + $prot[$pk] };",
+  '  $nt = @($nm.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 10);',
+  "  foreach ($ne in $nt) { 'VMNAME pid=' + $tp.Pid + ' count=' + $ne.Value + ' name=' + $ne.Key };",
   '  };',
   '};',
   "'END';",
