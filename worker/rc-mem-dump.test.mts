@@ -26,6 +26,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   foldDumpEvents, summariseMemDump, renderMemDump, takeMemoryDump, ownerKey, sizeBucket,
   MEM_DUMP_TIMEOUT_MS, MEM_DUMP_CLEANUP_MS,
@@ -360,8 +362,16 @@ test('it is never inside reportAndBail — the bail\'s budget is what loses a ca
   // string 'THE WEDGE ARM' — which `code()` has already stripped, so indexOf returned -1, the
   // slice ran to the end of the file and swallowed the call site it was checking was absent.
   // The recorded shape, caught on the first run.
+  //
+  // AND IT IS BOUNDED ON THE FUNCTION'S OWN CLOSER, NOT ON THE NEXT ARM. It ended at the wedge
+  // arm until 2026-09-08, which made the slice cover everything between the definition and
+  // that arm — so the stall trigger, added in the gap and correctly OUTSIDE `reportAndBail`,
+  // failed a guard whose rule it does not break. A slice between two anchors is broken by
+  // anything inserted between them, silently and in whichever direction; the same shape
+  // already cost `concurrent-mint.test.mts` a vacuous pass. The rule is unchanged and is not
+  // weakened: the dump must not sit inside this function.
   const bodyStart = KW.indexOf('const reportAndBail = (');
-  const bodyEnd = KW.indexOf('if (stalledMs > HUNG_MS && !bailing) {');
+  const bodyEnd = KW.indexOf('\n      };', bodyStart);
   assert.ok(bodyStart > -1 && bodyEnd > bodyStart, 'reportAndBail moved — re-anchor this guard');
   const reportBody = KW.slice(bodyStart, bodyEnd);
   assert.ok(!/maybeMemoryDump|takeMemoryDump/.test(reportBody), 'a multi-second dump must not sit on the path that releases the profile lock');
@@ -543,6 +553,100 @@ test('the dump call after the arm survives, and it is REACHABLE', () => {
   const armEnd = KW.indexOf("reportAndBail(rampBailLine(ramp)");
   assert.ok(KW.indexOf('maybeMemoryDump(memory);', armEnd) > armEnd,
     'the call below the arm is what fires when a sample lands in the threshold gap');
+});
+
+// ── THE PROBES — nothing runs them, so nothing notices when they rot ───────────────────────
+//
+// `ramp-arm-probe.mjs` reproduces the 09-08 07:47 miss in a container in seconds; the whole
+// point is that the trigger path stops needing a ramp to test. But no CI job runs it (it needs
+// a Chromium and a sandbox), so it can break silently and be discovered the next time somebody
+// reaches for it — which is exactly when they cannot afford to debug it.
+//
+// This does not run the probes. It checks the two ways they go quietly dead: a syntax error,
+// and the import somebody "fixes" to match the neighbours.
+
+test('the leak probes parse and keep their deliberate playwright-core import', () => {
+  const probes = ['ramp-arm-probe.mjs', 'mapped-memory-repro.mjs', 'mem-dump-probe.mjs', 'alloc-trail-probe.mjs'];
+  let checked = 0;
+  for (const name of probes) {
+    const url = new URL(`../scripts/auto-cart-bot/${name}`, import.meta.url);
+    const src = readFileSync(url, 'utf8');
+    // `playwright-core` is the repo's devDependency; the box has the full package. A probe
+    // switched to bare `playwright` stops running in the one place it is useful, and the
+    // headers of all four say so. Asserted rather than trusted to a comment.
+    assert.match(src, /from 'playwright-core'/,
+      `${name} must import playwright-core — bare 'playwright' is not installed in the sandbox`);
+    assert.doesNotMatch(src, /from 'playwright'/, `${name} imports bare playwright`);
+    // A syntax error makes it useless and nothing else would notice.
+    const r = spawnSync(process.execPath, ['--check', fileURLToPath(url)], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${name} does not parse: ${r.stderr}`);
+    checked++;
+  }
+  // PER FILE, so a probe deleted or renamed fails here rather than shrinking the loop to zero
+  // and passing — the vacuous-guard shape this file has recorded more than once.
+  assert.equal(checked, probes.length, 'a probe went missing — this guard must not silently shrink');
+});
+
+// ── THE STALL TRIGGER — the reading taken before the worst moment, not at it ────────────────
+//
+// Four ramps were lost to a trigger gated on `.memory-latest.json`, which another process
+// writes every two minutes: the reading was about the dead browser (09-07 02:03), the bail
+// raced it (09-07 20:42), no sample landed in the threshold gap (09-08 02:03), the grace held
+// one tick of a twenty-second budget (09-08 07:47). Each fix was right and each cost 5-28
+// hours, because the trigger can only be exercised by a ramp.
+//
+// The stall is a local number this timer sets. It is never UNKNOWN, never stale, never about
+// another browser, and cannot be crossed between two samples — so none of the four can reach
+// it. Same rule the memory sampler, the heap trail and the RAM trail were all built on and
+// which was never applied to the dump: a SERIES beats an observation taken at the worst moment.
+
+test('the stall trigger fires the ramp dump and reads NO memory figure', () => {
+  assert.match(KW, /if \(stalledMs > MEM_DUMP_STALL_MS\) \{\s*\n\s*maybeMemoryDump\(null, 'ramp'\);/,
+    'the stall trigger must force the ramp phase with no memory reading — a trigger that '
+    + 'consults the sampler file inherits all four failure modes it exists to escape');
+});
+
+test('it runs BEFORE the wedge arm, or a return can race it exactly as 09-07 did', () => {
+  const trigger = KW.indexOf('if (stalledMs > MEM_DUMP_STALL_MS)');
+  const wedge = KW.indexOf('if (stalledMs > HUNG_MS && !bailing) {');
+  const rampArm = KW.indexOf('const ramp = rampBailDecision({');
+  assert.ok(trigger > -1, 'the stall trigger is gone');
+  assert.ok(wedge > trigger, 'the stall trigger must precede the wedge arm');
+  assert.ok(rampArm > trigger, 'the stall trigger must precede the ramp arm');
+});
+
+test('the stall threshold is above the longest healthy trip and below the bail', () => {
+  const stall = envDefault(KEEPWARM, 'RC_MEM_DUMP_STALL_MS');
+  const bail = envDefault(KEEPWARM, 'RC_KEEPWARM_RAMP_STALL_MS');
+  // ABOVE 75s: the longest renewal in forty recorded tab-closes is 71.5s, so an ordinary trip
+  // must not reach this and spend a reading on a healthy browser.
+  assert.ok(stall >= 75_000, `${stall}ms fires on ordinary renewals, which run to 71.5s`);
+  // BELOW the bail's stall, or there is no head start at all and this is the 09-07 race again.
+  assert.ok(stall < bail, `${stall}ms must precede the bail arm's ${bail}ms or the dump is raced away`);
+});
+
+test('the ramp budget resets per STALL EPISODE, so a slow healthy trip cannot spend it', () => {
+  // A once-per-browser-life budget would let one unusually slow trip take the slot and leave
+  // the real ramp with nothing — the fix creating the failure it was built to remove.
+  const block = KW.slice(KW.indexOf('if (stalledMs > MEM_DUMP_STALL_MS)'), KW.indexOf('if (stalledMs > HUNG_MS && !bailing) {'));
+  assert.match(block, /else if \(!memDump\.inFlight && memDump\.ramp\) \{/,
+    'the reset must be guarded on inFlight — re-arming a dump underneath itself is not a reset');
+  assert.match(block, /memDump\.ramp = false;/, 'the ramp flag must reset when the loop advances');
+  assert.match(block, /memDump\.landed = false;/, 'landed must reset with it or the expiry line goes quiet for ever');
+  assert.match(block, /memDump\.graceUntil = null;/, 'a deadline carried into the next episode denies it its grace');
+  // THE BASELINE IS A CONTROL AND IS ONCE PER BROWSER. Resetting it here would take one every
+  // long trip, which is noise in the table the ramp row is read against.
+  assert.doesNotMatch(block, /memDump\.baseline = false;/,
+    'the baseline is once per browser life — resetting it per stall makes the control noise');
+});
+
+test('a forced phase bypasses the memory reading, and an unforced call still needs one', () => {
+  const body = KW.slice(KW.indexOf('const maybeMemoryDump = ('), KW.indexOf('const renew = setInterval(() => {'));
+  assert.match(body, /maybeMemoryDump = \(memory, forcedPhase = null\)/, 'the forced phase parameter is gone');
+  assert.match(body, /if \(!forcedPhase && !memory\?\.known\) return;/,
+    'a forced phase must not require a memory reading — that requirement IS the four misses');
+  assert.match(body, /const phase = forcedPhase \?\? /,
+    'the forced phase must decide the phase, or the stall trigger silently files a ramp as a baseline');
 });
 
 // ── The grace itself ───────────────────────────────────────────────────────────────────────

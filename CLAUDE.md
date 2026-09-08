@@ -5301,6 +5301,121 @@ again.
   32 GB with a flat counter and 110 lifetime requests. Independent in both directions, five
   times over now.
 
+### THE METHOD WAS THE PROBLEM, NOT THE LEAK (2026-09-08) — asked "why do we keep missing things?"
+The owner's question after four missed ramps, and it is answerable with counting rather than
+feeling. **The weeks did not go into the leak. They went into the TRIGGER.**
+```
+09-07 02:03  the memory reading was about the browser that had just died   trigger
+09-07 20:42  the bail arm raced the dump away on the same tick             trigger
+09-08 02:03  no sampler tick landed between the two thresholds             trigger
+09-08 07:47  the grace stopped holding the instant the dump STARTED        trigger
+```
+- **THE INSTRUMENT HAS NEVER FAILED WHEN IT WAS ALLOWED TO RUN.** Six baselines, 209-332 ms,
+  ownership edges resolving on Linux **and** on Windows. Four ramps, 5-28 hours apart, were
+  spent debugging the plumbing that decides when to fire it.
+- **AND THREE INSTRUMENTS WERE RETIRED AS STRUCTURALLY BLIND, EACH PREDICTABLY.** The heap
+  trail (`JSHeapUsedSize` excludes external memory — documented), Track A (1-74 MB against
+  8-9 GB, because the sampling profiler does not see `MapViewOfFile`), the RAM arm (sixteen-plus
+  consecutive ramps; untouched commit never lowers free RAM, which the pagefile figures said
+  on day one). **All three were knowable before a line was written.**
+- **THE STRUCTURAL REASON: `alloc-trail-probe.mjs` and `mem-dump-probe.mjs` drive a real
+  Chromium to validate the INSTRUMENTS, and nothing anywhere drove the TRIGGER.** So the ramp
+  was the test, and the test costs a day.
+
+#### FOUR CHANGES, AND THE FIRST TWO ARE THE ONES THAT MATTER
+
+**1. THE STALL TRIGGER — the reading is taken BEFORE the worst moment, not at it.**
+`MEM_DUMP_STALL_MS` (90s), checked in the timer **before every arm**, calling
+`maybeMemoryDump(null, 'ramp')` — **which consults no file at all.** `Date.now() - lastTick` is
+a local number this timer sets: never UNKNOWN, never stale, never about another browser, and it
+cannot be crossed between two samples. **That retires all four failure modes at once, because
+none of them can reach a trigger that reads nothing.**
+- **THIS REPO ALREADY KNEW THE ANSWER AND HAD APPLIED IT TWICE.** The memory sampler, the heap
+  trail and the RAM trail were all built on *"a series replaces an observation that can only be
+  taken at the worst possible moment"*. **The rule was never applied to the dump**, which stayed
+  one observation at the worst moment gated on a two-minute-old file written by another process.
+- **90s IS MEASURED, NOT CHOSEN.** The longest renewal in forty recorded tab-closes is **71.5s**
+  and the bail arm needs **120s**, so the window is 71.5→120 and 90 sits in it: it fires on no
+  ordinary trip and three ticks before the exit.
+- **THE BUDGET IS PER STALL EPISODE, NOT PER BROWSER LIFE**, and that is the half that stops the
+  fix creating the failure it removes: a once-per-life budget lets one unusually slow healthy
+  trip spend the slot and leave the real ramp with nothing. The ramp flags reset when the loop
+  ADVANCES — guarded on `inFlight`, and **the baseline flag is deliberately untouched** because
+  that one is a control and resetting it per stall makes the control noise.
+- **The threshold and the grace are both KEPT.** Each wins a case this does not: a sample that
+  does land in the threshold gap, and a dump still in flight when the bail arrives.
+
+**2. `ramp-arm-probe.mjs` — THE TRIGGER PATH, DRIVEN OFF-BOX, IN SECONDS.** The arm reads four
+inputs and **three are forgeable**: `stalledMs` is a local number, the memory figure is a FILE
+WE WRITE, and only the CDP calls need a real browser. So the 09-08 07:47 conditions reproduce in
+a container with no ramp — which is why they were never tested.
+- **IT DOES NOT RE-IMPLEMENT THE DECISION.** `rampBailDecision`, `rampDumpGrace` and
+  `takeMemoryDump` are the real exports; the glue's SHAPE stays pinned structurally in
+  `rc-mem-dump.test.mts`. A rig asserting the shape would be asserting a copy.
+- **IT ANSWERED THREE THINGS NO UNIT TEST CAN REACH, and one of them was an assumption in the
+  fix that shipped an hour earlier.** A real dump takes **~390 ms** (so the healthy path still
+  spends exactly one tick); **`inFlight` really is still set when the reporting callback
+  resolves** — i.e. `.finally` does wait for the `.then` chain and the hold really does cover
+  the POST, which was reasoned and not measured; and a dump against a **closed browser returns
+  in 1-2 ms**, so it cannot strand the in-flight flag for the life of a browser.
+- **A FAST DUMP CANNOT CATCH THE BUG, WHICH IS WHY THE SLOW SCENARIO EXISTS.** At 390 ms the
+  broken grace and the fixed one behave identically. The scenario that reproduces 09-08 forces a
+  dump **slower than one tick** — a property of a struggling browser that a container cannot
+  produce — while leaving the DECISION real. **Verified: with the `dumpStarted && !dumpInFlight`
+  hold reverted the probe exits 1 and names the line; with the grace put back under the dump's
+  timeout it exits 1 and names that.** A probe nobody has seen fail is a probe that proves
+  nothing.
+- **AND NOTHING RUNS THE PROBES, so a guard now checks the two ways they go quietly dead** — a
+  syntax error, and the `playwright-core` import somebody "fixes" to match its neighbours. It
+  asserts **per file**, so a probe deleted or renamed fails rather than shrinking the loop to
+  zero and passing.
+
+**3. PREDICT THE READING BEFORE BUILDING THE INSTRUMENT.** Every retired instrument above was
+blind for a reason that was documented at the time. The rule is one line in the header before
+any code: **"on the known 9 GB event, this reads N."** If N is ~0, do not build it.
+`MEM_DUMP_STALL_MS` carries the first worked example — it states where it fires on the known
+event (90s, three ticks before the exit, on a browser that answered a dump in 209 ms) **and
+where it fires on the healthy path (nowhere: the longest trip is 71.5s)**. A rule with a worked
+example beats a guard that a comment can satisfy.
+
+**4. READ CHROMIUM'S SOURCE INSTEAD OF THE BOX WHERE THE QUESTION ALLOWS IT.** The 2 MB is a
+SIGNATURE and Chromium is open source; nobody had looked. Two fetches:
+- **`gpu::SharedMemoryLimits::mapped_memory_chunk_size` is 2,097,152 bytes** — not "about 2 MB",
+  **the same number** as the walk's 32,778 MB / 16,387 = 2.0000 MB.
+- `MappedMemoryManager` holds **one `gpu::Buffer` — one shared region, one `MapViewOfFile` — per
+  chunk**, in the RENDERER, as pagefile-backed anonymous shared memory. Every column of the walk
+  matches: exact size, one allocation base per region, `commit/mapped`, anonymous, READWRITE,
+  renderer.
+- **Its free path is the interesting half**: `FreeUnused()` reclaims blocks **whose tokens have
+  passed**, and `max_allocated_bytes` defaults to **`kNoLimit`**. A ramp is by definition a
+  renderer whose loop has stopped advancing, and RC's resident page runs a **WebGL ArcGIS map**,
+  so there is a command buffer under load — and 09-04 established the ramp is in the RESIDENT
+  renderer, not the trip's.
+- **DISCARDABLE MEMORY IS WEAKENED ON THE SAME EVIDENCE, FOR FREE**:
+  `client_discardable_shared_memory_manager.cc` allocates **4 MB** segments (1 MB low-end), not
+  2. One of the three named candidates narrowed with no ramp and no box.
+- **IT IS A CANDIDATE AND IS LABELLED ONE.** Three mechanisms have been guessed at on this leak
+  and each cost a session. What makes this one worth recording is that it is **falsifiable in
+  one line of the next ramp dump**: `gpu/mapped_memory` at ~32 GB confirms it;
+  `gpu/mapped_memory` absent or small does not.
+
+**5. `mapped-memory-repro.mjs` — IT DID NOT REPRODUCE, AND THAT IS NOT A REFUTATION.** Three
+load shapes against a real Chromium: large uploads, thousands of small allocations, and a
+renderer kept BUSY for twenty seconds while the dump was taken from the browser process. **The
+2-4M bucket did not move on any of them** and GPU shared memory stayed at tens of MB.
+- **SwiftShader, a different GPU stack and a synthetic load are three reasons the mechanism
+  could be real on the box and absent here**, and the probe says so in its own verdict rather
+  than printing a refutation. **Do not quote it as one.**
+- **WHAT IT DID ESTABLISH IS WORTH MORE THAN THE NEGATIVE:** `gpu/mapped_memory` **is a name the
+  dump emits** when `MappedMemoryManager` holds memory — observed, 16 MB attributed under it in
+  the first run. So the candidate above is a **one-line read** on the next ramp dump rather than
+  an argument. And a healthy WebGL renderer under load holds **tens of MB**, so the box's 32 GB
+  is not what a busy command buffer normally does.
+- **THE FIRST LOAD SHAPE WAS WRONG AND THE SIZE IS WHY.** 16 MB texture uploads produced ONE
+  16 MB chunk, because chunk size is `max(default, the request)` — so a big request never
+  produces the 2 MB signature. The box's uniform 2.0 MB means **many allocations each under
+  2 MB**. Recorded because the obvious load is the misleading one.
+
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
 healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
@@ -7659,6 +7774,49 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-08 (latest) — THE METHOD CHANGED; THE TRIGGER NO LONGER NEEDS A RAMP TO TEST
+>
+> **Master and mini-PC both `<pending>`; 3/3 shards; no holds queued; highest migration 076;
+> main's block 077-079.**
+>
+> **ASKED WHY WE KEEP MISSING THINGS. THE ANSWER IS COUNTABLE: all four missed ramps were in
+> the dump's TRIGGER, never in the dump.** It has never failed when it was allowed to run — six
+> baselines, 209-332 ms, ownership edges resolving on Linux and Windows. Four ramps, 5-28 hours
+> apart, went on the plumbing, because nothing anywhere exercised the trigger off-box.
+> CLAUDE.md → **"THE METHOD WAS THE PROBLEM, NOT THE LEAK"**. Do not re-derive it.
+>
+> **THE TWO CHANGES THAT MATTER.** The dump is now triggered by **the loop's own stall**
+> (`MEM_DUMP_STALL_MS`, 90s, before every arm, reading NO file) — which retires all four
+> failure modes at once, because none can reach a trigger that consults nothing. And
+> **`ramp-arm-probe.mjs` drives the trigger path against a real Chromium in seconds**: three of
+> the arm's four inputs are forgeable, so the 09-08 conditions reproduce with no ramp.
+> **Verified to FAIL against both bugs it exists for.**
+>
+> **90s IS MEASURED**: the longest renewal in forty tab-closes is 71.5s and the bail needs 120s.
+> The budget is **per stall episode**, so a slow healthy trip cannot spend the slot the real
+> ramp needs. The threshold and the grace are both KEPT — each wins a case this does not.
+>
+> **AND THE PROBE ANSWERED AN ASSUMPTION FROM THE FIX AN HOUR EARLIER**: `inFlight` really is
+> still set when the reporting callback resolves, so the hold really does cover the POST. That
+> was reasoned, not measured, until now. A real dump takes ~390 ms; a dump against a closed
+> browser returns in 1-2 ms and cannot strand the flag.
+>
+> **THE LEADING CANDIDATE IS NAMED FROM CHROMIUM'S SOURCE, AND IT IS FALSIFIABLE IN ONE LINE.**
+> `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is **2,097,152 bytes** — the same number
+> as the walk's 32,778 MB / 16,387 — with **one shared region per chunk**, in the renderer, and
+> `FreeUnused()` reclaiming only **when the command-buffer token advances**, `max_allocated_bytes`
+> defaulting to `kNoLimit`. A ramp is a renderer whose loop stopped advancing. **`gpu/mapped_memory`
+> at ~32 GB in the next ramp dump confirms it; absent or small does not.** Discardable is
+> weakened on the same evidence — it allocates **4 MB** segments, not 2.
+>
+> **`mapped-memory-repro.mjs` DID NOT REPRODUCE IT off-box across three load shapes, and that is
+> NOT a refutation** — SwiftShader, a different GPU stack and a synthetic load. It did establish
+> that `gpu/mapped_memory` is a name the dump emits, and that a healthy WebGL renderer under
+> load holds tens of MB.
+>
+> **STILL OUTSTANDING, UNCHANGED: one `mem-dump` with `phase: ramp` whose `MDPROC` pids contain
+> the walk's TARGET.** The readout does the join and prints `VOID` when they disagree.
+>
 > ### 2026-09-08 (later) — THE FOURTH MISS: THE GRACE WAITED FOR NOTHING
 >
 > **Master and mini-PC both `9641e14` (`bot-ask git-status`, never `autocart.bot_version`),

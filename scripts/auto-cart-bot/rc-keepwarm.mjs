@@ -595,6 +595,50 @@ const MEM_DUMP_RAMP_MB = Number(process.env.RC_MEM_DUMP_RAMP_MB || 1500);
  * called. No threshold separation can prevent that; granting the tick can.
  */
 const MEM_DUMP_GRACE_MS = Number(process.env.RC_MEM_DUMP_GRACE_MS || MEM_DUMP_GRACE_MS_DEFAULT);
+/**
+ * THE STALL AT WHICH THE RAMP DUMP IS TAKEN — and it reads NO memory figure at all.
+ *
+ * ── WHY A THIRD TRIGGER, AFTER A THRESHOLD AND A GRACE ─────────────────────────────────────
+ * The dump has missed four ramps for four different reasons, and every one was the same
+ * shape: it is ONE OBSERVATION AT THE WORST POSSIBLE MOMENT, gated on a file that ANOTHER
+ * PROCESS writes every two minutes.
+ *
+ *   09-07 02:03  the reading was about the browser that had just died      (fixed: notBefore)
+ *   09-07 20:42  the bail arm raced it away on the same tick               (fixed: this threshold)
+ *   09-08 02:03  no sample landed between the two thresholds               (fixed: the grace)
+ *   09-08 07:47  the grace held one tick of a twenty-second budget         (fixed: the in-flight hold)
+ *
+ * Each fix was correct and each cost a ramp — 5-28 hours apart — because the trigger can only
+ * be exercised by a ramp. **This repo already knows the answer to that shape**: the memory
+ * sampler, the heap trail and the RAM trail were all built on the rule that A SERIES REPLACES
+ * AN OBSERVATION THAT CAN ONLY BE TAKEN AT THE WORST POSSIBLE MOMENT. The rule was never
+ * applied to the dump.
+ *
+ * ── THE STALL IS THE SIGNAL THE LOOP OWNS ──────────────────────────────────────────────────
+ * `Date.now() - lastTick` is a local number this timer sets. It is never UNKNOWN, never
+ * stale, never about another browser, and cannot be crossed between two samples — which
+ * retires all four failure modes above at once, because none of them can reach a trigger that
+ * consults no file.
+ *
+ * And it is a GOOD proxy on this repo's own evidence: **duration and cost track each other
+ * five for five** (08-20 12 min/9,434 MB · 08-24 11 min/9,338 MB · 09-07 ~4 min/4,805 MB
+ * against 08-26 32 s/nothing and 09-07 15.6 s/413 MB). A long stall IS the ramp signature.
+ *
+ * ── PREDICTED READING, WHICH IS WHY 90s ────────────────────────────────────────────────────
+ * On the known event this fires at 90s of stall, thirty seconds — three ticks — before the
+ * bail arm's 120s, on a browser that at 09-08 07:47 still answered a dump in 209 ms. Against
+ * the healthy path it fires on NOTHING: the longest renewal in forty recorded tab-closes is
+ * 71.5s, so no ordinary trip reaches it. That gap, 71.5s to 120s, is the whole margin and it
+ * is measured rather than chosen.
+ *
+ * ── THE BUDGET IS PER STALL EPISODE, NOT PER BROWSER LIFE ──────────────────────────────────
+ * A once-per-life budget would let one unusually slow but healthy trip spend the slot and
+ * leave the real ramp with nothing — the fix creating the failure it was built to remove. The
+ * ramp flags reset when the loop ADVANCES, so each stall gets its own dump: a 95-second
+ * healthy trip costs one ~200 ms CDP call and is a useful control, and the ramp that follows
+ * is a different episode with its own slot.
+ */
+const MEM_DUMP_STALL_MS = Number(process.env.RC_MEM_DUMP_STALL_MS || 90_000);
 const RAMP_READING_MAX_AGE_MS = Number(process.env.RC_KEEPWARM_RAMP_READING_MAX_AGE_MS || 5 * 60_000);
 /**
  * HOW OLD THE BROWSER MUST BE BEFORE ITS BASELINE MEMORY DUMP IS WORTH TAKING.
@@ -2688,14 +2732,18 @@ async function warmResident() {
      * when the memory crosses, both arms go true on one tick, and the arm's `return` above
      * means this is never even called. `MEM_DUMP_RAMP_MB` is what actually creates the gap.
      */
-    const maybeMemoryDump = (memory) => {
-      if (memDump.inFlight || !heapProbe || !memory?.known) return;
+    const maybeMemoryDump = (memory, forcedPhase = null) => {
+      // A FORCED PHASE NEEDS NO MEMORY READING, WHICH IS THE POINT OF THE STALL TRIGGER. The
+      // four missed ramps were all the memory reading being absent, stale, or about another
+      // browser; a trigger that consults no file cannot meet any of them. See MEM_DUMP_STALL_MS.
+      if (memDump.inFlight || !heapProbe) return;
+      if (!forcedPhase && !memory?.known) return;
       // `>` and not `>=`, matching rampBailDecision's own `big`. The THRESHOLD is deliberately
       // lower than the bail's — see MEM_DUMP_RAMP_MB. That is a head start, not a drift: the
       // two arms must still agree about which EVENT they are looking at, and a dump taken
       // earlier in the same climb is the same event measured while the browser can answer.
-      const over = memory.rcMb > MEM_DUMP_RAMP_MB;
-      const phase = over ? 'ramp' : 'baseline';
+      const over = forcedPhase ? forcedPhase === 'ramp' : memory.rcMb > MEM_DUMP_RAMP_MB;
+      const phase = forcedPhase ?? (over ? 'ramp' : 'baseline');
       if (memDump[phase]) return;
       // The baseline is a CONTROL and wants a browser that has actually loaded RC — see
       // MEM_DUMP_BASELINE_AFTER_MS. The ramp reading is never delayed by it: an event that
@@ -2843,6 +2891,32 @@ async function warmResident() {
           bail(tail);
         })();
       };
+      /**
+       * THE STALL TRIGGER, BEFORE EVERY ARM AND CONSULTING NO FILE.
+       *
+       * See MEM_DUMP_STALL_MS for why this exists at all: four ramps were lost to a trigger
+       * gated on a reading another process writes every two minutes, and a series beats an
+       * observation taken at the worst possible moment — the rule this repo already applied to
+       * the memory sampler, the heap trail and the RAM trail, and never to the dump.
+       *
+       * FIRST, so it cannot be raced by a `return` the way `maybeMemoryDump` was on 09-07. It
+       * is fire-and-forget with an in-flight flag, so being ahead of the arms costs them
+       * nothing — no arm awaits it, and the grace below still covers the case where this has
+       * not landed by the time the bail fires.
+       *
+       * THE RESET IS WHAT MAKES THE BUDGET PER EPISODE. A stall that ends is a trip that
+       * returned, and the next stall is a different event that deserves its own reading — so a
+       * slow-but-healthy trip cannot spend the slot the real ramp needs. Guarded on
+       * `inFlight` so a dump still running is never re-armed underneath itself, and the
+       * BASELINE flag is deliberately untouched: that one is a control, once per browser.
+       */
+      if (stalledMs > MEM_DUMP_STALL_MS) {
+        maybeMemoryDump(null, 'ramp');
+      } else if (!memDump.inFlight && memDump.ramp) {
+        memDump.ramp = false;
+        memDump.landed = false;
+        memDump.graceUntil = null;
+      }
       /**
        * THE WEDGE ARM, CHECKED FIRST. A twelve-minute stall is the more specific diagnosis
        * than a low-RAM reading taken during it, and both conditions are true at once on a
