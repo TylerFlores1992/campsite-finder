@@ -4878,6 +4878,38 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
   cadence of ~5-7h before that. The trail has still never seen one. **That is not a cure**;
   every "not reproduced this session" reading in this file was a window that missed one.
 
+#### CONFIRMED ON DEMAND 2026-09-07: A RAMP CANNOT BE FORCED, AND THE ATTEMPT COSTS AN HOUR
+Asked to force a ramp so the one-shot capture could be exercised immediately. **The one safe
+lever was fired and it did not ramp**, which makes the paragraph above a finding rather than a
+single observation.
+```
+19:16:45 PT  Session before the test: DEAD — no token in localStorage
+19:16:52       → password field, password entered, submitting
+19:16:55       (asked Okta for a fresh credential — rewrote 1 authorize request(s))
+19:16:56     ✓ the bot can still sign itself in
+19:17     rc 320 MB (new pid, the post-Okta recycle) · commit 7.1/17.1 GB · free RAM 10.6 GB
+```
+**Eleven seconds, a real credential submitted, and the memory series never left ~315 MB.**
+- **`test-login` IS THE ONLY REMOTE LEVER THAT DRIVES AN OKTA TRIP ON THE *RESIDENT*
+  RENDERER**, which is the renderer the 09-04 measurement says ramps — the renewal runs in a
+  throwaway tab (#142) whose trail reads `-4 MB`. So this is the best-aimed forcing attempt
+  available, not a long shot, and it still produced nothing.
+- **THE MECHANISM RULES OUT FORCING, and it is already written above: duration and cost track
+  each other.** 11s and 32s cost zero; the 8-9 GB events are ten-to-twelve-minute climbs.
+  **The ramp is not caused by the Okta trip, it is caused by the trip GOING WRONG** — and a
+  navigation stalling is not a thing anybody can stage.
+- **THE ATTEMPT HAS A PRICE, so weigh it before repeating.** The rehearsal minted a fresh
+  60-minute token, so `planRenewal` now stands down for an hour — i.e. it **postponed** the
+  next ramp-bearing event rather than bringing one forward. The box also rations it to one
+  on-demand run per 6h on its own clock.
+- **IT DID REPAIR A DEAD SESSION, which is the one thing it reliably buys.** The log
+  immediately before read `⚠ RC SESSION IS DEAD … okta session STILL ALIVE`; afterwards
+  `token exp in 60m`. That is the legitimate reason to reach for this lever.
+- **WHAT IS STILL FORBIDDEN AND WHY.** Queueing a test hold locks a real campsite AND, per the
+  entry above, does not reliably produce a ramp either. `restart-rc`/`kill-chrome` only reopen
+  a browser; the renewal is the ramp-bearing event and a fresh token pushes it an hour out.
+  **The answer remains: wait.** Cadence is 5-28h; the capture is armed on the box.
+
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
 healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
@@ -7246,6 +7278,16 @@ tree, the deploy and the fleet were all correct.
 > hands it to the dump's owner column, which is now guaranteed to be about the right browser.**
 > Full entry: "ONE CAPTURE THAT ENDS ON EITHER BRANCH". **Bot-side for the walk half — it needs a
 > box update after merge.**
+>
+>
+> **AND IT IS ON THE BOX — `aae25bd`, applied 2026-09-07 19:01 PT, confirmed by `git-status`.**
+> **A RAMP WAS THEN DELIBERATELY FORCED AND COULD NOT BE.** `test-login` — the only remote lever
+> that drives an Okta trip on the RESIDENT renderer — signed in with a real password in
+> **eleven seconds for zero memory**, second such reading after 08-26. **Do not re-fire it
+> hoping for a ramp:** it is rationed to one per 6h, and the fresh 60-minute token it mints
+> stands `planRenewal` down for an hour, i.e. it POSTPONES the next ramp-bearing event. Full
+> entry: "CONFIRMED ON DEMAND 2026-09-07". **The capture is armed and waiting on a natural
+> ramp** — last one 09-07 02:03 PT, cadence 5-28h.
 >
 > **THE RDR BURST GOT BIGGER AND IT IS STILL THE NEXT REAL BUG.** The 09-07 bail carried
 > **49,237 hits in 120s / 75,195 lifetime** on `futurebookingstartsendsdates`, on a browser three
