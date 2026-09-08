@@ -183,3 +183,87 @@ export function rampBailLine(d) {
     + `rc family ${Math.round(d.rcMb ?? 0)} MB (reading ${Math.round((d.readingAgeMs ?? 0) / 1000)}s old). `
     + 'Both conditions met; bailing now rather than at the twelve-minute wedge so the box keeps ~7 GB of commit.';
 }
+
+/**
+ * HOW LONG THE BAIL WILL HOLD SO THE RAMP DUMP CAN BE TAKEN.
+ *
+ * ── WHY A HOLD AT ALL, WHEN THE THRESHOLDS WERE SUPPOSED TO BUY THE GAP ────────────────────
+ * `MEM_DUMP_RAMP_MB` (1500) sits below `RAMP_MB` (3000) so the dump fires first. That is a gap
+ * measured in MEGABYTES, and it is PAID IN SAMPLER TICKS: both arms read the same file, which
+ * `bot.mjs` writes every two minutes, so a lower threshold only helps when a SAMPLE happens to
+ * land between the two numbers. On 2026-09-08 none did, and the series says why:
+ *
+ *     09:01:10  rc =   238 MB   commit  7,273 / 17,150
+ *     09:03:11  rc = 3,423 MB   commit 43,760 / 44,960   <- the only sample of the whole ramp
+ *     09:05:11  rc =   205 MB   commit  7,000 / 17,150
+ *
+ * Onset, peak and bail inside ONE two-minute interval — ≥1,580 MB/min, nearly double the
+ * ~850 MB/min the gap was sized against. The one reading above 1500 was also above 3000, both
+ * arms went true on that tick, the arm returned, and `maybeMemoryDump` was never called. Third
+ * consecutive ramp with no owner reading, third distinct mechanism.
+ *
+ * So NO threshold separation can guarantee the head start: the ramp can cross the entire gap
+ * between two samples. The granularity that decides "same tick" is the sampler's period, not
+ * the memory axis. #296 moved the number and left the mechanism.
+ *
+ * ── SO THE TICK IS WHAT IS GRANTED, NOT MEGABYTES ──────────────────────────────────────────
+ * On a tick where the arm would fire and no ramp dump has been taken for this browser life,
+ * the bail HOLDS and the dump is started instead. The next tick bails.
+ *
+ * BOUNDED BY A DEADLINE, ONCE PER BROWSER LIFE, AND THE DEADLINE IS THE POINT. `HUNG_MS`
+ * already tolerates twelve minutes and this arm exists to cut that to two; a hold with no
+ * bound would hand the twelve minutes back. The cost is real and it is the profile lock: the
+ * bail is what releases it, and the lock staying held past 08:00 is what loses a cart. At
+ * ≤2 ticks against a stall already 120s old and a bail whose own diagnostics take 2-8s, that
+ * is a bounded ~12% and it is the only way the reading gets taken at all.
+ *
+ * TWO TICKS AND NOT ONE, deliberately. A refusal is not a reading, so `maybeMemoryDump` puts
+ * the phase back and the next tick retries — and a baseline dump can be in flight when the arm
+ * fires, which is not rare: the baseline is due three minutes into a browser life and every
+ * burst-carrying ramp so far has landed in a browser 2-3 minutes old. One tick would spend the
+ * grace on a call that could not start.
+ *
+ * THE GRACE IS SPENT WHETHER OR NOT THE DUMP LANDS. `dumpTaken` is set when the dump STARTS,
+ * so the ordinary path holds exactly one tick; the deadline only binds when nothing could be
+ * started. Either way the bail happens — this can delay the exit, never prevent it.
+ */
+export const MEM_DUMP_GRACE_MS_DEFAULT = 15_000;
+
+/**
+ * Should the bail hold this tick so the ramp memory dump can be taken?
+ *
+ * `graceUntil` is the caller's stored deadline: null until the first hold, then the instant the
+ * grace runs out. The caller stores what `until` returns.
+ * @param {{
+ *   now: number,
+ *   dumpTaken: boolean,
+ *   graceUntil: number|null|undefined,
+ *   canDump: boolean,
+ *   graceMs?: number,
+ * }} input
+ * @returns {{ hold: boolean, started: boolean, until: number|null, why: string }}
+ */
+export function rampDumpGrace({ now, dumpTaken, graceUntil, canDump, graceMs = MEM_DUMP_GRACE_MS_DEFAULT }) {
+  // `Number(null)` IS 0 AND `Number.isFinite(0)` IS TRUE, so a bare finite check reads "no
+  // grace has been granted" as "the grace expired at the epoch" and bails on the first
+  // firing tick — i.e. the fix present and inert. Caught by the guard on its first run.
+  const until = graceUntil == null || !Number.isFinite(Number(graceUntil)) ? null : Number(graceUntil);
+  // No CDP session means there is nothing to wait FOR. Holding the exit for a dump that
+  // cannot be attempted is pure cost — the same rule as an UNKNOWN standing an arm down.
+  if (!canDump) return { hold: false, started: false, until, why: 'no CDP probe, so there is no dump to wait for' };
+  // Already taken for this browser life — including a dump started on the previous tick, which
+  // is the ordinary path and is what makes the normal hold exactly one tick.
+  if (dumpTaken) return { hold: false, started: false, until, why: 'the ramp dump for this browser life is already under way' };
+  if (until == null) {
+    return {
+      hold: true, started: true, until: now + graceMs,
+      why: `holding the bail up to ${Math.round(graceMs / 1000)}s so the ramp dump can name what owns the 32 GB`,
+    };
+  }
+  if (now < until) {
+    return { hold: true, started: false, until, why: `still inside the ${Math.round(graceMs / 1000)}s dump grace — retrying the dump` };
+  }
+  // NAMED, because this is the case where the reading was lost and the next reader needs to
+  // know the grace ran rather than that it was never granted.
+  return { hold: false, started: false, until, why: 'the dump grace expired without a dump — bailing with no owner reading' };
+}

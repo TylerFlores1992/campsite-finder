@@ -1,8 +1,42 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-07 evening** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-08** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
+> ## THE DUMP MISSED A THIRD TIME. THE FIX IS IN AND NEEDS A BOX UPDATE (2026-09-08)
+>
+> **State: master and mini-PC both `6843973` at the start of this session (read by
+> `bot-ask git-status`, never `autocart.bot_version`); 3/3 shards; no holds queued; highest
+> migration 076; main's block 077-079.**
+>
+> **A NATURAL RAMP AT 02:03 PT PRODUCED NO `ramp` DUMP, WITH #296 LIVE ON THE BOX.** Third
+> consecutive miss, and the mechanism is new: the memory series shows **238 MB → 3,423 MB →
+> 205 MB across two samples**, i.e. the whole ramp inside ONE two-minute sampler interval. The
+> dump's 1500 bar and the arm's 3000 bar are read from the SAME file, so the head start is
+> **measured in megabytes and paid in sampler ticks** — and a ramp that crosses the entire gap
+> between two samples gives the dump no tick at all. **#296 moved the number and left the
+> mechanism.** CLAUDE.md → "THE THIRD MISS: THE HEAD START IS MEASURED IN MEGABYTES AND PAID IN
+> SAMPLER TICKS". Do not re-derive it.
+>
+> **THE FIX GRANTS THE TICK INSTEAD: `rampDumpGrace`.** On a tick where the arm would fire and
+> no ramp dump has been taken for this browser life, the bail HOLDS and the dump starts.
+> Bounded by a deadline, once per browser life, ≤2 ticks; it can delay the bail, never prevent
+> it. The threshold is KEPT — it wins the ~half of ramps where a sample does land in the gap.
+> **BOT-SIDE: it is inert until the box updates, and then it needs a ramp.** Confirm the sha
+> with `npx tsx scripts/bot-ask.mts git-status`.
+>
+> **WHAT IS STILL OUTSTANDING IS UNCHANGED: one `mem-dump` with `phase: ramp` whose `MDPROC`
+> pids contain the walk's TARGET.** `discardable/segment` at ~32 GB names the subsystem; a
+> small `shared_memory` total retires discardable, mojo and the GPU transfer path together. The
+> readout does the join and prints `VOID` when they disagree.
+>
+> **TWO THINGS THAT DO NOT NEED REPEATING.** The walk is now corroborated twice (16,213
+> regions / 16,212 bases / 32,443 MB, all anonymous, all READWRITE, with the control's
+> file-backed positive control present both times). And the status counter answered on its
+> first burst with a **fourth** branch: **69,060 asks, zero answers of any kind** — not 2xx,
+> not 401, not `failed`. Candidate, labelled as one: requests outrunning the connection pool.
+> **Do not re-link it to the leak.**
+>
 > ## A RAMP CAN BE FORCED. THE WALK ANSWERED. THE DUMP IS THE LAST THING OUTSTANDING (2026-09-07)
 >
 > **DO NOT WAIT FOR A RAMP — order one.** The previous version of this block said to wait, and
