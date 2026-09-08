@@ -5277,8 +5277,14 @@ the present ones:
 - **AND `tsconfig.worker.json` CAUGHT WHAT THE TESTS COULD NOT**: a duplicate
   `MEM_DUMP_TIMEOUT_MS` import the suite ran through happily. Second time in two days that the
   worker config has been the thing that noticed.
-- **BOT-SIDE, so it is inert until the box updates.** Confirm with
-  `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`.
+- ~~**BOT-SIDE, so it is inert until the box updates.**~~ **MERGED AS #300 AND ON THE BOX
+  (`9641e14`, 2026-09-08 16:2x UTC, confirmed by `bot-ask git-status` and not by
+  `autocart.bot_version`).** The worker deploy went green, the fleet came back 3/3 shards with
+  a 2s heartbeat, and health read 17 of 19 with only the two documented-benign warns
+  (`rc_session` dead between releases, `rc_login` standing down after the restart). Struck
+  rather than deleted: "inert until the box updates" is exactly the sentence a later reader
+  quotes as a task. **It now needs only a ramp** — they arrive every 5-28 h, or one can be
+  ordered by the recipe above.
 
 #### AND THE SAME RAMP MADE THE WALK THREE-FOR-THREE, AND THE BURST TWO-FOR-TWO
 Free corroboration from the event that produced the miss above, and neither needs repeating
@@ -7655,7 +7661,7 @@ tree, the deploy and the fleet were all correct.
 
 > ### 2026-09-08 (later) — THE FOURTH MISS: THE GRACE WAITED FOR NOTHING
 >
-> **Master `30f2124`, mini-PC `64b40d5` (`bot-ask git-status`, never `autocart.bot_version`),
+> **Master and mini-PC both `9641e14` (`bot-ask git-status`, never `autocart.bot_version`),
 > 3/3 shards, no holds queued, highest migration 076, main's block 077-079.**
 >
 > **THE GRACE REACHED THE BOX AT 07:45:50 PT AND A NATURAL RAMP ARRIVED AT 07:47:50 — 120
@@ -7674,7 +7680,8 @@ tree, the deploy and the fleet were all correct.
 > timeout.** `inFlight` clears in the dump's `.finally`, and `.finally` waits for the `.then`
 > chain, so the hold covers the POST as well as the dump. It can delay the bail (~20-30s
 > worst case) and still cannot prevent it; the three-tick ceiling is kept and nothing was
-> relaxed. **BOT-SIDE — it needs a box update, then a ramp.**
+> relaxed. **ON THE BOX as `9641e14` (2026-09-08 16:2x UTC, `bot-ask git-status`); fleet 3/3
+> shards, health 17/19 with the two documented-benign warns. It needs only a RAMP.**
 >
 > **HOW TO READ THE NEXT ONE.** `* holding the bail up to 20s` is the grace being granted; then
 > either `memory dump (ramp) in Nms`, or one of two named expiries — `still in flight` (a
