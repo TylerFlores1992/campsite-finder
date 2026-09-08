@@ -510,6 +510,13 @@ test('the bail grants the dump a bounded grace, because the threshold cannot gua
   const block = KW.slice(arm, armEnd);
   assert.match(block, /rampDumpGrace\(\{/, 'the firing tick must consult the grace before it bails');
   assert.match(block, /if \(grace\.hold\) \{/, 'a granted grace must actually hold the bail');
+  // BOTH FACTS, OR THE PURE FUNCTION IS PERFECT AND UNREACHABLE. `rampDumpGrace` cannot see an
+  // in-flight dump the caller does not tell it about, and every behavioural guard above calls
+  // it directly — so a call site that drops `dumpInFlight` restores the 2026-09-08 bug with the
+  // whole suite green. Fix-present-and-inert, pinned structurally.
+  assert.match(block, /dumpStarted: memDump\.ramp,/, 'the grace must be told the ramp dump has started');
+  assert.match(block, /dumpInFlight: memDump\.inFlight,/,
+    'the grace must be told the dump is still running, or it bails the tick after it starts');
   assert.match(block, /\n\s*maybeMemoryDump\(memory\);/,
     'the held tick must START the dump, or the grace buys a delay and no reading');
   assert.match(block, /return;/, 'a held tick must not fall through into the bail on the same tick');
@@ -541,37 +548,59 @@ test('the dump call after the arm survives, and it is REACHABLE', () => {
 // ── The grace itself ───────────────────────────────────────────────────────────────────────
 
 test('a firing tick with no dump yet HOLDS, and names the deadline it just set', () => {
-  const g = rampDumpGrace({ now: 1_000, dumpTaken: false, graceUntil: null, canDump: true, graceMs: 15_000 });
+  const g = rampDumpGrace({ now: 1_000, dumpStarted: false, dumpInFlight: false, graceUntil: null, canDump: true, graceMs: 15_000 });
   assert.equal(g.hold, true);
   assert.equal(g.started, true, 'the first hold must report that it started the grace');
   assert.equal(g.until, 16_000);
 });
 
-test('the ordinary path holds exactly one tick — a dump that STARTED spends it', () => {
-  // `dumpTaken` is set when the dump starts, not when it lands, so the very next tick bails.
-  const g = rampDumpGrace({ now: 11_000, dumpTaken: true, graceUntil: 16_000, canDump: true });
+// INVERTED 2026-09-08, NOT RELAXED — this guard REQUIRED the bug, which is the
+// `held-offer-scope` shape. It asserted that a dump which had STARTED stopped the hold, on the
+// premise that a dump costs ~200ms (the healthy-path baseline). During a ramp the browser
+// answers no CDP call in 3000ms, so the very next tick bailed and `process.exit` threw the
+// accumulator away — ten seconds into a twenty-second budget, with no line either way. A dump
+// is TAKEN when it has started and finished, and the hold is what waits for that.
+test('a dump IN FLIGHT holds the bail — the grace is a wait, not a permission slip', () => {
+  const g = rampDumpGrace({ now: 11_000, dumpStarted: true, dumpInFlight: true, graceUntil: 16_000, canDump: true });
+  assert.equal(g.hold, true, 'bailing while the dump is still running is what lost four ramps');
+  assert.equal(g.started, false, 'a continued hold must not look like a fresh grant');
+  assert.equal(g.until, 16_000, 'the deadline must not be pushed out — that is an unbounded hold');
+  assert.match(g.why, /waiting for the ramp dump/);
+});
+
+test('a dump that started AND finished stops the hold — that is the ordinary path', () => {
+  const g = rampDumpGrace({ now: 11_000, dumpStarted: true, dumpInFlight: false, graceUntil: 16_000, canDump: true });
   assert.equal(g.hold, false);
-  assert.match(g.why, /already under way/);
+  assert.match(g.why, /has been taken/);
 });
 
 test('a refusal is retried inside the deadline — that is why it is not one tick', () => {
   // `maybeMemoryDump` puts the phase back on a refusal, and a BASELINE dump can be in flight
   // when the arm fires: the baseline is due three minutes into a browser life and every
   // burst-carrying ramp so far has landed in a browser 2-3 minutes old.
-  const g = rampDumpGrace({ now: 11_000, dumpTaken: false, graceUntil: 16_000, canDump: true });
+  const g = rampDumpGrace({ now: 11_000, dumpStarted: false, dumpInFlight: false, graceUntil: 16_000, canDump: true });
   assert.equal(g.hold, true);
   assert.equal(g.started, false, 'a continued hold must not look like a fresh grant');
   assert.equal(g.until, 16_000, 'the deadline must not be pushed out — that is an unbounded hold');
 });
 
 test('the deadline BINDS — an expired grace bails and says the reading was lost', () => {
-  const g = rampDumpGrace({ now: 99_000, dumpTaken: false, graceUntil: 16_000, canDump: true });
+  const g = rampDumpGrace({ now: 99_000, dumpStarted: false, dumpInFlight: false, graceUntil: 16_000, canDump: true });
   assert.equal(g.hold, false);
   assert.match(g.why, /expired/, 'a grace that ran and bought nothing must be distinguishable from one never granted');
 });
 
+test('the deadline binds a dump still in flight too, and says which expiry it was', () => {
+  // It CAN delay the bail and must never prevent it: a browser that will not answer inside its
+  // own timeout does not get to hold the profile lock indefinitely.
+  const g = rampDumpGrace({ now: 99_000, dumpStarted: true, dumpInFlight: true, graceUntil: 16_000, canDump: true });
+  assert.equal(g.hold, false, 'an in-flight dump must not outlast the deadline');
+  assert.match(g.why, /still in flight/,
+    'a browser too slow to answer and a dump that never started are different findings');
+});
+
 test('no CDP probe means no hold — there is nothing to wait for', () => {
-  const g = rampDumpGrace({ now: 1_000, dumpTaken: false, graceUntil: null, canDump: false });
+  const g = rampDumpGrace({ now: 1_000, dumpStarted: false, dumpInFlight: false, graceUntil: null, canDump: false });
   assert.equal(g.hold, false);
   assert.equal(g.until, null);
 });
@@ -591,4 +620,36 @@ test('the grace cannot outlast the wedge it exists to pre-empt', () => {
   // diagnostics already cost 2-8s against a stall that is 120s old by definition; three ticks
   // is the ceiling at which this stops being a rounding error on that.
   assert.ok(grace <= 3 * tick, `${grace}ms holds the profile lock too long — the lock past 08:00 is what loses a cart`);
+});
+
+// THE PAIRING NOTHING CHECKED, AND IT IS THE ONE THAT DECIDES WHETHER A READING IS POSSIBLE.
+// The guard above bounds the grace against the TICK. The grace shipped at 15_000 against a
+// `MEM_DUMP_TIMEOUT_MS` of 20_000 — two constants with no stated relationship, ordered the
+// wrong way round — so the bail was always going to kill a dump that was still inside its own
+// budget, and on 2026-09-08 it did. A guard on the wrong pairing is how that goes unnoticed.
+test('the grace covers the dump\'s OWN timeout, or the bail kills a dump that would have answered', () => {
+  assert.ok(
+    MEM_DUMP_GRACE_MS_DEFAULT >= MEM_DUMP_TIMEOUT_MS,
+    `a ${MEM_DUMP_GRACE_MS_DEFAULT}ms grace cannot wait out a ${MEM_DUMP_TIMEOUT_MS}ms dump — `
+    + 'the exit would discard an accumulator that was still filling',
+  );
+  // DERIVED, not a second literal that happens to be big enough today. Raising the dump's
+  // timeout must raise the wait with it; two numbers kept in step by hand is the failure above.
+  const src = readFileSync(new URL('../scripts/auto-cart-bot/ramp-bail.mjs', import.meta.url), 'utf8');
+  assert.match(src, /MEM_DUMP_GRACE_MS_DEFAULT = MEM_DUMP_TIMEOUT_MS/,
+    'the grace default must be derived from the dump timeout, not written beside it');
+});
+
+test('the bail names a grace that bought nothing, and knows a landed reading from a started one', () => {
+  // `!memDump.ramp` is "no dump was STARTED". The 2026-09-08 case — started, then killed in
+  // flight — is exactly the one it cannot see, so the bail printed no line at all about a
+  // grace it had just spent. `landed` is set on a dump that produced a reading.
+  assert.match(KW, /if \(grace\.until != null && !memDump\.landed\) log\(/,
+    'the expiry line must gate on a LANDED reading, not on a dump having been started');
+  assert.match(KW, /if \(phase === 'ramp'\) memDump\.landed = true;/,
+    'nothing sets `landed`, so the expiry line would fire on every successful ramp dump');
+  // Reset with the browser life, like the two phase flags and the deadline beside them.
+  const open = KW.indexOf('residentPage = page;');
+  const reset = KW.indexOf('landed: false', open);
+  assert.ok(reset > open && reset - open < 600, '`landed` must reset with the browser life');
 });

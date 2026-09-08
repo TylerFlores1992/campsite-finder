@@ -2639,7 +2639,7 @@ async function warmResident() {
      * somebody who never read why it was reversed.
      */
     let browserLifeSince = 0;
-    let memDump = { baseline: false, ramp: false, inFlight: false, graceUntil: null };
+    let memDump = { baseline: false, ramp: false, inFlight: false, landed: false, graceUntil: null };
     /**
      * THE RESIDENT PAGE'S REQUESTS, counted from the moment the page exists. Attached where
      * `residentPage = page` is assigned, so a reopen — a new context, a new page — gets a new
@@ -2713,6 +2713,10 @@ async function warmResident() {
             memDump[phase] = false;
             return;
           }
+          // A READING THAT EXISTS. Set before the POST, because the log line above is already
+          // the evidence the dump answered — this flag only decides whether the bail prints
+          // "the grace bought nothing", and a slow POST must not make it say that.
+          if (phase === 'ramp') memDump.landed = true;
           const detail = summariseMemDump(r.folded, phase);
           const lead = detail.lead;
           log(`  memory dump (${phase}) in ${r.ms}ms — ${lead
@@ -2890,7 +2894,12 @@ async function warmResident() {
            */
           const grace = rampDumpGrace({
             now: Date.now(),
-            dumpTaken: memDump.ramp,
+            // TWO FACTS, NOT ONE. `ramp` is "we asked for a dump"; `inFlight` is "it has not
+            // answered yet". They were merged as `dumpTaken` until 2026-09-08, and the merge
+            // meant the tick after the dump STARTED bailed and killed it — ten seconds into a
+            // twenty-second budget, with no line either way. See rampDumpGrace.
+            dumpStarted: memDump.ramp,
+            dumpInFlight: memDump.inFlight,
             graceUntil: memDump.graceUntil,
             canDump: Boolean(heapProbe),
             graceMs: MEM_DUMP_GRACE_MS,
@@ -2910,9 +2919,12 @@ async function warmResident() {
             // lock is ten minutes against a skipped ten-second renewal.
             return;
           }
-          // NAMED WHEN IT WAS SPENT FOR NOTHING. "the grace ran and the dump never landed" and
-          // "no grace was granted" are different failures and a silence merges them.
-          if (grace.until != null && !memDump.ramp) log(`  ${grace.why}`);
+          // NAMED WHEN IT WAS SPENT FOR NOTHING, AND `landed` IS THE ONLY FIELD THAT KNOWS.
+          // This gated on `!memDump.ramp` — which is "no dump was STARTED" — so the one case
+          // that actually happened on 2026-09-08, a dump started and then killed in flight,
+          // printed nothing at all. "The grace ran and the reading was lost", "no grace was
+          // granted" and "it worked" are three outcomes and a silence merges them.
+          if (grace.until != null && !memDump.landed) log(`  ${grace.why}`);
           reportAndBail(rampBailLine(ramp), '  (see the ramp line above)', 'ramp');
           return;
         }
@@ -3023,7 +3035,7 @@ async function warmResident() {
       // memDump. Reset with the counter below and for the same reason: a reopen is a new
       // context, a new page and a new renderer, so last life's baseline describes nothing.
       browserLifeSince = Date.now();
-      memDump = { baseline: false, ramp: false, inFlight: false, graceUntil: null };
+      memDump = { baseline: false, ramp: false, inFlight: false, landed: false, graceUntil: null };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
       mark('initial RC load');

@@ -5193,9 +5193,10 @@ ordinary path holds exactly **one tick**.
 - ~~**BOT-SIDE, so it is inert until the box updates**~~ — **MERGED AS #298 AND ON THE BOX
   (`64b40d5`, 2026-09-08, confirmed by `bot-ask git-status`), fleet back at 3/3 shards.** It
   now needs only a ramp; they arrive every 5-28 hours, or one can be ordered (recipe above).
-  **HOW TO READ IT:** a `* holding the bail up to 15s` line in `logs\rc-keepwarm.log` is the
-  grace being granted, followed by either `memory dump (ramp) in Nms` or `the dump grace expired
-  without a dump` — the second being the grace having run and bought nothing, which is
+  **HOW TO READ IT** *(the durations here are superseded by the entry below — the grace is 20s
+  now and holds while the dump is in flight)*: a `* holding the bail up to Ns` line in
+  `logs\rc-keepwarm.log` is the grace being granted, followed by either `memory dump (ramp) in
+  Nms` or one of the two named expiries — the grace having run and bought nothing, which is
   deliberately distinguishable from never having been granted.
 
 #### AND THE SECOND WALK CORROBORATES THE FIRST, WITH THE CENSUS ATTACHED (2026-09-08)
@@ -5212,6 +5213,87 @@ One allocation base per region on both, so it is N separate `MapViewOfFile` call
 mapping carved into views — twice, on two different browsers, two days apart. **The control's
 file-backed entry is the census's own positive control** and it appeared both times, so
 "all anonymous" is a reading and not a broken scan.
+
+#### THE FOURTH MISS: THE GRACE WAS A PERMISSION SLIP, NOT A WAIT (2026-09-08)
+The grace reached the box at **07:45:50 PT** and a natural ramp arrived at **07:47:50** — one
+hundred and twenty seconds later. It fired, it held, and **there is still no `ramp` dump.**
+The keep-warm's own log is the whole diagnosis, and the missing lines are as load-bearing as
+the present ones:
+```
+14:47:50   * holding the bail up to 15s so the ramp dump can name what owns the 32 GB
+14:48:05 ✗ RAMP — the loop has not advanced in 139s, rc family 3739 MB (reading 18s old)
+14:48:05   heap facts unavailable (Performance.getMetrics: no answer in 3000ms)
+14:48:06   Releasing the profile and exiting so the hold runner can use it.
+           (no `memory dump (ramp) …` line — and no `did not run` line either)
+```
+- **THE GRACE HELD ONE TICK AND ITS OWN DEADLINE WAS NEVER CONSULTED.** `rampDumpGrace` took a
+  single `dumpTaken`, the caller passed `memDump.ramp`, and that flag is set **synchronously
+  when the dump STARTS** — so the next tick took the `already under way` branch above the
+  `now < until` check and bailed **ten seconds in**. The 15-second deadline was unreachable
+  code on this path. **`dumpTaken` merged two facts**: "we asked for a reading" and "we have
+  one", and the gap between them is the entire event this instrument exists to measure.
+- **AND THE DEADLINE WOULD NOT HAVE BEEN ENOUGH EITHER — THIS IS ARITHMETIC, NOT BAD LUCK.**
+  `MEM_DUMP_TIMEOUT_MS` is **20s** and the grace was **15s**: two constants with no stated
+  relationship, ordered the wrong way round, so **the bail was always going to kill a dump that
+  was still inside its own budget.** Both paths gave the instrument strictly less time than it
+  needs. The old guard bounded the grace against the **TICK** (`> 1`, `<= 3`) and **nothing
+  anywhere compared it with the dump's timeout** — a guard on the wrong pairing is how that
+  goes unnoticed for a release. Same shape as `nextHoldRelease` disagreeing with `dueHolds`
+  about whether a hold existed.
+- **`process.exit(1)` THREW THE ACCUMULATOR AWAY, WHICH IS WHY IT IS SILENT.** `takeMemoryDump`
+  deliberately keeps whatever arrived — *"A TIMEOUT WITH DATA IS STILL A READING"* — so a dump
+  still streaming at ten seconds had data worth having. The exit discarded it, and neither the
+  success line nor the `did not run` line ever printed: the two outcomes that module goes out of
+  its way to keep apart, merged into nothing.
+- **AND THE BAIL'S OWN "the grace bought nothing" LINE COULD NOT SEE IT.** It gated on
+  `!memDump.ramp` — *no dump was STARTED* — so the one case that actually happened printed
+  no line about a grace it had just spent. `landed` is set on a dump that produced a reading.
+- **FIXED THREE WAYS, AND THE HOLD IS THE ONE THAT MATTERS.** The grace now runs **while the
+  dump is IN FLIGHT**, to the deadline — which is what the word meant all along. `inFlight` is
+  cleared in the dump's `.finally`, and `.finally` waits for the `.then` chain, so it stays true
+  until `reportBotEvent` has resolved: **the hold covers the POST as well as the dump**, which
+  is the half that actually gets the reading off the box. The default is **DERIVED**
+  (`MEM_DUMP_GRACE_MS_DEFAULT = MEM_DUMP_TIMEOUT_MS`) so raising one raises the other, and a
+  guard pins the relationship rather than the number. The two expiries are worded apart — a
+  dump still running when the deadline binds is a browser too slow to answer inside its own
+  budget; a deadline reached with nothing started is a dump that could never begin.
+- **IT CAN DELAY THE BAIL AND STILL CANNOT PREVENT IT.** The deadline binds whatever the dump is
+  doing, and the bail fires on the first tick after it — worst case ~20-30s against a stall
+  already 120s old and a wedge that tolerates twelve minutes. The cost is the profile lock
+  arriving that much later, and it stays inside the hold runner's own 60s preemption wait.
+  **The ceiling of three ticks is KEPT**; nothing was relaxed to make room.
+- **THE PRE-EXISTING GUARD REQUIRED THE BUG** — *"the ordinary path holds exactly one tick — a
+  dump that STARTED spends it"* — on the premise that a dump costs ~200 ms, which is the
+  **healthy-path baseline**. During a ramp the browser answered no CDP call in 3000 ms.
+  **INVERTED, not relaxed**, with the reason written in. The `held-offer-scope` shape for the
+  third time in this file.
+- **Nine mutations, each verified to APPLY and each caught** — the in-flight hold removed (the
+  09-08 bug restored), the grace back to a literal 15s, the deadline pushed out on every held
+  tick, an in-flight dump allowed to outlast the deadline, the two expiries collapsed to one
+  string, the call site dropping `dumpInFlight` (**the pure function is perfect and unreachable
+  without it** — every behavioural guard calls it directly, so that one is pinned structurally),
+  the expiry line gated back on `ramp`, `landed` never set, and `landed` never reset with the
+  browser life.
+- **AND `tsconfig.worker.json` CAUGHT WHAT THE TESTS COULD NOT**: a duplicate
+  `MEM_DUMP_TIMEOUT_MS` import the suite ran through happily. Second time in two days that the
+  worker config has been the thing that noticed.
+- **BOT-SIDE, so it is inert until the box updates.** Confirm with
+  `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`.
+
+#### AND THE SAME RAMP MADE THE WALK THREE-FOR-THREE, AND THE BURST TWO-FOR-TWO
+Free corroboration from the event that produced the miss above, and neither needs repeating
+again.
+- **THE WALK: 16,387 regions across 16,382 allocation bases, 32,778 MB, 16,380 READWRITE, 64
+  sampled and all anonymous**, against a control of 5 regions / 4 bases with its file-backed
+  positive control (`SortDefault.nls`) present as ever. Three walks, three browsers, three days.
+  **EXCESS 36,223 MB against an OS commit gap of 39,736 MB** — the walk has named the 35 GB.
+- **THE BURST'S FOURTH SIGHTING, AND ITS SECOND WITH STATUSES: 18,953 asks on
+  `futurebookingstartsendsdates`, `no answer recorded`.** Zero 2xx, zero 401, zero `failed` —
+  the fourth branch, now twice. And **0 in the last 120s on a browser 2 m old**, which is the
+  recorded load-time-burst shape rather than a sustained loop.
+- **DO NOT RE-LINK THE BURST TO THE LEAK.** This ramp carried both; 09-07 20:42 carried the same
+  32 GB with a flat counter and 110 lifetime requests. Independent in both directions, five
+  times over now.
 
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
@@ -7571,6 +7653,44 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-08 (later) — THE FOURTH MISS: THE GRACE WAITED FOR NOTHING
+>
+> **Master `30f2124`, mini-PC `64b40d5` (`bot-ask git-status`, never `autocart.bot_version`),
+> 3/3 shards, no holds queued, highest migration 076, main's block 077-079.**
+>
+> **THE GRACE REACHED THE BOX AT 07:45:50 PT AND A NATURAL RAMP ARRIVED AT 07:47:50 — 120
+> SECONDS LATER. IT FIRED, IT HELD, AND THERE IS STILL NO `ramp` DUMP.** The log has the
+> `* holding the bail up to 15s` line and then neither a `memory dump (ramp) …` nor a
+> `did not run` line. Cause, and it is arithmetic twice over: `rampDumpGrace` took a single
+> `dumpTaken` which the caller set **when the dump STARTS**, so the next tick took the
+> `already under way` branch **above** the deadline check and bailed **ten seconds in**; and
+> the deadline would not have been enough either, because `MEM_DUMP_TIMEOUT_MS` is **20s**
+> against a **15s** grace — **two constants with no stated relationship, ordered the wrong way
+> round.** The old guard bounded the grace against the TICK and nothing compared it with the
+> dump's own timeout. CLAUDE.md → **"THE FOURTH MISS: THE GRACE WAS A PERMISSION SLIP, NOT A
+> WAIT"**. Do not re-derive it.
+>
+> **FIXED: the hold runs WHILE THE DUMP IS IN FLIGHT, to a deadline DERIVED from the dump's own
+> timeout.** `inFlight` clears in the dump's `.finally`, and `.finally` waits for the `.then`
+> chain, so the hold covers the POST as well as the dump. It can delay the bail (~20-30s
+> worst case) and still cannot prevent it; the three-tick ceiling is kept and nothing was
+> relaxed. **BOT-SIDE — it needs a box update, then a ramp.**
+>
+> **HOW TO READ THE NEXT ONE.** `* holding the bail up to 20s` is the grace being granted; then
+> either `memory dump (ramp) in Nms`, or one of two named expiries — `still in flight` (a
+> browser too slow to answer inside its own budget) versus `without a dump` (nothing could
+> start). Those are different findings and used to print as silence. Then
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`, MEMORY DUMPS; the readout does
+> the pid join and prints `VOID` when the dump and the walk disagree.
+>
+> **THE SAME RAMP GAVE TWO THINGS FREE, AND NEITHER NEEDS REPEATING.** The walk is
+> **three-for-three** (16,387 regions / 16,382 bases / 32,778 MB, all anonymous, control's
+> file-backed positive control present), with EXCESS 36,223 MB against an OS commit gap of
+> 39,736 MB. And the burst's fourth sighting is its **second with statuses**: 18,953 asks,
+> `no answer recorded`, zero of every code — the fourth branch, twice. **Still do not re-link
+> the burst to the leak**: this ramp carried both, 09-07 20:42 carried the same 32 GB with a
+> flat counter.
+>
 > ### 2026-09-08 — THE DUMP MISSED A THIRD TIME, AND THE THIRD MECHANISM IS THE SAMPLER'S CADENCE
 >
 > **Master `6843973`, mini-PC `6843973` (read by `git-status`, not `autocart.bot_version`),
