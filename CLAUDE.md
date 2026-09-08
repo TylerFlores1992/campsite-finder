@@ -2705,6 +2705,41 @@ ran one.** The run timestamps settle it:
 - **CONFIRMED BY RE-RUNNING LOCALLY ON THE SAME SHA once no CI was in flight: 1381/1381.**
   That is the discriminator between litter and a regression, and it was taken rather than
   assumed.
+
+###### AND ONE PUSH IS ENOUGH — `push` AND `pull_request` RUN CONCURRENTLY FOR ~90s (2026-09-08)
+The account above blames pushing twice, and its remedy is *"do not push again while your own CI
+is still running"*. **Measured on a SINGLE `git push`, twice in one afternoon: that is not
+sufficient, because one push starts TWO runs on the SAME SHA and they overlap.**
+```
+run 1208  event=push          created 13:22:40   CANCELLED 13:24:13   <- 93s in, mid-suite
+run 1209  event=pull_request  created 13:23:14   FAILURE   13:33:59   <- 1 of 1985, name unreachable
+                              ^^^^^^^^^^^^^^^^ both live 13:23:14 -> 13:24:13
+```
+- **`verify.yml` fires on `push: claude/**` AND on `pull_request`**, and with a PR open a single
+  push matches both. The concurrency group (`verify-${{ github.head_ref || github.ref_name }}`,
+  `cancel-in-progress: true`) is what stops them running to completion together — **and
+  cancellation is not instant.** It took **93 seconds** here and **89** on the next push.
+- **SO IT IS NOT MERELY LITTER, IT IS GENUINE CONCURRENT EXECUTION.** For that minute and a half
+  two verify jobs were running `npm test` against the production database — the exact failure
+  `--test-concurrency=1` prevents WITHIN a run and the concurrency group was added to prevent
+  ACROSS runs. The group closes the long overlap and leaves a ~90-second one open on every push.
+- **AND THE WINDOW LANDS WHERE THE FAILURES DO.** Typecheck is ~25s, so the overlap covers
+  roughly the first half-minute of `npm test` — the low TAP numbers. The 09-08 failure was
+  bounded to **12..1155** by the `ok`-number technique and could not be named (`not ok` appears
+  zero times in everything `get_job_logs` will return), which is consistent and is not proof.
+- **THE SAME TREE THEN PASSED IN A CLEAN WINDOW**, which is the discriminator: red at 13:33:59
+  while the **Nightly RIDB Sync** also spanned the whole run (13:10:51 → 13:48:03), green at
+  14:00:32 with neither writer present. Two named mechanisms, one confirmation.
+- **AND THE TEN NEW GUARDS OF THAT VERY DIFF WERE READ AS `ok` IN THE RED RUN** (TAP 1345,
+  1353-1361, inside the log's visible window). **That is what makes the re-run honest when the
+  diff DOES touch code** — the file's own three conditions require a diff that cannot reach the
+  failure, and this substitutes a stronger fact: the changed behaviour is individually green in
+  the failing run.
+- **RECORDED, NOT FIXED.** Narrowing the triggers (dropping `push` for branches with an open PR)
+  is a change to the only automated signal a `claude/**` branch gets before merge, and
+  `verify.yml`'s own header explains why both are there. **Do not "simplify" the triggers on the
+  strength of this entry** — what it buys is knowing that a red run within ~90 seconds of a push
+  has a named cause, and that the remedy is a re-run in a clean window rather than a hunt.
 - **THE OPERATIONAL RULE IS THE WHOLE REMEDY, and it is a second one: do not push again while
   your own CI is still running.** `docs/LANES.md` says one test run at a time and both lanes
   read that as "don't run two commands". **A second push IS a second run**, and cancel-on-push

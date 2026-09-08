@@ -37,6 +37,13 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > not 401, not `failed`. Candidate, labelled as one: requests outrunning the connection pool.
 > **Do not re-link it to the leak.**
 >
+> **AND A RED CI WITHIN ~90 SECONDS OF A PUSH HAS A NAMED CAUSE.** One `git push` to a
+> `claude/**` branch with a PR open starts **two** verify runs on the same SHA (`push` and
+> `pull_request`), and the concurrency group takes ~90 seconds to cancel one — so two jobs run
+> `npm test` against the production DB together, over the low TAP numbers. Measured twice on
+> 09-08. **Re-run in a clean window before hunting**; confirmed red at 13:33:59 and green on the
+> same tree at 14:00:32. `docs/LANES.md` → "ONE PUSH STARTS TWO RUNS".
+>
 > ## A RAMP CAN BE FORCED. THE WALK ANSWERED. THE DUMP IS THE LAST THING OUTSTANDING (2026-09-07)
 >
 > **DO NOT WAIT FOR A RAMP — order one.** The previous version of this block said to wait, and

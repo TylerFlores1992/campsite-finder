@@ -173,6 +173,33 @@ starting any of these, and wait for the other lane to finish:
 
 Land changes between test runs rather than during one.
 
+## ONE PUSH STARTS TWO RUNS, AND THEY OVERLAP FOR ~90 SECONDS (2026-09-08)
+
+The SERIAL rule above says "one test run at a time" and both lanes read that as "do not run two
+commands". **A single `git push` to a `claude/**` branch with a PR open breaks it by itself.**
+
+`verify.yml` fires on `push: claude/**` **and** on `pull_request`, so one push matches both and
+starts two runs on the same SHA. The concurrency group cancels one — and cancellation is not
+instant. Measured twice in one afternoon: **93 seconds** and **89 seconds** of two verify jobs
+running `npm test` against the production database at the same time.
+
+```
+run 1208  event=push          created 13:22:40   CANCELLED 13:24:13
+run 1209  event=pull_request  created 13:23:14   FAILURE   13:33:59  (1 of 1985)
+                              both live 13:23:14 -> 13:24:13
+```
+
+- **Typecheck is ~25s, so the overlap covers roughly the first half-minute of `npm test`** — the
+  low TAP numbers, which is where the 09-08 failure was bounded to (12..1155, name unreachable).
+- **Nothing a lane can do prevents it**, which is the point: announcing, waiting and serialising
+  all fail here, because the second run is started by GitHub off your own single push.
+- **The remedy is the reading, not a schedule.** A red run whose job started within ~90 seconds
+  of a push has a named cause; re-run once nothing else is in flight. Confirmed 09-08: red at
+  13:33:59 (with the Nightly RIDB Sync also spanning it), **green on the same tree at 14:00:32**.
+- **Do NOT narrow the triggers on the strength of this.** `verify.yml`'s header records why both
+  are there — `vercel.json` disables Vercel for `claude/*`, so this workflow is the only
+  automated signal such a branch gets before merge. Full entry in `CLAUDE.md`.
+
 ## AND A THIRD WRITER NO LANE STARTS: THE NIGHTLY RIDB SYNC (2026-09-07)
 
 Everything above is a thing a *session* does, so the remedy is a session waiting. **The
