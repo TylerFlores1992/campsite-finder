@@ -180,9 +180,10 @@ commands". **A single `git push` to a `claude/**` branch with a PR open breaks i
 
 `verify.yml` fires on `push: claude/**` **and** on `pull_request`, so one push matches both and
 starts two runs on the same SHA. The concurrency group cancels one — and cancellation is not
-instant. Measured three times in one afternoon: **93s, 89s and 301s** of two verify jobs running
-`npm test` against the production database at the same time. **It is a range, not a constant** —
-at five minutes the window covers most of a 535-second test run, not merely its opening.
+instant. Measured four times in one afternoon: **93s, 89s, 301s and 3s** of two verify jobs
+running `npm test` against the production database at the same time. **It is a range, not a
+constant, and the LONG ones are the hazard** — at five minutes the window covers most of a
+535-second test run, where three seconds is the group working well.
 
 ```
 run 1208  event=push          created 13:22:40   CANCELLED 13:24:13

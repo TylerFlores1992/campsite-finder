@@ -39,9 +39,9 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > **AND A RED CI WITHIN ~90 SECONDS OF A PUSH HAS A NAMED CAUSE.** One `git push` to a
 > `claude/**` branch with a PR open starts **two** verify runs on the same SHA (`push` and
-> `pull_request`), and the concurrency group takes **89-301 seconds** to cancel one — so two jobs
-> run `npm test` against the production DB together. Measured three times on 09-08; at five
-> minutes that covers most of the suite, so quote the range and not the first figure. **Re-run in a clean window before hunting**; confirmed red at 13:33:59 and green on the
+> `pull_request`), and the concurrency group takes **3-301 seconds** to cancel one — so two jobs
+> run `npm test` against the production DB together. Measured four times on 09-08; the long ones
+> are the hazard (five minutes covers most of the suite), so quote the range, not one figure. **Re-run in a clean window before hunting**; confirmed red at 13:33:59 and green on the
 > same tree at 14:00:32. `docs/LANES.md` → "ONE PUSH STARTS TWO RUNS".
 >
 > ## A RAMP CAN BE FORCED. THE WALK ANSWERED. THE DUMP IS THE LAST THING OUTSTANDING (2026-09-07)

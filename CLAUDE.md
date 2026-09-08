@@ -2719,11 +2719,12 @@ run 1209  event=pull_request  created 13:23:14   FAILURE   13:33:59   <- 1 of 19
   push matches both. The concurrency group (`verify-${{ github.head_ref || github.ref_name }}`,
   `cancel-in-progress: true`) is what stops them running to completion together — **and
   cancellation is not instant.**
-- **THE OVERLAP IS 89-301 SECONDS, MEASURED THREE TIMES, AND IT IS NOT A CONSTANT.** 93s, then
-  89s, then **301s** on the third push of the same afternoon. **Quote the range, not the first
-  number** — the entry said "~90 seconds" until the third measurement arrived, and at five
-  minutes the window is a different claim: it covers most of a 535-second test run rather than
-  its first half-minute.
+- **THE OVERLAP IS 3-301 SECONDS, MEASURED FOUR TIMES, AND IT IS NOT A CONSTANT.** 93s, 89s,
+  **301s**, then 3s — four pushes in one afternoon. **Quote the range, not the first number**:
+  this entry said "~90 seconds" until the third measurement arrived, and it is the LONG ones
+  that are the hazard. At five minutes the window covers most of a 535-second test run rather
+  than its opening half-minute, which is a different claim about where to look; at three
+  seconds the cancel landed before the run did anything, which is the group working well.
 - **SO IT IS NOT MERELY LITTER, IT IS GENUINE CONCURRENT EXECUTION.** For that window two verify
   jobs were running `npm test` against the production database — the exact failure
   `--test-concurrency=1` prevents WITHIN a run and the concurrency group was added to prevent
