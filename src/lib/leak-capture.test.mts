@@ -131,6 +131,18 @@ test('the access floor is the right one for GetMappedFileName', () => {
   assert.notEqual(mappedNameReading({ access: NAME_CENSUS_ACCESS, sampled: 9, named: 0 }).kind, 'no-access');
 });
 
+test('the readout RENDERS both census verdicts, not just computes them', () => {
+  // A pure function can be perfect while nothing prints it — the fix-present-and-inert shape,
+  // which this repo has paid for six times. Found by mutation: deleting the name-census render
+  // left every other guard in this file green.
+  const c = code(readout);
+  for (const fn of ['mappedSwarmReading(', 'mappedNameReading(']) {
+    assert.ok(c.includes(fn), `the readout must call ${fn}`);
+  }
+  assert.match(c, /printVerdict\([^\n]*swarm\.text\)/, 'the swarm verdict must be printed');
+  assert.match(c, /printVerdict\([^\n]*names\.text\)/, 'the name-census verdict must be printed');
+});
+
 /* ── THE WALK ITSELF ──────────────────────────────────────────────────────────────────────── */
 
 test('the walk asks for VM_READ first and records which access it got', () => {
