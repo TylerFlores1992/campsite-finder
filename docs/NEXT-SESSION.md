@@ -5,7 +5,7 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ## THE FOURTH MISS — THE GRACE HELD AND WAITED FOR NOTHING. FIX IN, NEEDS A BOX UPDATE (2026-09-08, later)
 >
-> **State: master `30f2124`, mini-PC `64b40d5` (read by `bot-ask git-status`, never
+> **State: master and mini-PC both `9641e14` (read by `bot-ask git-status`, never
 > `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
 > 077-079.**
 >
@@ -37,8 +37,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > minutes; the three-tick ceiling is KEPT and nothing was relaxed. Nine mutations, each verified
 > to apply and to fail; the pre-existing guard that REQUIRED the bug is inverted, not relaxed.
 >
-> **BOT-SIDE, so it is inert until the box updates** — then it needs a ramp (every 5-28 h, or
-> order one by the recipe below).
+> **MERGED AS #300 AND ON THE BOX: `9641e14`, applied 2026-09-08 16:2x UTC, confirmed by
+> `bot-ask git-status` and NOT by `autocart.bot_version`.** The worker deploy went green and the
+> fleet came back 3/3 shards with a 2s heartbeat; health 17 of 19, the two warns being
+> `rc_session` (dead between releases — the update killed the browser) and `rc_login` (standing
+> down inside the quiet window after a restart), both documented-benign. **So it needs only a
+> ramp** — every 5-28 h, or order one by the recipe below.
 >
 > **HOW TO READ THE NEXT ONE.** `* holding the bail up to 20s` is the grace being granted; then
 > either `memory dump (ramp) in Nms`, or one of **two** named expiries — `still in flight` (the
