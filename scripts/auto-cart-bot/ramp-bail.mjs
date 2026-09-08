@@ -56,6 +56,7 @@
  * during a ramp.
  */
 import fs from 'node:fs';
+import { MEM_DUMP_TIMEOUT_MS } from './rc-mem-dump.mjs';
 
 /** Where the sampler leaves its newest reading, beside the bot scripts. */
 export const MEMORY_LATEST_FILE = '.memory-latest.json';
@@ -217,33 +218,70 @@ export function rampBailLine(d) {
  * ≤2 ticks against a stall already 120s old and a bail whose own diagnostics take 2-8s, that
  * is a bounded ~12% and it is the only way the reading gets taken at all.
  *
- * TWO TICKS AND NOT ONE, deliberately. A refusal is not a reading, so `maybeMemoryDump` puts
- * the phase back and the next tick retries — and a baseline dump can be in flight when the arm
+ * TWO TICKS AT LEAST, deliberately. A refusal is not a reading, so `maybeMemoryDump` puts the
+ * phase back and the next tick retries — and a BASELINE dump can be in flight when the arm
  * fires, which is not rare: the baseline is due three minutes into a browser life and every
  * burst-carrying ramp so far has landed in a browser 2-3 minutes old. One tick would spend the
  * grace on a call that could not start.
  *
- * THE GRACE IS SPENT WHETHER OR NOT THE DUMP LANDS. `dumpTaken` is set when the dump STARTS,
- * so the ordinary path holds exactly one tick; the deadline only binds when nothing could be
- * started. Either way the bail happens — this can delay the exit, never prevent it.
+ * ── AND ONE TICK IS EXACTLY WHAT IT SPENT, ON THE FIRST RAMP IT SAW (2026-09-08) ────────────
+ * This used to read "THE GRACE IS SPENT WHETHER OR NOT THE DUMP LANDS — `dumpTaken` is set
+ * when the dump STARTS, so the ordinary path holds exactly one tick." That is not a bound on
+ * the wait, it is a REFUSAL to wait, and it cost the fourth consecutive ramp its owner column
+ * ninety minutes after the grace reached the box:
+ *
+ *     14:47:50   * holding the bail up to 15s so the ramp dump can name what owns the 32 GB
+ *     14:48:05 ✗ RAMP — the loop has not advanced in 139s, rc family 3739 MB
+ *     14:48:06   Releasing the profile and exiting so the hold runner can use it.
+ *                (no `memory dump (ramp) …` line, and no `did not run` line either)
+ *
+ * The grace was granted, the dump was STARTED, and `dumpTaken` went true synchronously — so
+ * the very next tick took the `already under way` branch, ten seconds in, and `process.exit`
+ * threw the accumulator away. The 15-second deadline was never consulted, because the
+ * short-circuit sits above it.
+ *
+ * **AND THE DEADLINE WOULD NOT HAVE BEEN ENOUGH EITHER.** `MEM_DUMP_TIMEOUT_MS` is 20s and the
+ * grace was 15 — two constants with no stated relationship, ordered the wrong way round, so
+ * the bail was always going to kill a dump that was still inside its own budget. The pairing
+ * the old guard checked was grace-against-TICK; the pairing that decides whether a reading is
+ * possible is grace-against-DUMP-TIMEOUT, and nothing checked it. Same shape as `nextHoldRelease`
+ * disagreeing with `dueHolds` about whether a hold existed. It is DERIVED now, and a guard pins
+ * the relationship rather than the number.
+ *
+ * SO THE HOLD RUNS WHILE THE DUMP IS IN FLIGHT, TO THE DEADLINE — which is what "grace" meant
+ * all along. `inFlight` is cleared in the dump's `.finally`, and `.finally` waits for the
+ * `.then` chain, so it stays true until `reportBotEvent` has resolved: the hold covers the POST
+ * as well as the dump, which is the half that actually gets the reading off the box.
+ *
+ * IT CAN DELAY THE BAIL, NEVER PREVENT IT. The deadline binds whatever the dump is doing, and
+ * the bail fires on the first tick after it — so the worst case is `graceMs` plus one tick,
+ * ~20-30s, against a stall already 120s old and a wedge that tolerates twelve minutes. The cost
+ * is the profile lock arriving that much later, and it stays inside the hold runner's own 60s
+ * preemption wait.
  */
-export const MEM_DUMP_GRACE_MS_DEFAULT = 15_000;
+export const MEM_DUMP_GRACE_MS_DEFAULT = MEM_DUMP_TIMEOUT_MS;
 
 /**
  * Should the bail hold this tick so the ramp memory dump can be taken?
  *
  * `graceUntil` is the caller's stored deadline: null until the first hold, then the instant the
  * grace runs out. The caller stores what `until` returns.
+ *
+ * `dumpStarted` AND `dumpInFlight` ARE TWO FACTS AND THE OLD `dumpTaken` MERGED THEM. "Taken"
+ * read as "we have the reading" and was implemented as "we asked for one"; the gap between
+ * those is the whole event this instrument exists to measure. Only a dump that has STARTED and
+ * is no longer RUNNING has actually been taken.
  * @param {{
  *   now: number,
- *   dumpTaken: boolean,
+ *   dumpStarted: boolean,
+ *   dumpInFlight: boolean,
  *   graceUntil: number|null|undefined,
  *   canDump: boolean,
  *   graceMs?: number,
  * }} input
  * @returns {{ hold: boolean, started: boolean, until: number|null, why: string }}
  */
-export function rampDumpGrace({ now, dumpTaken, graceUntil, canDump, graceMs = MEM_DUMP_GRACE_MS_DEFAULT }) {
+export function rampDumpGrace({ now, dumpStarted, dumpInFlight, graceUntil, canDump, graceMs = MEM_DUMP_GRACE_MS_DEFAULT }) {
   // `Number(null)` IS 0 AND `Number.isFinite(0)` IS TRUE, so a bare finite check reads "no
   // grace has been granted" as "the grace expired at the epoch" and bails on the first
   // firing tick — i.e. the fix present and inert. Caught by the guard on its first run.
@@ -251,9 +289,11 @@ export function rampDumpGrace({ now, dumpTaken, graceUntil, canDump, graceMs = M
   // No CDP session means there is nothing to wait FOR. Holding the exit for a dump that
   // cannot be attempted is pure cost — the same rule as an UNKNOWN standing an arm down.
   if (!canDump) return { hold: false, started: false, until, why: 'no CDP probe, so there is no dump to wait for' };
-  // Already taken for this browser life — including a dump started on the previous tick, which
-  // is the ordinary path and is what makes the normal hold exactly one tick.
-  if (dumpTaken) return { hold: false, started: false, until, why: 'the ramp dump for this browser life is already under way' };
+  // TAKEN means started AND finished. This is the ordinary path: the dump answered, the event
+  // was posted, `inFlight` cleared, and there is nothing left to wait for.
+  if (dumpStarted && !dumpInFlight) {
+    return { hold: false, started: false, until, why: 'the ramp dump for this browser life has been taken' };
+  }
   if (until == null) {
     return {
       hold: true, started: true, until: now + graceMs,
@@ -261,9 +301,24 @@ export function rampDumpGrace({ now, dumpTaken, graceUntil, canDump, graceMs = M
     };
   }
   if (now < until) {
-    return { hold: true, started: false, until, why: `still inside the ${Math.round(graceMs / 1000)}s dump grace — retrying the dump` };
+    // NOT PUSHED OUT. The deadline is set once, when the grace is granted; extending it on
+    // every held tick is an unbounded hold wearing a bound's clothes.
+    return {
+      hold: true, started: false, until,
+      why: dumpStarted
+        ? `waiting for the ramp dump to answer, inside the ${Math.round(graceMs / 1000)}s grace`
+        : `still inside the ${Math.round(graceMs / 1000)}s dump grace — retrying the ramp dump`,
+    };
   }
-  // NAMED, because this is the case where the reading was lost and the next reader needs to
-  // know the grace ran rather than that it was never granted.
+  // NAMED, AND THE TWO EXPIRIES ARE DIFFERENT FINDINGS. A dump still running when the deadline
+  // binds is a browser too slow to answer inside its own budget; a deadline reached with
+  // nothing started is a dump that could never begin. Merging them is what made 2026-09-08
+  // print no line at all.
+  return {
+    hold: false, started: false, until,
+    why: dumpInFlight
+      ? 'the dump grace expired with the dump still in flight — bailing, the owner reading is lost'
+      : 'the dump grace expired without a dump — bailing with no owner reading',
+  };
   return { hold: false, started: false, until, why: 'the dump grace expired without a dump — bailing with no owner reading' };
 }

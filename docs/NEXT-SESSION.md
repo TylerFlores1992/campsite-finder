@@ -1,9 +1,72 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-08** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-08 (later)** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
-> ## THE DUMP MISSED A THIRD TIME. THE FIX IS IN AND NEEDS A BOX UPDATE (2026-09-08)
+> ## THE FOURTH MISS — THE GRACE HELD AND WAITED FOR NOTHING. FIX IN, NEEDS A BOX UPDATE (2026-09-08, later)
+>
+> **State: master `30f2124`, mini-PC `64b40d5` (read by `bot-ask git-status`, never
+> `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
+> 077-079.**
+>
+> **THE BLOCK BELOW SAID "the only thing left is a ramp". ONE ARRIVED 120 SECONDS AFTER THE BOX
+> TOOK THE GRACE — 07:47:50 PT against an update at 07:45:50 — AND THERE IS STILL NO `ramp`
+> DUMP.** The grace fired and held; the dump was killed ten seconds in. Two causes, both
+> arithmetic:
+> ```
+> 14:47:50   * holding the bail up to 15s so the ramp dump can name what owns the 32 GB
+> 14:48:05 ✗ RAMP — the loop has not advanced in 139s, rc family 3739 MB (reading 18s old)
+> 14:48:06   Releasing the profile and exiting so the hold runner can use it.
+>            (no `memory dump (ramp) …` line — and no `did not run` line either)
+> ```
+> 1. **`dumpTaken` was set when the dump STARTED**, and its branch sits ABOVE the deadline
+>    check — so the very next tick bailed and the 15s deadline was unreachable code.
+> 2. **`MEM_DUMP_TIMEOUT_MS` is 20s against a 15s grace.** Two constants with no stated
+>    relationship, ordered the wrong way round. The old guard bounded the grace against the
+>    TICK; nothing compared it with the dump's own timeout.
+>
+> `process.exit(1)` then threw the accumulator away — and `takeMemoryDump` deliberately keeps
+> partial data ("A TIMEOUT WITH DATA IS STILL A READING"), so a reading was lost rather than
+> never taken. CLAUDE.md → **"THE FOURTH MISS: THE GRACE WAS A PERMISSION SLIP, NOT A WAIT"**.
+> Do not re-derive it.
+>
+> **THE FIX: the hold runs WHILE THE DUMP IS IN FLIGHT, to a deadline DERIVED from the dump's
+> own timeout.** `inFlight` clears in the dump's `.finally`, which waits for the `.then` chain,
+> so the hold covers the POST too — the half that gets the reading off the box. Worst case
+> ~20-30s of extra hold against a stall already 120s old and a wedge that tolerates twelve
+> minutes; the three-tick ceiling is KEPT and nothing was relaxed. Nine mutations, each verified
+> to apply and to fail; the pre-existing guard that REQUIRED the bug is inverted, not relaxed.
+>
+> **BOT-SIDE, so it is inert until the box updates** — then it needs a ramp (every 5-28 h, or
+> order one by the recipe below).
+>
+> **HOW TO READ THE NEXT ONE.** `* holding the bail up to 20s` is the grace being granted; then
+> either `memory dump (ramp) in Nms`, or one of **two** named expiries — `still in flight` (the
+> browser is too slow to answer inside its own budget: the deadline is the thing to revisit)
+> versus `without a dump` (nothing could start: `canDump`/`heapProbe` is the thing to look at).
+> Those need opposite fixes and used to print as silence. Then
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`, MEMORY DUMPS — **the readout
+> does the pid join itself** and prints `VOID` if the dump and the walk disagree. Expect a
+> ~10-20s gap in the RAM trail beside the hold; that is a recorded cost, not a defect.
+>
+> **WHAT IS STILL OUTSTANDING IS UNCHANGED: one `mem-dump` with `phase: ramp` whose `MDPROC`
+> pids contain the walk's TARGET.** `discardable/segment` at ~32 GB names the subsystem; a
+> small `shared_memory` total retires discardable, mojo and the GPU transfer path together.
+>
+> **TWO THINGS THE SAME RAMP GAVE FREE.** The walk is now **three-for-three** — 16,387 regions
+> across 16,382 allocation bases, 32,778 MB, 16,380 READWRITE, 64 sampled all anonymous, with
+> the control's file-backed positive control present — and EXCESS 36,223 MB against an OS commit
+> gap of 39,736 MB. And the burst's fourth sighting is its **second with statuses**: 18,953
+> asks, `no answer recorded`, zero of every code, **0 in the last 120s on a browser 2 m old**
+> (the load-time-burst shape, not a sustained loop). **Do not re-link the burst to the leak** —
+> this ramp carried both and 09-07 20:42 carried the same 32 GB with a flat counter.
+>
+> ## ~~THE DUMP MISSED A THIRD TIME. THE FIX IS IN AND NEEDS A BOX UPDATE (2026-09-08)~~
+>
+> **SUPERSEDED BY THE BLOCK ABOVE — the fix landed, a ramp arrived two minutes later, and the
+> dump missed a FOURTH time for a fourth reason.** Kept because its account of the third
+> mechanism (the sampler's cadence) is still correct and the threshold it introduced is kept;
+> only "the only thing left is a ramp" is wrong, and the 15-second figure it quotes is stale.
 >
 > **State: master and mini-PC both `6843973` at the start of this session (read by
 > `bot-ask git-status`, never `autocart.bot_version`); 3/3 shards; no holds queued; highest
