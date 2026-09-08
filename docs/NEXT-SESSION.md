@@ -1,11 +1,57 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-08 (later)** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-08 (latest)** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
+> ## THE TRIGGER NO LONGER NEEDS A RAMP TO TEST (2026-09-08, latest)
+>
+> **State: master and mini-PC both `<pending>` (read by `bot-ask git-status`, never
+> `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
+> 077-079.**
+>
+> **READ `CLAUDE.md` → "THE METHOD WAS THE PROBLEM, NOT THE LEAK" FIRST.** Asked why we keep
+> missing things; the answer is countable and it changes how the next session should work.
+> **All four missed ramps were in the dump's TRIGGER, never in the dump** — which has never
+> failed when allowed to run (six baselines, 209-332 ms, ownership edges resolving on both
+> platforms). Four ramps, 5-28 h apart, went on plumbing that nothing exercised off-box.
+>
+> **THE DUMP IS NOW TRIGGERED BY THE LOOP'S OWN STALL** — `MEM_DUMP_STALL_MS` (90s), checked
+> before every arm, reading **no file at all**. `Date.now() - lastTick` is local, never stale,
+> never about another browser, and cannot be crossed between two samples, so **none of the four
+> failure modes can reach it**. 90s is measured: the longest renewal in forty tab-closes is
+> 71.5s and the bail needs 120s. The budget is **per stall episode**, so a slow healthy trip
+> cannot spend the ramp's slot. The threshold and the grace are both KEPT.
+>
+> **AND THE TRIGGER IS TESTABLE IN A CONTAINER NOW: `node scripts/auto-cart-bot/ramp-arm-probe.mjs`.**
+> Three of the arm's four inputs are forgeable (`stalledMs` is a number, the memory figure is a
+> file we write), so the 09-08 conditions reproduce in seconds. **Run it before shipping
+> anything that touches the arm** — it is verified to FAIL against both bugs it exists for, and
+> it already caught an assumption from the previous fix (`inFlight` really is still set when the
+> reporting callback resolves, so the hold really does cover the POST).
+>
+> **THE LEADING CANDIDATE IS NAMED, AND IS ONE LINE OF THE NEXT RAMP DUMP.**
+> `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is **2,097,152 bytes** — the walk's exact
+> 2.0 MB — one shared region per chunk, in the renderer, freed only when the command-buffer
+> token advances, with `max_allocated_bytes` defaulting to `kNoLimit`. A ramp is a renderer
+> whose loop stopped advancing, and RC's resident page runs a WebGL ArcGIS map.
+> **`gpu/mapped_memory` at ~32 GB confirms it; absent or small does not.** Discardable allocates
+> **4 MB** segments, so it is weakened on the size alone.
+>
+> **`mapped-memory-repro.mjs` did NOT reproduce it off-box** across three load shapes — **not a
+> refutation**, and the probe says so itself. It did prove `gpu/mapped_memory` is a name the
+> dump emits, which is what makes the candidate a read rather than an argument.
+>
+> **THE NEW RULE, AND IT IS CHEAP: predict the reading before building the instrument.** One
+> line in the header — *"on the known 9 GB event, this reads N"*. If N is ~0, do not build it.
+> The heap trail, Track A and the RAM arm were each blind for a reason documented at the time.
+> `MEM_DUMP_STALL_MS` carries the first worked example.
+>
+> **STILL OUTSTANDING, UNCHANGED: one `mem-dump` with `phase: ramp` whose `MDPROC` pids contain
+> the walk's TARGET.** The readout does the join and prints `VOID` when they disagree.
+>
 > ## THE FOURTH MISS — THE GRACE HELD AND WAITED FOR NOTHING. FIX IN, NEEDS A BOX UPDATE (2026-09-08, later)
 >
-> **State: master `30f2124`, mini-PC `64b40d5` (read by `bot-ask git-status`, never
+> **State: master and mini-PC both `9641e14` (read by `bot-ask git-status`, never
 > `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
 > 077-079.**
 >
@@ -37,8 +83,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > minutes; the three-tick ceiling is KEPT and nothing was relaxed. Nine mutations, each verified
 > to apply and to fail; the pre-existing guard that REQUIRED the bug is inverted, not relaxed.
 >
-> **BOT-SIDE, so it is inert until the box updates** — then it needs a ramp (every 5-28 h, or
-> order one by the recipe below).
+> **MERGED AS #300 AND ON THE BOX: `9641e14`, applied 2026-09-08 16:2x UTC, confirmed by
+> `bot-ask git-status` and NOT by `autocart.bot_version`.** The worker deploy went green and the
+> fleet came back 3/3 shards with a 2s heartbeat; health 17 of 19, the two warns being
+> `rc_session` (dead between releases — the update killed the browser) and `rc_login` (standing
+> down inside the quiet window after a restart), both documented-benign. **So it needs only a
+> ramp** — every 5-28 h, or order one by the recipe below.
 >
 > **HOW TO READ THE NEXT ONE.** `* holding the bail up to 20s` is the grace being granted; then
 > either `memory dump (ramp) in Nms`, or one of **two** named expiries — `still in flight` (the
