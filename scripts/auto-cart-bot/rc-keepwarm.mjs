@@ -2899,6 +2899,15 @@ async function warmResident() {
             memDump.graceUntil = grace.until;
             if (grace.started) log(`  * ${grace.why}`);
             maybeMemoryDump(memory);
+            // A HELD TICK SKIPS THE SAMPLING BELOW, AND THAT IS A KNOWN COST RATHER THAN AN
+            // OVERSIGHT: one heap-trail, RAM-trail and alloc-trail sample, one RUNAWAY check
+            // and one lock renewal, for at most two ticks. The RAM trail is the instrument
+            // that can time the onset, so a ~10-20s gap in it sits exactly where a reader
+            // will notice one — expect it beside a `holding the bail` line. The pre-existing
+            // bail path returns past the same code and then prints every trail, and the
+            // RUNAWAY arm has sat out sixteen consecutive ramps because untouched commit does
+            // not move free RAM, so nothing observable is lost. `STALE_MS` on the profile
+            // lock is ten minutes against a skipped ten-second renewal.
             return;
           }
           // NAMED WHEN IT WAS SPENT FOR NOTHING. "the grace ran and the dump never landed" and
