@@ -47,8 +47,26 @@
  * for ramp scans until a ramp has happened since. The absence is an absence, not a reading.
  */
 import {
-  recentBotEvents, requestCountReason, loopAnswerReading, type BotEventRow, type RequestCountReason,
+  recentBotEvents, requestCountReason, loopAnswerReading, dumpJoinReading, mappedSwarmReading,
+  mappedNameReading, type BotEventRow, type RequestCountReason,
 } from '@/lib/bot-events';
+
+/**
+ * The three leak verdicts come from pure functions now, so they arrive as one long string
+ * rather than hand-broken lines. Wrapping here keeps them readable in a terminal without the
+ * function having to know about layout — and without a reader having to scroll a 300-char line
+ * to reach the word VOID.
+ */
+const printVerdict = (indent: string, text: string, width = 92): void => {
+  const words = text.split(' ');
+  let line = '';
+  const out: string[] = [];
+  for (const w of words) {
+    if (line && `${line} ${w}`.length > width) { out.push(line); line = w; } else { line = line ? `${line} ${w}` : w; }
+  }
+  if (line) out.push(line);
+  out.forEach((l, i) => console.log(`${indent}${i === 0 ? '>>> ' : '    '}${l}`));
+};
 
 const arg = (name: string, dflt: string): string => {
   const i = process.argv.indexOf(`--${name}`);
@@ -147,6 +165,35 @@ for (const s of scans) {
             : 'a SWARM of same-sized regions — the shape of per-object shared-memory sections.'));
     }
     for (const t of mine('VMTOP').slice(0, 5)) console.log(`      ${t.replace(`VMTOP pid=${pid} `, 'largest: ')}`);
+    /**
+     * THE 2-4M MAPPED POPULATION, DESCRIBED THREE WAYS.
+     *
+     * The histogram above says 15-16k regions of 2 MB carry 31-33 GB. These three lines say
+     * whether they are 16k SEPARATE mappings or a few carved up (AllocationBase), what they
+     * are mapped for (protection), and whether anything on disk is behind them (the name
+     * census). Together with the memory dump they close BOTH branches in one ramp instead of
+     * one per event, which is the whole reason they exist.
+     */
+    const map2m = mine('VMMAP2M')[0];
+    const swarm = mappedSwarmReading({
+      present: !!map2m,
+      regions: map2m && num(/regions=(\d+)/, map2m),
+      allocBases: map2m && num(/allocBases=(\d+)/, map2m),
+    });
+    printVerdict('      ', swarm.text);
+    if (swarm.kind !== 'absent' && swarm.kind !== 'none') {
+      const prots = mine('VMPROT').map((l) => `${/protect=(\w+)/.exec(l)?.[1]}x${num(/count=(\d+)/, l)}`);
+      if (prots.length) console.log(`      >>> 2-4M protection: ${prots.join(' ')}  (0x4 READWRITE, 0x2 READONLY, 0x1 NOACCESS)`);
+      const names = mappedNameReading({
+        access: num(/access=(\d+)/, map2m!),
+        sampled: num(/sampled=(\d+)/, map2m!),
+        named: num(/named=(\d+)/, map2m!),
+      });
+      printVerdict('      ', names.text);
+      if (names.kind === 'file-backed') {
+        for (const n of mine('VMNAME').slice(0, 6)) console.log(`          ${n.replace(`VMNAME pid=${pid} `, '')}`);
+      }
+    }
     committedByPid.push({ pid, role: i === 0 ? 'target' : 'control', mb: totalMb });
   }
   // THE DIFFERENCE, STATED. Printing two blocks and leaving the reader to subtract is how the
@@ -172,6 +219,15 @@ for (const s of scans) {
  * Ramp phase first — it is the event — then the baseline it is a change from.
  */
 const SHM_ANSWER_MB = 4_000;
+/**
+ * How far apart a memory dump and a region walk may be and still describe one event.
+ *
+ * Both ride the SAME 3 GB trigger, so in practice they land within a minute of each other
+ * (09-07: scan 02:03:24, dump 02:04:03). Thirty minutes is generous enough to survive a slow
+ * scan and short enough that the next ramp — five hours away at the tightest observed gap —
+ * can never be joined to the previous one's walk.
+ */
+const JOIN_WINDOW_MS = 30 * 60_000;
 console.log(`\nMEMORY DUMPS: ${dumps.length}${showAll ? '' : ' (newest 6; --all for more)'}`);
 if (dumps.length === 0) {
   console.log('  none. Ordinary until the box runs rc-mem-dump.mjs AND a ramp has happened since —');
@@ -218,7 +274,35 @@ if (dumps.length === 0) {
        * control and is supposed to look ordinary.
        */
       if (x.phase === 'ramp') {
-        if (Number(lead.shmMb) >= SHM_ANSWER_MB) {
+        /**
+         * ── THE JOIN, DONE HERE RATHER THAN ASKED FOR ──────────────────────────────────────
+         *
+         * The dump is coordinated by the browser process, so a renderer that will not answer
+         * is MISSING from it rather than empty — and missing, read as small, is the one false
+         * elimination this instrument can manufacture. It did exactly that on 2026-09-07: a
+         * `bail:ramp` killed the ramping generation, the supervisor restarted within seconds,
+         * and the dump measured the replacement — lead pid 7316 against the walk's target
+         * 9912, with 7316 turning up as the BASELINE's lead three minutes later.
+         *
+         * That readout told a human to check the pid themselves. Nobody can be relied on to,
+         * so it is checked here: the verdict below is not printed at all unless the ramping
+         * renderer is in the dump.
+         */
+        const near = scans
+          .map((sc) => ({ sc, gap: Math.abs(Date.parse(sc.at) - Date.parse(row.at)) }))
+          .filter((c) => c.gap <= JOIN_WINDOW_MS)
+          .sort((a, b) => a.gap - b.gap)[0]?.sc ?? null;
+        const join = dumpJoinReading({
+          walkTargetPid: near ? /^VMWALK pid=(\d+) .*status=ok/m.exec(near.text ?? '')?.[1] ?? null : null,
+          dumpPids: [...String(row.text ?? '').matchAll(/^MDPROC pid=(\d+)/gm)].map((m) => m[1]),
+          walkNearby: !!near,
+        });
+            printVerdict('  ', join.text);
+        // THE VERDICT IS NOT PRINTED AT ALL ON A VOID JOIN. Qualifying it would leave the
+        // sentence a reader quotes ('only 2 MB of tracked shared memory') on the page.
+        if (join.kind === 'void') {
+          // nothing further: the reading is about a different browser generation.
+        } else if (Number(lead.shmMb) >= SHM_ANSWER_MB) {
           console.log(`  >>> the sections ARE base shared memory (${lead.shmMb} MB of it), so the OWNER column`);
           console.log(`      names the subsystem that created them${lead.topOwner ? `: ${lead.topOwner.owner}` : ' — and none is named, which is itself the next question'}.`);
         } else {
@@ -226,10 +310,13 @@ if (dumps.length === 0) {
           console.log('      the region walk in the ramp-scan for the SAME event: if the walk says ~32 GB of');
           console.log('      commit/mapped and this says tens of MB, the sections are NOT base shared memory —');
           console.log('      which eliminates discardable, mojo and the GPU transfer path together.');
-          console.log('      FIRST: is the ramping renderer\'s pid in the MDPROC list at all (--all)? The dump is');
-          console.log('      coordinated by the browser process and a renderer that will not answer is MISSING');
-          console.log('      from it, not empty — and missing read as small is the one false elimination this');
-          console.log('      instrument can manufacture. Join on the pid in the ramp-scan\'s region walk.');
+          // The join above has already established that the ramping renderer answered, so
+          // this reading is about that process and not about a bystander. What is left is
+          // what a small figure MEANS, and it is an answer rather than a gap.
+          console.log('      The join above confirms the ramping renderer answered, so this is not the');
+          console.log('      missing-process case — it is a real small reading. Next: the 2-4M name census in');
+          console.log('      the ramp-scan. All-anonymous plus a small shared_memory total puts the creator');
+          console.log('      outside Chromium\'s tracked allocators; a file-backed name says who it is outright.');
         }
       }
     }

@@ -219,3 +219,133 @@ export function loopAnswerReading(
   }
   return { kind: 'mixed', text: `${Math.round(share * 100)}% answered ${code}${tail}.` };
 }
+
+/* ────────────────────────────────────────────────────────────────────────────────────────────
+ * READING THE ONE-SHOT LEAK CAPTURE
+ *
+ * The region walk and the memory dump ride the same 3 GB trigger and answer opposite halves
+ * of one question, and until 2026-09-08 a human had to join them by eye and reach the verdict
+ * themselves. The first time that was needed nobody did: the 09-07 dump measured a browser
+ * five seconds old, its `shared_memory 2 MB` read as an elimination, and the reading was void.
+ *
+ * These are pure so the branch that says `VOID` is reachable from a test — inline in the
+ * readout, it could only ever run against a real ramp, which is what let `closeOnToken` ship
+ * wrong for six days. Same reason `closeReasonReading` and `loopAnswerReading` are functions.
+ * ──────────────────────────────────────────────────────────────────────────────────────────── */
+
+export type DumpJoinKind = 'no-walk' | 'void' | 'joined';
+
+/**
+ * Did the memory dump measure the process the region walk walked?
+ *
+ * A COORDINATED DUMP OMITS A PROCESS THAT WILL NOT ANSWER — it does not report it as empty —
+ * so a missing renderer read as a small `shared_memory` total is the one false elimination
+ * this instrument can manufacture. `void` therefore suppresses the verdict entirely rather
+ * than qualifying it.
+ *
+ * `no-walk` is NOT `void`. No walk to join against is an absence, and an absence must not be
+ * dressed as a failed join — the reader still has the manual check available and should be
+ * told so, which is a different sentence.
+ */
+export function dumpJoinReading(
+  args: { walkTargetPid?: string | null; dumpPids?: readonly string[] | null; walkNearby?: boolean },
+): { kind: DumpJoinKind; text: string } {
+  const target = args.walkTargetPid ?? null;
+  const pids = args.dumpPids ?? [];
+  if (!target) {
+    return {
+      kind: 'no-walk',
+      text: args.walkNearby
+        ? 'a region walk is near this dump but did not complete, so nothing confirms which browser was '
+          + 'measured. Check the pid by hand before reading the verdict.'
+        : 'no region walk near this dump, so nothing confirms which browser was measured. Check the pid '
+          + 'by hand before reading the verdict.',
+    };
+  }
+  if (!pids.includes(target)) {
+    return {
+      kind: 'void',
+      text: `VOID: the walk's target is pid ${target} and the dump answered for `
+        + `${pids.length ? pids.join(', ') : 'no process at all'}. A renderer missing from a coordinated dump `
+        + 'is MISSING, not empty, so its shared_memory figure eliminates NOTHING — this is the 2026-09-07 '
+        + 'shape, where a bail killed the generation and the dump measured its replacement.',
+    };
+  }
+  return { kind: 'joined', text: `the ramping renderer (pid ${target}, from the region walk) IS in this dump.` };
+}
+
+export type MappedSwarmKind = 'absent' | 'none' | 'per-region' | 'carved' | 'mixed';
+
+/**
+ * Are the 2 MB mapped regions N separate sections, or a few big mappings carved into views?
+ *
+ * `AllocationBase` is already in the MEMORY_BASIC_INFORMATION the walk reads, so this costs
+ * nothing and settles a question the histogram cannot: 16k regions sharing four bases is one
+ * bug and 16k regions with 16k bases is another, and they have different fixes.
+ */
+export function mappedSwarmReading(
+  args: { regions?: unknown; allocBases?: unknown; present?: boolean },
+): { kind: MappedSwarmKind; text: string } {
+  if (args.present === false) {
+    return { kind: 'absent', text: '2-4M census: absent — this scan predates it (box on an older ramp-scan.mjs).' };
+  }
+  const regions = Number(args.regions) || 0;
+  const bases = Number(args.allocBases) || 0;
+  if (regions === 0) {
+    return { kind: 'none', text: '2-4M mapped: no committed MEM_MAPPED region in that band — the swarm is not here.' };
+  }
+  const head = `2-4M mapped: ${regions} region(s) across ${bases} allocation base(s) — `;
+  if (bases >= regions * 0.9) {
+    return { kind: 'per-region', text: `${head}each is its OWN mapping, so this is N separate sections, not one carved up.` };
+  }
+  if (bases <= 4) {
+    return { kind: 'carved', text: `${head}a HANDFUL of large mappings carved into 2 MB views — a different bug from N sections.` };
+  }
+  return { kind: 'mixed', text: `${head}neither one mapping nor one-per-region; read the base count before assuming either.` };
+}
+
+/** GetMappedFileName needs PROCESS_QUERY_INFORMATION | PROCESS_VM_READ. */
+export const NAME_CENSUS_ACCESS = 1040;
+
+export type MappedNameKind = 'no-access' | 'unsampled' | 'anonymous' | 'file-backed';
+
+/**
+ * Is there a FILE behind those mappings?
+ *
+ * Anonymous is what `base::SharedMemory`, discardable segments and mojo data pipes all are,
+ * so it hands the question to Chromium's own dump. A file NAMES the creator outright and
+ * needs nobody's cooperation — which is the branch that would end this in one reading.
+ *
+ * ACCESS AND SAMPLE SIZE COME BEFORE THE VERDICT. A census that could not run and one that
+ * ran and found every region anonymous are opposite readings that render identically without
+ * them, and here that absent-reading-as-a-negative would retire the only branch that can name
+ * a creator without Chromium.
+ */
+export function mappedNameReading(
+  args: { access?: unknown; sampled?: unknown; named?: unknown },
+): { kind: MappedNameKind; text: string } {
+  const access = Number(args.access) || 0;
+  const sampled = Number(args.sampled) || 0;
+  const named = Number(args.named) || 0;
+  if (access < NAME_CENSUS_ACCESS) {
+    return {
+      kind: 'no-access',
+      text: `name census did NOT run: the walk got access=${access} and GetMappedFileName needs `
+        + `${NAME_CENSUS_ACCESS} (PROCESS_VM_READ). That is a refusal, NOT "no region has a file behind it".`,
+    };
+  }
+  if (sampled === 0) return { kind: 'unsampled', text: 'name census sampled nothing in that band.' };
+  if (named === 0) {
+    return {
+      kind: 'anonymous',
+      text: `name census: ${sampled} sampled, ALL ANONYMOUS — pagefile-backed sections with no file behind `
+        + "them. That is what base::SharedMemory, discardable segments and mojo pipes all are, so the memory "
+        + "dump's owner column is what names the creator.",
+    };
+  }
+  return {
+    kind: 'file-backed',
+    text: `name census: ${named} of ${sampled} sampled are FILE-BACKED — the file names the creator without `
+      + 'asking Chromium anything.',
+  };
+}

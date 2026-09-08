@@ -394,7 +394,19 @@ test('the readout renders it, and BOTH verdict branches are there', () => {
   // browser process, so a renderer that will not answer is MISSING from it rather than empty —
   // and a missing contribution read as a small one retires three candidates on nothing.
   assert.match(READOUT, /MISSING/);
-  assert.match(READOUT, /Join on the pid/);
+  /**
+   * THE JOIN IS DONE, NOT ASKED FOR (2026-09-08). This asserted the instruction
+   * `Join on the pid in the ramp-scan's region walk` — and the first time it mattered nobody
+   * did: the 09-07 dump measured a browser five seconds old and its `shared_memory 2 MB` was
+   * one sentence from being written up as an elimination. The readout now joins the walk's
+   * target pid against the dump's own process list and SUPPRESSES the verdict when they
+   * disagree, so the assertion moves to the mechanism rather than to the request.
+   *
+   * UPDATED, NOT RELAXED: the void branch is pinned here and again in
+   * src/lib/leak-capture.test.mts, which drives the decision directly.
+   */
+  assert.match(READOUT, /dumpJoinReading\(/);
+  assert.match(READOUT, /join\.kind === 'void'/);
   // And an empty table must say what absence means rather than reading as "no leak".
   assert.match(READOUT, /Ordinary until the box runs rc-mem-dump\.mjs/);
 });

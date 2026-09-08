@@ -7054,6 +7054,60 @@ for the same event**. The first ramp dump arrived on 2026-09-07 and that check a
   TARGET for the same event. A ramp dump whose process set does not contain the walk's target is
   void, whatever its numbers say.
 
+##### ONE CAPTURE THAT ENDS ON EITHER BRANCH (2026-09-08) — stop paying a ramp per question
+Raised by the owner, and it is the right criticism: every instrument so far has answered ONE
+question and cost a round trip of five to twenty-eight hours. The 09-07 event is the cost in
+miniature — a dump that measured the wrong browser bought a whole cycle and eliminated nothing.
+So the next ramp now answers **both** remaining branches, and the readout reaches the verdict
+rather than handing a reader a to-do.
+- **THE JOIN IS DONE, NOT REQUESTED.** `dumpJoinReading` matches the walk's TARGET pid against
+  the dump's own `MDPROC` list within a 30-minute window (both ride the same 3 GB trigger and
+  landed 39 seconds apart on 09-07) and **suppresses the shared-memory verdict entirely** when
+  they disagree. Rendered against the real 09-07 rows it now prints `VOID: the walk's target is
+  pid 9912 and the dump answered for 7316, …` in place of *"only 2 MB of tracked shared
+  memory"* — the sentence one edit away from retiring three candidates on nothing. **`no-walk`
+  is deliberately NOT `void`**: no walk to join against is an absence and still leaves the
+  manual check available, which is a different sentence.
+- **`VMMAP2M` — DISTINCT `AllocationBase` COUNT, AND IT IS FREE.** The field is already in the
+  `MEMORY_BASIC_INFORMATION` the walk reads and was being discarded. 16,387 regions over 16,387
+  bases is 16k separate `MapViewOfFile` calls against 16k sections; 16,387 over four bases is a
+  handful of large mappings carved into 2 MB views. **Different bugs, different fixes, and the
+  histogram cannot tell them apart.** Same for the protection histogram (`VMPROT`).
+- **`VMNAME` — IS THERE A FILE BEHIND THEM?** `K32GetMappedFileNameW` over a **bounded** sample
+  (64; one call per region would be 16k calls on a box already at 40% commit). Anonymous is what
+  `base::SharedMemory`, discardable segments and mojo data pipes all are, so it hands the
+  question to the dump's owner column; a NAMED one names the creator outright and needs nobody's
+  cooperation. **That is the branch that could end this in a single reading.**
+  - It needs `PROCESS_VM_READ`, so the walk asks for **0x410 first** and falls back to the two
+    narrower rights — a refusal costs the NAMES and never the walk. **`access=` is printed on
+    the healthy path too**: a census that could not run and one that ran and found every region
+    anonymous are opposite readings that render identically without it, and here the
+    absent-reading-as-a-negative would retire the only branch that names a creator for free.
+  - The band is the histogram's `d 2-4M` bucket **exactly** (`>= 2097152 -and <= 4194304`), so
+    `VMMAP2M regions` and `VMHIST d` are one population and a reader can diff them. A band that
+    merely looked similar would make two lines about one bucket disagree by design.
+- **THE THREE VERDICTS ARE PURE FUNCTIONS** (`dumpJoinReading`, `mappedSwarmReading`,
+  `mappedNameReading` in `src/lib/bot-events.ts`), for the reason `closeReasonReading` and
+  `loopAnswerReading` are: inline in the readout, the branch that says VOID is reachable only
+  from a real ramp, and a branch that has never run is how `closeOnToken` shipped wrong for six
+  days. `src/lib/leak-capture.test.mts`, **fourteen mutations, each verified to APPLY and to
+  fail.**
+  - **ONE SURVIVED AND IT IS THE HOUSE SHAPE: deleting the name-census RENDER left every guard
+    green** — the functions were perfect and nothing printed them. Pinned structurally now.
+    Seventh instance of fix-present-and-inert.
+  - **AND A GUARD OF MY OWN ANCHORED ON THE DECLARATION**: `SHM_ANSWER_MB` appears at the top of
+    the readout, so an `indexOf` on the bare name made the ordering assertion true whatever the
+    branches did. Anchored on `>= SHM_ANSWER_MB`. Caught by running it.
+- **AN EXISTING GUARD BROKE OVER THE IMPROVEMENT AND WAS UPDATED, NOT RELAXED.**
+  `rc-mem-dump.test.mts` pinned the literal instruction *"Join on the pid"* — the request this
+  change replaces with an answer — so it now pins `dumpJoinReading(` and the void branch, and
+  was re-verified failing against both regressions. **It touches `worker/**`, so merging this
+  fires a worker deploy and restarts all three pollers**; read `paths:`, do not infer.
+- **WHAT THIS STILL CANNOT CAPTURE, stated so nobody plans around it:** the ALLOCATING CALL
+  STACK. Naming it on Windows needs ETW with symbols for `chrome.dll`, which the box does not
+  have, and a trace of a process committing 40 GB is the multi-GB-snapshot mistake in a third
+  costume. Chromium's ownership edges are the practical substitute, which is what the dump is.
+
 #### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
 Read before quoting any of them.
 - **GROWTH RATE is quoted four ways**: ~2,400 MB/min (08-17), ~400 MB/min over eleven minutes
@@ -7177,18 +7231,30 @@ tree, the deploy and the fleet were all correct.
 > over a healthy fresh browser. **The open question is exactly where it was**: whether the
 > ramping renderer's 16.4k sections appear in `shared_memory` at all. Both branches still answer.
 >
-> **FIXED, AND IT IS BOT-SIDE — the false ramp dump can recur until the box updates.**
+> **FIXED, AND THE BOX HAS IT: it updated to `15f791c` at 09-07 09:08 PT, in 33 seconds.**
 > `readLatestMemory` gained `notBefore` (the browser-life start), so a sample taken before this
 > browser existed is UNKNOWN and **both arms stand down**. The bail arm had the same exposure and
-> a worse outcome — it would have exited the process over a dead browser. **Until the box has it,
-> join on the pid before reading any `ramp` row**, and after it, join anyway.
+> a worse outcome — it would have exited the process over a dead browser. **Join on the pid
+> anyway** — and as of 09-08 the readout does it for you (below).
+>
+> **THE NEXT RAMP ANSWERS BOTH BRANCHES, NOT ONE (2026-09-08).** The owner's criticism — that we
+> add one check at a time and pay a 5-28h round trip for each — produced the one-shot capture:
+> the readout JOINS the dump against the walk and suppresses the verdict when they disagree
+> (verified against the real 09-07 rows, which now print `VOID`), and the walk adds
+> `VMMAP2M`/`VMPROT`/`VMNAME` — distinct `AllocationBase` count (free, from a field it already
+> read) and a bounded mapped-FILE-name census. **A named file ends this outright; all-anonymous
+> hands it to the dump's owner column, which is now guaranteed to be about the right browser.**
+> Full entry: "ONE CAPTURE THAT ENDS ON EITHER BRANCH". **Bot-side for the walk half — it needs a
+> box update after merge.**
 >
 > **THE RDR BURST GOT BIGGER AND IT IS STILL THE NEXT REAL BUG.** The 09-07 bail carried
 > **49,237 hits in 120s / 75,195 lifetime** on `futurebookingstartsendsdates`, on a browser three
 > minutes old — against 18,392 and 19,008 before. Still measured independent of the leak in both
 > directions (that same 09-07 ramp is the one WITH a loop; 09-05 20:29 ramped with a flat
-> counter). **The missing field is still the STATUS** — count by `(path, status)` off
-> `page.on('response')`, **NOT BUILT** — and still do not reach for blocking the requests first.
+> counter). **The `(path, status)` counter IS built and IS on the box** (#292) — an older reading
+> printing `statuses not reported` is a pre-update row, not a gap. The next burst says whether it
+> is a retry loop against a rejection or an SPA being served, and **still do not reach for
+> blocking the requests first.**
 >
 > **THE RELEASE-WINDOW ROUTINE FIRED AT 07:54 PT AND WAS LOST — the third in a row, and it does
 > NOT fire into its own session.** It is bound to the MAIN session, so it needs that session's
