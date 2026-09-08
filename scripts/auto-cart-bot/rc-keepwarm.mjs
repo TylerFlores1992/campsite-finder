@@ -569,6 +569,24 @@ const MEM_STALL_MS = Number(process.env.RC_KEEPWARM_MEM_STALL_MS || 60_000);
  */
 const RAMP_STALL_MS = Number(process.env.RC_KEEPWARM_RAMP_STALL_MS || 120_000);
 const RAMP_MB = Number(process.env.RC_KEEPWARM_RAMP_MB || 3000);
+
+/**
+ * THE DUMP'S OWN THRESHOLD, DELIBERATELY BELOW THE BAIL'S — see maybeMemoryDump.
+ *
+ * It shared `RAMP_MB` until 2026-09-07, on the reasoning that the ramp arm needs a 120s stall
+ * ON TOP of the same threshold and so the dump would run ~2 minutes ahead of the exit. That
+ * reasoning assumes the stall STARTS when the memory does. It does not: the loop is stuck
+ * inside the Okta trip from its first second, so by the time the family crosses the bar the
+ * stall is already minutes old and BOTH conditions go true on the same tick. Measured on the
+ * forced ramp of 2026-09-07 — `ramp-scan` at 20:42:23, `bail:ramp` at 20:42:24, and no dump at
+ * all, because `maybeMemoryDump` is called AFTER the arm's `return`.
+ *
+ * 1500 is chosen from that event's own series: rc read 2,811 MB at 20:40:13 and 4,805 MB at
+ * 20:42:14, so this fires a full sampler tick earlier — while the renderer still answers CDP,
+ * which is the other thing that stops working as a ramp peaks (measured twice, on two
+ * different calls). It must stay STRICTLY BELOW `RAMP_MB` or the race returns.
+ */
+const MEM_DUMP_RAMP_MB = Number(process.env.RC_MEM_DUMP_RAMP_MB || 1500);
 const RAMP_READING_MAX_AGE_MS = Number(process.env.RC_KEEPWARM_RAMP_READING_MAX_AGE_MS || 5 * 60_000);
 /**
  * HOW OLD THE BROWSER MUST BE BEFORE ITS BASELINE MEMORY DUMP IS WORTH TAKING.
@@ -1024,10 +1042,17 @@ async function maybeWarmupLogin(ctx, page) {
   if (!win.open) return warmupSkip(win.why);
 
   const okta = await oktaSessionAlive(ctx).catch(() => null);
+  /**
+   * RC'S OWN TOKEN, BECAUSE OKTA BEING GONE IS NOT ENOUGH — see warmupPlan's live-token gate.
+   * Read off the RESIDENT page, which costs no network call: `readLiveToken` is an evaluate,
+   * and a token this process can see is one `attemptLogin` will short-circuit on.
+   */
+  const live = await readLiveToken(page).catch(() => ({ token: null }));
   const plan = warmupPlan({
     minutesUntilRelease: mins,
     criticalLeadMin: AUTOLOGIN_LEAD_MIN,
     oktaAlive: okta ? okta.alive ?? null : null,
+    tokenSecondsLeft: tokenSecondsLeft(live?.token ?? null),
     spent: warmup.spent,
   });
   if (!plan.go) return warmupSkip(plan.why);
@@ -2643,18 +2668,25 @@ async function warmResident() {
      * about what "the family is over the threshold" means. Two copies of that comparison is
      * how `nextHoldRelease` came to disagree with `dueHolds` about whether a hold existed.
      *
-     * AND IT FIRES BEFORE THE BAIL, NOT INSIDE IT. The ramp arm needs a 120s stall on top of
-     * this same threshold, so this typically runs ~2 minutes ahead of the exit — which is what
-     * gives a fire-and-forget POST time to land, and what keeps a multi-second diagnostic off
-     * the path that releases the profile lock. A dump inside `reportAndBail` would be spending
-     * the one budget that loses a cart when it overruns.
+     * AND IT FIRES BEFORE THE BAIL, NOT INSIDE IT — which keeps a multi-second diagnostic off
+     * the path that releases the profile lock, and gives a fire-and-forget POST time to land.
+     * A dump inside `reportAndBail` would be spending the one budget that loses a cart when it
+     * overruns.
+     *
+     * THE HEAD START IS BOUGHT WITH A LOWER THRESHOLD, NOT WITH THE STALL. This used to share
+     * `RAMP_MB` and argue that the arm's extra 120s-stall condition put the dump ~2 minutes
+     * ahead. **That was false and cost the first forced ramp its owner column** (2026-09-07):
+     * the loop stalls the instant the Okta trip begins, so the stall is already minutes old
+     * when the memory crosses, both arms go true on one tick, and the arm's `return` above
+     * means this is never even called. `MEM_DUMP_RAMP_MB` is what actually creates the gap.
      */
     const maybeMemoryDump = (memory) => {
       if (memDump.inFlight || !heapProbe || !memory?.known) return;
-      // `>` and not `>=`, matching rampBailDecision's own `big` exactly. Two comparisons
-      // that differ by one megabyte would put the dump and the bail on different sides of
-      // the same event, which is the disagreement this whole call site exists to avoid.
-      const over = memory.rcMb > RAMP_MB;
+      // `>` and not `>=`, matching rampBailDecision's own `big`. The THRESHOLD is deliberately
+      // lower than the bail's — see MEM_DUMP_RAMP_MB. That is a head start, not a drift: the
+      // two arms must still agree about which EVENT they are looking at, and a dump taken
+      // earlier in the same climb is the same event measured while the browser can answer.
+      const over = memory.rcMb > MEM_DUMP_RAMP_MB;
       const phase = over ? 'ramp' : 'baseline';
       if (memDump[phase]) return;
       // The baseline is a CONTROL and wants a browser that has actually loaded RC — see

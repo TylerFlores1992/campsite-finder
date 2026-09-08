@@ -247,3 +247,56 @@ test('the warm-up passes no coverage deadline', () => {
   assert.ok(!/sufficient:/.test(body),
     'a coverage deadline belongs to maybeAutoLogin, which must cover T+15');
 });
+
+// ── 6. A live RC token makes the trip a no-op, so it must not spend the turn ───────────────
+//
+// Measured 2026-09-07: the warm-up fired with okta=GONE and a live 20-minute token, and
+// `attemptLogin` answered `already signed in — nothing to do` in 4.5 seconds without
+// navigating to Okta. It spent its one turn on that and then stood down for the rest of the
+// release, so the twelve-minute password trip landed at T-30 anyway — the exact failure this
+// module exists to prevent. Okta's ABSOLUTE cap can expire while a 60-minute token still
+// runs, so this state is real and not an artifact of the test that found it.
+
+test('a live RC token stands the warm-up down and keeps its turn', () => {
+  const r = plan({ minutesUntilRelease: 120, oktaAlive: false, spent: 0, tokenSecondsLeft: 1200 });
+  assert.equal(r.go, false, 'a sign-in would short-circuit, so it must not be attempted');
+  assert.match(r.why, /token/i, 'and the reason must name the token, not the window');
+});
+
+test('the turn is NOT spent — the same release still fires once the token lapses', () => {
+  // The gate is worthless if it merely delays a burnt turn. The window is 150 minutes and a
+  // token lives at most 60, so it converges by construction.
+  const blocked = plan({ minutesUntilRelease: 175, oktaAlive: false, spent: 0, tokenSecondsLeft: 3000 });
+  assert.equal(blocked.go, false);
+  const later = plan({ minutesUntilRelease: 115, oktaAlive: false, spent: 0, tokenSecondsLeft: null });
+  assert.equal(later.go, true, 'with the token gone it must act, with its full turn intact');
+});
+
+test('only a POSITIVE reading blocks — unknown keeps acting', () => {
+  // readLiveToken returns {token: null} for "no token" AND for "the page would not answer".
+  // Blocking on null would silently disable the warm-up on any unresponsive page, which is a
+  // NEW stand-down; acting on unknown is exactly the behaviour that shipped.
+  for (const left of [null, undefined, 0, -60]) {
+    const r = plan({ minutesUntilRelease: 120, oktaAlive: false, spent: 0, tokenSecondsLeft: left });
+    assert.equal(r.go, true, `tokenSecondsLeft=${String(left)} must not block`);
+  }
+});
+
+test('an alive Okta session still wins — the token gate is additional, not a replacement', () => {
+  const r = plan({ minutesUntilRelease: 120, oktaAlive: true, spent: 0, tokenSecondsLeft: null });
+  assert.equal(r.go, false);
+  assert.match(r.why, /Okta/, 'the cheap-sign-in reason must survive, it is the benign case');
+});
+
+test('the caller actually reads the token and passes it — the gate is inert otherwise', () => {
+  // The pure function can be perfect while nothing supplies the argument. Fifth instance of
+  // fix-present-and-inert in this repo, so it is pinned structurally.
+  const body = warmupBody();
+  assert.match(body, /readLiveToken\(page\)/,
+    'the resident page must be read for RC\'s own token');
+  const read = body.indexOf('readLiveToken(');
+  const call = body.indexOf('warmupPlan({');
+  assert.ok(read > -1 && call > read, 'and it must be read BEFORE warmupPlan is asked');
+  assert.match(body.slice(call), /tokenSecondsLeft:\s*tokenSecondsLeft\(/,
+    'and the decoded seconds must actually reach warmupPlan');
+});

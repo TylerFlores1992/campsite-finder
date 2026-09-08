@@ -153,6 +153,8 @@ export function warmupWindowOpen(o) {
  * @param {number} [o.warmupLeadMin]
  * @param {number} [o.spent]  Attempts already made for THIS release.
  * @param {number} [o.maxAttempts]
+ * @param {number|null} [o.tokenSecondsLeft]  Seconds left on RC's OWN access token, or null if
+ *   it could not be read. Only a POSITIVE number stands down — see the gate below.
  * @returns {{go: boolean, why: string}} `why` is always a full sentence, because a silent
  *   gate is indistinguishable from a gate that never ran — the failure this project has
  *   fixed in the watchdog, the rehearsal and five auto-login gates.
@@ -172,6 +174,44 @@ export function warmupPlan(o) {
   if (o.oktaAlive == null) {
     // Never spend a password on a guess. See the header.
     return { go: false, why: 'the Okta session state is UNKNOWN — not signing in on a guess' };
+  }
+  /**
+   * A LIVE RC TOKEN MAKES THE TRIP A NO-OP, AND SPENDING THE TURN ON IT IS THE DEFECT.
+   *
+   * `attemptLogin` short-circuits on an existing session, so with RC's own token still alive
+   * it returns `already signed in — nothing to do` without navigating to Okta at all. This
+   * gate's only precondition used to be `oktaAlive === false`, and those two facts are
+   * INDEPENDENT: Okta's ABSOLUTE cap can expire while a 60-minute token is still running, so
+   * `okta=GONE` beside a live token is a real state — measured 2026-09-07, a 19:16:56 sign-in
+   * whose Okta session died at the cap at 19:30 and whose token lived to 20:17.
+   *
+   * In that state the warm-up fires, no-ops in four seconds, spends its one turn, and then
+   * stands down for the rest of the release — so the twelve-minute password trip lands at
+   * T-30 anyway, **which is the exact failure this module exists to prevent.** Observed:
+   *
+   *     03:06:35 warming up the session: the release is 120m away and Okta is GONE
+   *     03:06:40     -> already signed in - nothing to do
+   *     03:07:54    warm-up stood down: the warm-up has already had its 1 turn
+   *
+   * A GATE AND NOT A REFUND, and it converges by construction: the window is 150 minutes and
+   * a token lives at most 60, so a token alive at T-180 is dead by T-120 at worst and the
+   * warm-up still has ninety minutes and its full turn. A refund would instead retry every
+   * 60s, and each no-op is ~50 responses / 2.8 MB to RC from the address that has eaten a
+   * twelve-hour block.
+   *
+   * ONLY A POSITIVE READING BLOCKS, which inverts the usual unknown-stands-down rule for a
+   * reason: `readLiveToken` returns `{token: null}` for "no token" and "the page would not
+   * answer" alike, so treating null as a block would silently disable the warm-up on any
+   * unresponsive page. Acting on unknown is exactly today's behaviour, so this can only ever
+   * narrow, never introduce a new stand-down.
+   */
+  const left = o.tokenSecondsLeft;
+  if (typeof left === 'number' && left > 0) {
+    return {
+      go: false,
+      why: `RC's own token still has ${Math.round(left / 60)}m left, so a sign-in would `
+        + 'short-circuit and spend the turn on nothing — waiting for it to lapse',
+    };
   }
   if (spent >= max) {
     return { go: false, why: `the warm-up has already had its ${max} turn for this release` };
