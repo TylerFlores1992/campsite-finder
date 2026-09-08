@@ -22,8 +22,22 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > no ramp dump has been taken for this browser life, the bail HOLDS and the dump starts.
 > Bounded by a deadline, once per browser life, ≤2 ticks; it can delay the bail, never prevent
 > it. The threshold is KEPT — it wins the ~half of ramps where a sample does land in the gap.
-> **BOT-SIDE: it is inert until the box updates, and then it needs a ramp.** Confirm the sha
-> with `npx tsx scripts/bot-ask.mts git-status`.
+>
+> **MERGED AS #298 AND ON THE BOX: `64b40d5`, applied 2026-09-08 14:5x UTC, confirmed by
+> `bot-ask git-status` and not by `autocart.bot_version`.** The fleet came back 3/3 shards with
+> a 3s heartbeat. **So the only thing left is a ramp** — one arrives every 5-28 h, or can be
+> ordered by the recipe below once Okta is GONE (it was ALIVE to 09-09 02:35 when this was
+> written, so the window is not open yet).
+>
+> **HOW TO READ THE NEXT ONE.** In `logs\rc-keepwarm.log` a `* holding the bail up to 15s` line
+> is the grace being granted; then either a `memory dump (ramp) in Nms` line, or
+> `the dump grace expired without a dump` — which is the grace having run and bought nothing,
+> deliberately distinguishable from never being granted. Then
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`, MEMORY DUMPS, **and the readout
+> does the pid join itself** and prints `VOID` if the dump and the walk disagree.
+>
+> **EXPECT A ~10-20s GAP IN THE RAM TRAIL beside that line.** A held tick skips one heap, RAM
+> and alloc trail sample; it is recorded as a considered cost in the code, not a defect.
 >
 > **WHAT IS STILL OUTSTANDING IS UNCHANGED: one `mem-dump` with `phase: ramp` whose `MDPROC`
 > pids contain the walk's TARGET.** `discardable/segment` at ~32 GB names the subsystem; a

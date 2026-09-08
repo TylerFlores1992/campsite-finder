@@ -5190,8 +5190,13 @@ ordinary path holds exactly **one tick**.
   restored, the default raised past three ticks, the keep-warm carrying its own copy of that
   default, the held tick falling through to the bail on the same tick, and the dump moved
   inside `reportAndBail`.
-- **BOT-SIDE, so it is inert until the box updates**, and then it needs a ramp. Ramps have
-  arrived every 5-28 hours; one can be ordered (see the recipe above).
+- ~~**BOT-SIDE, so it is inert until the box updates**~~ — **MERGED AS #298 AND ON THE BOX
+  (`64b40d5`, 2026-09-08, confirmed by `bot-ask git-status`), fleet back at 3/3 shards.** It
+  now needs only a ramp; they arrive every 5-28 hours, or one can be ordered (recipe above).
+  **HOW TO READ IT:** a `* holding the bail up to 15s` line in `logs\rc-keepwarm.log` is the
+  grace being granted, followed by either `memory dump (ramp) in Nms` or `the dump grace expired
+  without a dump` — the second being the grace having run and bought nothing, which is
+  deliberately distinguishable from never having been granted.
 
 #### AND THE SECOND WALK CORROBORATES THE FIRST, WITH THE CENSUS ATTACHED (2026-09-08)
 The 09-05 walk was the only one carrying the `2-4M` census; the 09-08 02:03 ramp is the second,
