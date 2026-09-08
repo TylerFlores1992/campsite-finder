@@ -951,6 +951,18 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   - **REPRODUCE LOCALLY WITH THE OUTPUT IN A FILE INSTEAD**: `npm test > log 2>&1` then grep
     `^not ok`. That is the only route to the name, and it doubles as the pass-alone evidence a
     legitimate re-run needs.
+  - **THE CAP CAN BE TURNED INTO A BOUND, AND THE ok NUMBERS ARE STABLE (2026-09-08).** Asking
+    `get_job_logs` with `failed_only` + `run_id` and a large `tail_lines` exceeds the tool's
+    token limit and is **saved to a file**, which can then be grepped — same ~312 KB cap, still
+    **zero `not ok`**, so that route is closed too. What it does buy is the WINDOW: parse
+    `ok (\d+)` out of it and the hidden range falls out (on 09-08: 1-11 and 1148-1944 visible,
+    so the failure was in **12..1147**). **TAP numbers match between a local run and CI** —
+    verified: four guards landed at `ok 1344/1351/1352/1353` in both — so those numbers map
+    straight onto local test names, and you can check directly whether YOUR OWN new tests were
+    inside the visible window and passed, which exonerates the diff without guessing.
+  - **The signed `logs_url` from `get_workflow_run_logs_url` is 403 at the agent proxy**
+    (`results-receiver.actions.githubusercontent.com` is not allowlisted), so the full archive
+    is not reachable either.
   - The three conditions still decide whether a re-run is honest — the diff cannot touch the
     code, the suite passes alone, and the mechanism is named — and **the third can be satisfied
     without the test name**: on 09-07 the Nightly RIDB Sync spanned CI's entire test window,
@@ -5020,6 +5032,45 @@ and the dump is never called at all. Not a lost POST — a call that never happe
   asserted the call was REACHABLE. Pinned as a bare statement on its own line now. Sixth-odd
   instance of fix-present-and-inert, this time inside the guard written for the previous one.
 
+**A SECOND FORCED RAMP WAS ATTEMPTED AN HOUR LATER, ON THE FIXED BOX, AND IT MISSED — WHICH
+PRODUCED THE MORE USEFUL FINDING.** Both fixes were merged (#296) and confirmed live by
+`git-status` (`aaf2fe5`), the fleet came back 3/3 shards, and a fresh hold put the warm-up in
+the correct cell (`no token at all` AND `okta=GONE(404)`). It ran the **full password form** —
+`email field` -> `ticked "Keep me signed in"` -> `password entered` -> `✓ Okta session
+established` — in **15.6 seconds for 413 MB.** No ramp, so no dump, and nothing was wasted
+except the attempt.
+
+**DURATION AND COST TRACK EACH OTHER, FIVE FOR FIVE, AND THAT RETIRES THE CELL AS THE
+EXPLANATION.**
+
+| event | duration | cost |
+|---|---|---|
+| 08-20 auto-login | 12 min | 9,434 MB |
+| 08-24 warm-up (ordered) | 11 min | 9,338 MB |
+| 09-07 20:38 warm-up (ordered) | ~4 min, bailed | 4,805 MB peak |
+| 08-26 rehearsal | 32 s | 0 |
+| **09-07 21:49 warm-up (ordered)** | **15.6 s** | **413 MB** |
+
+- **SO THE QUESTION IS NO LONGER "WHICH CELL?" BUT "WHAT MAKES A TRIP SLOW?"** The
+  `okta=GONE` password form is now **three ramps in five**, and both misses completed cleanly
+  and quickly. A password sign-in does not cost gigabytes; a password sign-in **that struggles**
+  does. This file already said *"duration and cost track each other, which makes a retrying or
+  stalling navigation the better candidate than the password path itself"* — that was one
+  observation then and it is five now.
+- **NOT THE BYTE COUNT.** This trip moved **233 responses / 17.0 MB**, roughly double the
+  09-07 05:07 trace's 112 / 8.7 MB, and did not ramp. The three-way verdict refused to speak,
+  correctly.
+- **A CANDIDATE, LABELLED AS ONE: the trace shows `recaptcha__en.js` fetched SEVEN times
+  (2.4 MB).** A challenge appearing is exactly the shape that makes a navigation slow, and the
+  2026-08-06 finding is that a challenge's overlay swallows pointer events so retries time out
+  rather than fail. **Nothing has compared the recaptcha counts of a ramping trip against a
+  clean one** — the ramping traces are the ones that bail, and `tail-log` rolls at 16,000
+  characters. That comparison is the next cheap reading and it needs no new instrument, only
+  the trace being stored rather than logged.
+- **A SUCCESSFUL WARM-UP CLOSES ITS OWN WINDOW.** It leaves Okta ALIVE, so the GONE
+  precondition does not return until the session lapses, and `spent` is 1 for that release.
+  **One forced attempt per Okta lifetime** is the real budget, whichever way the coin lands.
+
 **HOW TO READ THE NEXT ONE.** The walk half is answered and does not need repeating; what is
 outstanding is one `mem-dump` with `phase: ramp` whose `MDPROC` pids contain the walk's TARGET.
 `discardable/segment` at ~32 GB names the subsystem; a small `shared_memory` total against a
@@ -7399,7 +7450,16 @@ tree, the deploy and the fleet were all correct.
 >
 > **AND IT IS ON THE BOX — `aae25bd`, applied 2026-09-07 19:01 PT, confirmed by `git-status`.**
 >
-> **A RAMP WAS THEN FORCED SUCCESSFULLY AT 20:38 PT AND THE WALK ANSWERED BOTH ITS BRANCHES:
+> **TWO RAMPS WERE FORCED ON 09-07; THE FIRST HIT AND THE SECOND MISSED.** The `okta=GONE`
+> password form is **three ramps in five**, and **duration and cost track each other five for
+> five** — the two misses completed in 32 s and 15.6 s for nothing, the hits took 11-12 minutes
+> and 9 GB. **So the trigger is a trip that STRUGGLES, not the password path**, and the next
+> cheap reading is comparing `recaptcha__en.js` fetch counts between a ramping trip and a clean
+> one (the clean one did 7; nobody has the ramping figure, because those traces bail and
+> `tail-log` rolls). **A successful warm-up leaves Okta ALIVE and spends its turn, so the real
+> budget is one forced attempt per Okta lifetime.**
+>
+> **THE FIRST ONE ANSWERED BOTH THE WALK'S BRANCHES:
 > 15,493 separate anonymous READWRITE sections, one allocation base each, 31,005 MB — N
 > separate `MapViewOfFile` calls, not a few large mappings carved into views.** The name census
 > found no file behind them, so the owner column is what names the creator. **The mem-dump was

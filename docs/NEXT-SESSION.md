@@ -1,9 +1,62 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-06 evening** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-07 evening** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
-> ## THE OWNER QUESTION IS INSTRUMENTED, IT IS ON THE BOX — WAIT FOR A RAMP (2026-09-06)
+> ## A RAMP CAN BE FORCED. THE WALK ANSWERED. THE DUMP IS THE LAST THING OUTSTANDING (2026-09-07)
+>
+> **DO NOT WAIT FOR A RAMP — order one.** The previous version of this block said to wait, and
+> that is now the expensive reading of the situation. `CLAUDE.md` -> **"THE RAMP WAS FORCED TO
+> ORDER"** is the full account; do not re-derive it.
+>
+> **THE RECIPE, and both preconditions are load-bearing.** `okta=GONE` **AND** the RC token
+> dead. Okta alone is what `warmupPlan` checks and it is NOT enough — a live token makes
+> `attemptLogin` short-circuit in 4.5 s, which no-ops and spends the warm-up's only turn (fixed
+> in #296, but the recipe still needs both). Then:
+> ```
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts \
+>   --unit <from --find> --arrival <far-future midweek> --nights 1 --watch <id> --in 120
+> ```
+> `--in 120` opens the T-3h..T-30 window immediately and leaves ninety minutes of margin.
+> **Delete the hold the moment the trip is under way** — nothing is ever carted, no campsite is
+> ever locked. The warm-up fires within ~20 s of the insert.
+>
+> **IT IS A COIN FLIP: three ramps in five, and one attempt per Okta lifetime.** A successful
+> warm-up leaves Okta ALIVE, so the GONE precondition does not come back until the session
+> lapses, and `spent` is 1 for that release. `test-login` cannot substitute — while Okta lives
+> it is answered from the cookie, and it MINTS a token, which is the state that blocks the
+> warm-up.
+>
+> **THE WALK IS ANSWERED AND DOES NOT NEED REPEATING.** The 32 GB is **15,493 separate
+> anonymous READWRITE sections, one allocation base each, 31,005 MB** — N separate
+> `MapViewOfFile` calls, not a few large mappings carved into views. The control renderer in the
+> same scan reads 5 regions across 4 bases, and one of its five IS file-backed, which is the
+> census's own positive control. All-anonymous means no file names the creator.
+>
+> **SO EVERYTHING NOW RESTS ON ONE `mem-dump` WITH `phase: ramp`.** `discardable/segment` at
+> ~32 GB names the subsystem; a small `shared_memory` total against a walk showing 32 GB of
+> `commit/mapped` retires discardable, mojo and the GPU transfer path **together**. **Join on
+> the pid** — the readout does it itself and prints `VOID` when the dump's `MDPROC` list does
+> not contain the walk's TARGET, which is exactly how the 09-07 02:03 dump fooled us.
+>
+> **THE DUMP HAS NOW MISSED TWICE, FOR TWO DIFFERENT REASONS, BOTH FIXED.** 09-07 02:03 it
+> measured a fresh browser after a bail (#291's `notBefore`); 09-07 20:42 the bail arm raced it
+> away on the same tick, because it shared `RAMP_MB` and sits after the arm's `return`
+> (#296's `MEM_DUMP_RAMP_MB` = 1500). Both are on the box as of `aaf2fe5`.
+>
+> **AND THE SHARPER FINDING FROM THE SECOND FORCED RUN: duration and cost track each other,
+> five for five.** The two misses completed in 32 s and 15.6 s for nothing; the hits took 11-12
+> minutes and 9 GB. **The password path is not the trigger — a trip that STRUGGLES is.** The
+> next cheap reading is comparing `recaptcha__en.js` fetch counts between a ramping trip and a
+> clean one (the clean one did **7**, 2.4 MB); nobody has the ramping figure, because those
+> traces bail and `tail-log` rolls at 16,000 characters. That needs the trace STORED rather
+> than logged, not a new instrument.
+
+> ## ~~THE OWNER QUESTION IS INSTRUMENTED, IT IS ON THE BOX — WAIT FOR A RAMP (2026-09-06)~~
+>
+> **SUPERSEDED BY THE BLOCK ABOVE — a ramp can be ordered, and the walk has since answered.**
+> Kept because its account of the memory dump is still the right description of the instrument;
+> only "wait" is wrong.
 >
 > **The walk said WHAT the 32 GB is; nothing on the Windows side can say WHO ASKED FOR IT** —
 > a pagefile-backed anonymous section records no creator. So the next reading asks Chromium:
