@@ -48,7 +48,7 @@
  */
 import {
   recentBotEvents, requestCountReason, loopAnswerReading, dumpJoinReading, mappedSwarmReading,
-  mappedNameReading, type BotEventRow, type RequestCountReason,
+  mappedNameReading, busyThreadReading, mappedSpanReading, type BotEventRow, type RequestCountReason,
 } from '@/lib/bot-events';
 
 /**
@@ -193,7 +193,34 @@ for (const s of scans) {
       if (names.kind === 'file-backed') {
         for (const n of mine('VMNAME').slice(0, 6)) console.log(`          ${n.replace(`VMNAME pid=${pid} `, '')}`);
       }
+      // WHERE the population sits, which separates one reservation from 16k independent
+      // mappings — a different creator with a different fix, and free from a field the walk
+      // already reads.
+      const span = mine('VMSPAN')[0];
+      printVerdict('      ', mappedSpanReading({
+        spanMb: span && num(/spanMB=(\d+)/, span),
+        packedMb: span && num(/packedMB=(\d+)/, span),
+        regions: map2m && num(/regions=(\d+)/, map2m),
+      }).text);
     }
+    /**
+     * SPINNING OR BLOCKED — the one question no CDP instrument can reach.
+     *
+     * Printed for the CONTROL too. A busy main thread in an ordinary renderer would mean the
+     * census measures something every renderer does, and the target's reading would say
+     * nothing; that is the same argument that put a control renderer in the walk at all.
+     */
+    const th = mine('VMTHREAD')[0];
+    const tops = mine('VMTHREADTOP');
+    printVerdict('      ', busyThreadReading({
+      threads: th && num(/threads=(\d+)/, th),
+      windowMs: th && num(/windowMs=(\d+)/, th),
+      busyMs: th && num(/busyMs=(\d+)/, th),
+      topDeltaMs: tops[0] && num(/deltaMs=(-?\d+)/, tops[0]),
+      topIsMain: tops[0] && /main=True/i.test(tops[0]),
+      topWait: tops[0] && /wait=(\S+)/.exec(tops[0])?.[1],
+    }).text);
+    for (const t of tops.slice(0, 4)) console.log(`          ${t.replace(`VMTHREADTOP pid=${pid} `, '')}`);
     committedByPid.push({ pid, role: i === 0 ? 'target' : 'control', mb: totalMb });
   }
   // THE DIFFERENCE, STATED. Printing two blocks and leaving the reader to subtract is how the
@@ -305,6 +332,10 @@ if (dumps.length === 0) {
           // measured a different browser" and "this browser answered minus the ramping
           // renderer" are the same line, and those need opposite fixes.
           walkGenerationPids: near ? [...String(near.text ?? '').matchAll(/^ *CHROME pid=(\d+)/gm)].map((m) => m[1]) : null,
+          // Processes Chromium's coordinator timed out — present, contributing nothing. The
+          // fold records these now, so without this the ramping renderer would read as having
+          // ANSWERED and the small-shared-memory verdict would print over an empty dump.
+          dumpEmptyPids: [...String(row.text ?? '').matchAll(/^MDPROC pid=(\d+)[^\n]*\bempty=yes/gm)].map((m) => m[1]),
           walkNearby: !!near,
         });
             printVerdict('  ', join.text);

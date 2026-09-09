@@ -30,7 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   foldDumpEvents, summariseMemDump, renderMemDump, takeMemoryDump, ownerKey, sizeBucket,
-  MEM_DUMP_TIMEOUT_MS, MEM_DUMP_CLEANUP_MS,
+  MEM_DUMP_TIMEOUT_MS, MEM_DUMP_CLEANUP_MS, TRACING_STUCK,
 } from '../scripts/auto-cart-bot/rc-mem-dump.mjs';
 import { MAX_DETAIL_CHARS, BOT_EVENT_KINDS } from '../src/lib/bot-events';
 import { rampDumpGrace, MEM_DUMP_GRACE_MS_DEFAULT } from '../scripts/auto-cart-bot/ramp-bail.mjs';
@@ -756,4 +756,94 @@ test('the bail names a grace that bought nothing, and knows a landed reading fro
   const open = KW.indexOf('residentPage = page;');
   const reset = KW.indexOf('landed: false', open);
   assert.ok(reset > open && reset - open < 600, '`landed` must reset with the browser life');
+});
+
+/**
+ * ── A WEDGED RENDERER IS PRESENT AND EMPTY, NOT ABSENT (2026-09-09) ──────────────────────
+ *
+ * Measured against a real Chromium in `dump-wedge-probe.mjs`: the memory-infra coordinator
+ * gives up on a child that does not answer within ~15 s, returns `success: false`, and emits
+ * a process dump for it carrying NO allocators — at `detailed`, `background` and `light`
+ * alike. Keying the fold off `allocators` dropped that process, so "asked, timed out,
+ * contributed nothing" and "never appeared" rendered identically. The second reads as a
+ * coordination fault worth chasing, which is exactly how the 2026-09-08 21:43 ramp dump was
+ * read. This is the absent-reading-as-a-negative shape, handed over by the tooling.
+ */
+const MEMDUMP_SRC = readFileSync(new URL('../scripts/auto-cart-bot/rc-mem-dump.mjs', import.meta.url), 'utf8');
+
+test('a process that emitted a dump with NO allocators is recorded, not dropped', () => {
+  const folded = foldDumpEvents([
+    { ph: 'M', name: 'thread_name', pid: 7, args: { name: 'CrRendererMain' } },
+    // The wedged renderer: Chromium emitted a dump for it with nothing in it.
+    { ph: 'v', pid: 7, args: { dumps: { level_of_detail: 'detailed' } } },
+    // A healthy peer in the same trace.
+    { ph: 'v', pid: 8, args: { dumps: { allocators: { malloc: { guid: '1', attrs: { size: { value: '100000' } } } } } } },
+  ]);
+  const wedged = folded.processes.find((p) => p.pid === 7);
+  assert.ok(wedged, 'the wedged renderer must appear — absent and empty are different findings');
+  assert.equal(wedged.dumps, 0, 'and it must say it contributed nothing');
+  assert.ok(folded.processes.some((p) => p.pid === 8 && p.dumps > 0), 'its healthy peer still folds normally');
+});
+
+test('the rendering SPELLS the empty case rather than leaving it to a zero', () => {
+  const folded = foldDumpEvents([{ ph: 'v', pid: 7, args: { dumps: {} } }]);
+  assert.match(renderMemDump(folded), /MDPROC pid=7 .*\bempty=yes/, 'a reader scanning for the ramping renderer needs a word, not an inference');
+  const healthy = foldDumpEvents([
+    { ph: 'v', pid: 8, args: { dumps: { allocators: { malloc: { guid: '1', attrs: { size: { value: '10' } } } } } } },
+  ]);
+  assert.equal(/empty=yes/.test(renderMemDump(healthy)), false, 'and a process that DID contribute must not carry it');
+});
+
+test('summariseMemDump names the timed-out processes so the readout can join on them', () => {
+  const folded = foldDumpEvents([
+    { ph: 'v', pid: 7, args: { dumps: {} } },
+    { ph: 'v', pid: 8, args: { dumps: { allocators: { malloc: { guid: '1', attrs: { size: { value: '10' } } } } } } },
+  ]);
+  const s = summariseMemDump(folded, 'ramp');
+  assert.deepEqual(s.emptyPids, [7], 'without this the ramping renderer reads as having ANSWERED');
+});
+
+/**
+ * ── TRACING IS NOT STOPPED BY `Tracing.end` ALONE (2026-09-09) ───────────────────────────
+ *
+ * The command returns before tracing has stopped; the browser is done only at
+ * `Tracing.tracingComplete`. Both the `finally` and the first version of the stuck-state
+ * recovery sent `end` and moved on, so the NEXT `Tracing.start` was refused — which is the
+ * mini-PC's `Tracing was stopped before start has been completed` (2026-09-09 11:29:54, which
+ * cost that ramp its dump) and the container's `Tracing has already been started`.
+ */
+test('every Tracing.end waits for tracingComplete, bounded', () => {
+  assert.match(MEMDUMP_SRC, /export async function stopTracing\(cdp, ms\)/);
+  const body = MEMDUMP_SRC.slice(MEMDUMP_SRC.indexOf('export async function stopTracing'));
+  // PIN THE AWAIT, NOT THE LISTENER. Registering `Tracing.tracingComplete` and then not
+  // waiting for it is exactly the bug — the first version of this guard matched the
+  // `cdp.once` line and passed against a stopTracing that returned immediately.
+  assert.match(body.slice(0, 1100), /if \(ended\) await Promise\.race\(\[done, deadline\]\);/,
+    'end alone does not stop tracing — the completion must be AWAITED');
+  assert.match(body.slice(0, 1100), /cdp\.once\('Tracing\.tracingComplete'/, 'and there must be something to await');
+  assert.match(body.slice(0, 1100), /setTimeout\(r, ms\)/, 'and the wait is bounded, against a browser that will not finish');
+  // The send is INSIDE the deadline. Awaiting it bare pins the caller against a browser that
+  // never answers — which is what the "hung teardown" guard in this file caught.
+  assert.match(body.slice(0, 900), /Promise\.race\(\[cdp\.send\('Tracing\.end'\)/, 'the end itself is bounded, not just the wait');
+  // Both places that used to send a bare, unwaited end now go through it. The happy path
+  // keeps its own end because it already awaits `complete` — that IS the wait.
+  const uses = [...MEMDUMP_SRC.matchAll(/await stopTracing\(cdp, MEM_DUMP_CLEANUP_MS\)/g)].length;
+  assert.equal(uses, 2, `the recovery and the finally must both stop tracing properly (found ${uses})`);
+});
+
+test('the tracing flag goes up BEFORE the start, or the finally believes there is nothing to stop', () => {
+  const i = MEMDUMP_SRC.indexOf('started_tracing = true;');
+  const j = MEMDUMP_SRC.indexOf("await cdp.send('Tracing.start', cfg);");
+  assert.ok(i > -1 && j > -1, 'both present');
+  assert.ok(i < j, 'a start can take effect and have its reply lost to the caller timeout');
+});
+
+test('a stuck tracing state is recovered once, and only for the two wordings that mean it', () => {
+  assert.match(MEMDUMP_SRC, /if \(!TRACING_STUCK\.test\(`\$\{e\?\.message \?\? e\}`\)\) throw e;/,
+    'any other Tracing.start failure is a different fault and must not buy a second timeout');
+  assert.match(String(TRACING_STUCK), /already been started/);
+  assert.match(String(TRACING_STUCK), /stopped before start/);
+  assert.equal(TRACING_STUCK.test('Tracing has already been started (possibly in another tab).'), true);
+  assert.equal(TRACING_STUCK.test('Tracing was stopped before start has been completed.'), true);
+  assert.equal(TRACING_STUCK.test('Target closed'), false, 'a dead session is not a stuck trace');
 });

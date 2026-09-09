@@ -88,6 +88,12 @@ export const MEM_DUMP_TIMEOUT_MS = Number(process.env.RC_MEM_DUMP_TIMEOUT_MS || 
  * operation is a hang.
  */
 export const MEM_DUMP_CLEANUP_MS = Number(process.env.RC_MEM_DUMP_CLEANUP_MS || 3_000);
+/**
+ * The two ways Chromium reports tracing left in a stuck state by a previous attempt. Both
+ * were observed rather than guessed — see the recovery in `takeMemoryDump` for where each
+ * came from. Exported so a test pins the wordings rather than a copy of them.
+ */
+export const TRACING_STUCK = /already been started|stopped before start/i;
 /** Processes rendered. A browser has ~6-10; the cap is a bound, not a filter. */
 export const MAX_PROCESSES = 10;
 /** Owners rendered per process, biggest first. */
@@ -182,6 +188,7 @@ export function newDumpAccumulator() {
         owners: new Map(),     // owner key -> { n, bytes }
         unowned: { n: 0, bytes: 0 },
         dumps: 0,
+        events: 0,
       };
       procs.set(pid, p);
     }
@@ -199,11 +206,23 @@ export function newDumpAccumulator() {
         if (/^Cr\w+Main$/.test(n) && !threads.has(e.pid)) threads.set(e.pid, n);
         return;
       }
-      const alloc = e.ph === 'v' ? e.args?.dumps?.allocators : null;
-      if (!alloc) return;
+      // PRESENT AND EMPTY IS NOT ABSENT, AND THE DIFFERENCE IS THE WHOLE RAMP READING.
+      //
+      // Measured (`dump-wedge-probe.mjs`): Chromium's memory-infra coordinator gives up on a
+      // child that does not answer within ~15 s, returns `success: false`, and emits a process
+      // dump for it carrying NO allocators. Keying off `allocators` dropped that process
+      // entirely, so "the renderer was asked, Chromium timed it out, and it contributed
+      // nothing" rendered identically to "the renderer never appeared" — and the second reads
+      // as a coordination or timing fault worth chasing, which is what the 09-08 ramp dump was
+      // read as. The process is created on the DUMP event now and `dumps=0` says the rest.
+      const dumps = e.ph === 'v' ? e.args?.dumps : null;
+      if (!dumps) return;
       events++;
       const p = proc(e.pid);
-      const graph = e.args.dumps.allocators_graph || [];
+      p.events++;
+      const alloc = dumps.allocators;
+      if (!alloc) return;
+      const graph = dumps.allocators_graph || [];
       for (const [name, dump] of Object.entries(alloc)) {
         p.dumps++;
         if (dump?.guid) guidName.set(dump.guid, name);
@@ -299,6 +318,10 @@ export function summariseMemDump(folded, phase) {
   return {
     phase,
     processes: folded?.processes?.length ?? 0,
+    // The processes Chromium's coordinator TIMED OUT: heard from, contributed no allocator
+    // dumps. On a ramp this is expected to be exactly the ramping renderer, and naming it is
+    // what stops the readout reporting a valid dump as a coordination fault.
+    emptyPids: (folded?.processes ?? []).filter((p) => p.dumps === 0).map((p) => p.pid),
     edgesCapped: folded?.edgesCapped === true,
     lead: lead && {
       pid: lead.pid,
@@ -333,7 +356,10 @@ export function renderMemDump(folded) {
   const procs = folded?.processes ?? [];
   lines.push(`MDDUMP processes=${procs.length} events=${folded?.events ?? 0} edges=${folded?.edges ?? 0}${folded?.edgesCapped ? ' EDGES-CAPPED' : ''}`);
   for (const p of procs.slice(0, MAX_PROCESSES)) {
-    lines.push(`MDPROC pid=${p.pid} thread=${p.mainThread ?? 'unknown'} dumps=${p.dumps} shmMB=${mb(p.shmBytes)} shmCount=${p.shmCount} shmRootMB=${p.shmRootBytes === null ? 'notReported' : mb(p.shmRootBytes)}${p.shmUnsized ? ` unsized=${p.shmUnsized}` : ''}`);
+    // `empty=yes` is the coordinator having timed this process out — see the accumulator.
+    // Spelled rather than left to `dumps=0`, because a reader scanning for the ramping
+    // renderer needs the fact to be a word, not an inference from a zero.
+    lines.push(`MDPROC pid=${p.pid} thread=${p.mainThread ?? 'unknown'} dumps=${p.dumps}${p.dumps === 0 ? ' empty=yes' : ''} shmMB=${mb(p.shmBytes)} shmCount=${p.shmCount} shmRootMB=${p.shmRootBytes === null ? 'notReported' : mb(p.shmRootBytes)}${p.shmUnsized ? ` unsized=${p.shmUnsized}` : ''}`);
     for (const r of p.roots.slice(0, MAX_ROOTS)) {
       lines.push(`MDROOT pid=${p.pid} ${r.name} ${r.bytes === null ? 'notReported' : `${mb(r.bytes)}MB`}`);
     }
@@ -345,6 +371,37 @@ export function renderMemDump(folded) {
   }
   if (procs.length > MAX_PROCESSES) lines.push(`MDNOTE ${procs.length - MAX_PROCESSES} further process(es) not rendered`);
   return lines.join('\n');
+}
+
+/**
+ * STOP TRACING PROPERLY — `Tracing.end` alone does not.
+ *
+ * The command RETURNS before tracing has actually stopped; the browser is only done once it
+ * emits `Tracing.tracingComplete`. Both this module's `finally` and the first version of its
+ * stuck-state recovery sent `end` and moved on, so the NEXT `Tracing.start` was refused with
+ * `Tracing has already been started` — and the recovery, which sent another bare `end`, was
+ * refused for exactly the same reason and looked like a browser that could not be recovered
+ * at all. Found by `dump-wedge-probe.mjs` on a HEALTHY browser, which is the only place the
+ * difference is visible: against a wedged one nothing completes either way.
+ *
+ * Bounded, and a failed `end` (tracing was not started) returns at once rather than waiting
+ * out the budget for a completion that can never come.
+ */
+export async function stopTracing(cdp, ms) {
+  let settle = null;
+  const done = new Promise((resolve) => { settle = resolve; cdp.once('Tracing.tracingComplete', resolve); });
+  // ONE deadline for the whole operation, and the SEND is inside it. Awaiting the send bare
+  // pins the caller against a browser that never answers it — caught by this module's own
+  // "a hung teardown cannot pin the caller" guard the moment the bare await was introduced.
+  let timer = null;
+  const deadline = new Promise((r) => { timer = setTimeout(r, ms); });
+  let ended = false;
+  await Promise.race([cdp.send('Tracing.end').then(() => { ended = true; }, () => {}), deadline]);
+  // Nothing to wait for if the end never took: waiting would spend the rest of the budget on
+  // a completion event that cannot arrive.
+  if (ended) await Promise.race([done, deadline]);
+  try { cdp.off('Tracing.tracingComplete', settle); } catch { /* ignore */ }
+  if (timer) clearTimeout(timer);
 }
 
 /**
@@ -364,18 +421,52 @@ export async function takeMemoryDump(cdp, opts = {}) {
   const acc = newDumpAccumulator();
   const onData = ({ value }) => { for (const e of value || []) acc.add(e); };
   let started_tracing = false;
+  let recovered = false;
   try {
     const work = (async () => {
       const complete = new Promise((resolve) => cdp.once('Tracing.tracingComplete', resolve));
       cdp.on('Tracing.dataCollected', onData);
-      await cdp.send('Tracing.start', {
+      const cfg = {
         traceConfig: {
           includedCategories: ['disabled-by-default-memory-infra'],
           excludedCategories: ['*'],
         },
         transferMode: 'ReportEvents',
-      });
+      };
+      // A DUMP THAT TIMED OUT LEAVES TRACING STUCK, AND THE NEXT ONE INHERITS IT.
+      //
+      // Measured twice, on two boxes and in two wordings. On the mini-PC, 2026-09-09
+      // 11:29:54: `memory dump (ramp) did not run: Tracing.start: Tracing was stopped before
+      // start has been completed` — the ramp dump for that ramp, lost outright. In the dev
+      // container the sibling wording appears the moment two dumps are attempted back to
+      // back against a wedged renderer: `Tracing has already been started`.
+      //
+      // Both are the same thing: the previous attempt's bounded `Tracing.end` in the finally
+      // raced the browser and left tracing neither started nor stopped. The ramp dump is by
+      // construction the SECOND dump of a browser life (a baseline preceded it) and by
+      // construction follows a browser that is not answering, so this is not an edge case —
+      // it is the case. Recover once and retry rather than spending the whole ramp on it.
+      //
+      // NARROW ON PURPOSE. Only the two stuck-state wordings are recovered; any other
+      // `Tracing.start` failure is a different fault and is thrown, because a blanket retry
+      // would turn "this browser cannot trace at all" into two timeouts instead of one.
+      //
+      // THE FLAG GOES UP BEFORE THE SEND, NOT AFTER IT. `Tracing.start` can take effect and
+      // then have its reply lost to the caller's own timeout — the outer race can fire while
+      // this await is still pending — and a flag set afterwards would leave the `finally`
+      // believing there was nothing to stop. That is not hypothetical: it leaves tracing
+      // started with nobody to stop it, which is precisely the state the NEXT dump reports as
+      // `Tracing was stopped before start has been completed`. `stopTracing` already handles
+      // being called when tracing was never started, so the pessimistic flag costs nothing.
       started_tracing = true;
+      try {
+        await cdp.send('Tracing.start', cfg);
+      } catch (e) {
+        if (!TRACING_STUCK.test(`${e?.message ?? e}`)) throw e;
+        recovered = true;
+        await stopTracing(cdp, MEM_DUMP_CLEANUP_MS);
+        await cdp.send('Tracing.start', cfg);
+      }
       const res = await cdp.send('Tracing.requestMemoryDump', {
         deterministic: false,
         levelOfDetail: 'detailed',
@@ -398,25 +489,23 @@ export async function takeMemoryDump(cdp, opts = {}) {
     // still have told us everything we asked for. Reporting nothing there would throw away
     // the one reading the whole module exists to take.
     if (!raced.ok && folded.processes.length === 0) {
-      return { ok: false, why: raced.why, ms: Date.now() - started };
+      return { ok: false, why: raced.why, ms: Date.now() - started, recovered };
     }
     return {
       ok: true,
       partial: !raced.ok ? raced.why : null,
       ms: Date.now() - started,
+      recovered,
       folded,
     };
   } catch (e) {
-    return { ok: false, why: `${e?.message ?? e}`.split('\n')[0], ms: Date.now() - started };
+    return { ok: false, why: `${e?.message ?? e}`.split('\n')[0], ms: Date.now() - started, recovered };
   } finally {
     try { cdp.off('Tracing.dataCollected', onData); } catch { /* ignore */ }
     // Leaving tracing running would make every LATER dump fail with "already started", so the
     // instrument would work exactly once per browser life and report a refusal after that.
     if (started_tracing) {
-      await Promise.race([
-        cdp.send('Tracing.end').catch(() => {}),
-        new Promise((r) => setTimeout(r, MEM_DUMP_CLEANUP_MS)),
-      ]);
+      await stopTracing(cdp, MEM_DUMP_CLEANUP_MS);
     }
   }
 }
