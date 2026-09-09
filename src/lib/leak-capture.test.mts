@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   dumpJoinReading, mappedSwarmReading, mappedNameReading, NAME_CENSUS_ACCESS,
+  busyThreadReading, mappedSpanReading, BUSY_THREAD_SHARE,
 } from './bot-events';
 
 const scan = readFileSync('scripts/auto-cart-bot/ramp-scan.mjs', 'utf8');
@@ -248,4 +249,95 @@ test('the walk emits ASCII only', () => {
   const emitted = ps.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   const bad = [...emitted].filter((ch) => ch.charCodeAt(0) > 126);
   assert.deepEqual(bad, [], `non-ASCII in the emitted PowerShell: ${bad.join(' ')}`);
+});
+
+/**
+ * ── SPINNING OR BLOCKED, AND WHERE THE SECTIONS SIT (2026-09-09) ─────────────────────────
+ *
+ * Both readings exist because every CDP instrument is structurally unable to answer. A wedged
+ * renderer contributes ZERO allocator dumps at every dump level — Chromium's coordinator gives
+ * up on it at ~15 s and emits an EMPTY process dump, measured in `dump-wedge-probe.mjs` — so
+ * neither a longer timeout nor a cheaper level can help, and the alloc trail's
+ * `[resident]: EMPTY` says the renderer is quiet for its whole life, which closes the "ask it
+ * earlier" idea too. The region walk asks Windows and needs nothing from the process.
+ */
+test('a thread holding the window is SPINNING, and the main thread is the discriminator', () => {
+  const main = busyThreadReading({ threads: 19, windowMs: 1200, busyMs: 1180, topDeltaMs: 1180, topIsMain: true });
+  assert.equal(main.kind, 'spinning-main');
+  assert.match(main.text, /MAIN thread/);
+  const worker = busyThreadReading({ threads: 19, windowMs: 1200, busyMs: 1180, topDeltaMs: 1180, topIsMain: false });
+  assert.equal(worker.kind, 'spinning-worker');
+  assert.match(worker.text, /WORKER thread/);
+  // The two need opposite fixes, so they must never render the same sentence.
+  assert.notEqual(main.text, worker.text);
+});
+
+test('nobody burning CPU is BLOCKED — a different finding, not a quiet spin', () => {
+  const r = busyThreadReading({ threads: 19, windowMs: 1200, busyMs: 30, topDeltaMs: 20, topIsMain: true, topWait: 'LpcReceive' });
+  assert.equal(r.kind, 'blocked');
+  assert.match(r.text, /BLOCKED/);
+  assert.match(r.text, /LpcReceive/, 'what it is waiting on is the whole value of this branch');
+  assert.equal(/SPINNING/.test(r.text), false);
+});
+
+test('no census is an ABSENCE, never "it was not spinning"', () => {
+  for (const args of [{}, { threads: 19 }, { windowMs: 1200 }, { threads: 19, windowMs: 0, topDeltaMs: 5 }]) {
+    const r = busyThreadReading(args);
+    assert.equal(r.kind, 'unavailable', JSON.stringify(args));
+    assert.match(r.text, /absence, not a reading/);
+  }
+});
+
+test('the busy threshold is bounded on both sides', () => {
+  // Too low and ordinary background work reads as a spin; at 1.0 only a perfect core counts
+  // and a thread interrupted by the sampler itself would read as blocked.
+  assert.ok(BUSY_THREAD_SHARE >= 0.1, 'below this, idle noise reads as spinning');
+  assert.ok(BUSY_THREAD_SHARE <= 0.5, 'above this, a genuinely busy thread reads as blocked');
+});
+
+test('a span about the size of the regions is ONE reservation; orders larger is scattered', () => {
+  const packed = mappedSpanReading({ regions: 16385, packedMb: 32770, spanMb: 33000 });
+  assert.equal(packed.kind, 'packed');
+  assert.match(packed.text, /VMTOP/, 'the reader is sent to the reservation that contains it');
+  const scattered = mappedSpanReading({ regions: 16385, packedMb: 32770, spanMb: 90_000_000 });
+  assert.equal(scattered.kind, 'scattered');
+  assert.notEqual(packed.text, scattered.text);
+  assert.equal(mappedSpanReading({ regions: 4 }).kind, 'unavailable');
+  assert.match(mappedSpanReading({}).text, /absence, not a reading/);
+});
+
+test('a wedged renderer that is PRESENT AND EMPTY still voids the shared-memory verdict', () => {
+  // Recording the empty process (so "asked and contributed nothing" stops reading as "never
+  // appeared") would otherwise flip every future ramp dump from VOID to `joined` — i.e. turn
+  // a reading that eliminates nothing into one that reads as success.
+  const r = dumpJoinReading({
+    walkTargetPid: '7644',
+    dumpPids: ['9472', '6864', '7644'],
+    dumpEmptyPids: ['7644'],
+    walkGenerationPids: ['9472', '6864', '7644'],
+    walkNearby: true,
+  });
+  assert.equal(r.kind, 'void', 'the caller suppresses on void, and this must keep suppressing');
+  assert.equal(r.cause, 'target-empty');
+  assert.match(r.text, /ZERO allocator dumps/);
+  assert.match(r.text, /eliminates nothing/);
+  assert.match(r.text, /Do NOT go looking at the trigger or the budget/);
+  // A renderer that really did contribute must still read as joined.
+  assert.equal(dumpJoinReading({
+    walkTargetPid: '7644', dumpPids: ['9472', '7644'], dumpEmptyPids: [], walkGenerationPids: ['9472', '7644'], walkNearby: true,
+  }).kind, 'joined');
+});
+
+test('the readout passes the empty pids, or the pure function cannot see them', () => {
+  // The fix-present-and-inert shape: busyThreadReading, mappedSpanReading and the empty-pid
+  // branch can all be perfect and unreachable if the caller never supplies them.
+  assert.match(readout, /dumpEmptyPids:/, 'the join needs them or a wedged renderer reads as having answered');
+  // REACHABLE, not merely present. `void 0 && printVerdict(..., busyThreadReading({...}))`
+  // matches a bare name check just as happily as a live call — the `if (false)` shape this
+  // file has now paid for twice — so the call is pinned as the statement it has to be.
+  assert.match(code(readout), /\n\s*printVerdict\('      ', busyThreadReading\(\{/,
+    'the thread verdict must be rendered, not merely constructed');
+  assert.match(code(readout), /\n\s*printVerdict\('      ', mappedSpanReading\(\{/,
+    'the span verdict must be rendered, not merely constructed');
+  assert.match(readout, /VMTHREADTOP/, 'the per-thread lines are rendered, not just the verdict');
 });

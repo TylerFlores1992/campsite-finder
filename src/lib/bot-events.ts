@@ -255,7 +255,7 @@ export type DumpJoinKind = 'no-walk' | 'void' | 'joined';
  * stall trigger ever caught, the readout told the reader to go and fix the half that had just
  * started working.
  */
-export type DumpJoinVoidCause = 'generation' | 'target-silent' | 'unknown';
+export type DumpJoinVoidCause = 'generation' | 'target-silent' | 'target-empty' | 'unknown';
 
 /**
  * Did the memory dump measure the process the region walk walked?
@@ -281,6 +281,12 @@ export function dumpJoinReading(
     walkNearby?: boolean;
     /** Every chrome.exe the region walk saw in the SAME event — the browser generation. */
     walkGenerationPids?: readonly string[] | null;
+    /**
+     * Processes Chromium's coordinator TIMED OUT: present in the dump, contributing no
+     * allocator dumps at all. Measured in `dump-wedge-probe.mjs` — a child that does not
+     * answer within ~15 s is not dropped, it is emitted EMPTY.
+     */
+    dumpEmptyPids?: readonly string[] | null;
   },
 ): { kind: DumpJoinKind; cause?: DumpJoinVoidCause; text: string } {
   const target = args.walkTargetPid ?? null;
@@ -327,6 +333,23 @@ export function dumpJoinReading(
         + 'it. Do NOT go looking at the trigger.',
     };
   }
+  // PRESENT AND EMPTY IS NOT PRESENT. The fold used to drop a process that contributed no
+  // allocator dumps, so the ramping renderer read as MISSING; it is recorded now, and without
+  // this branch that change alone would have flipped every future ramp dump from VOID to
+  // `joined` — i.e. turned a reading that eliminates nothing into one that reads as success.
+  // It stays `void` so callers that suppress the shared-memory verdict keep suppressing it.
+  if ((args.dumpEmptyPids ?? []).includes(target)) {
+    return {
+      kind: 'void',
+      cause: 'target-empty',
+      text: `VOID: the ramping renderer (pid ${target}) IS in this dump and contributed ZERO allocator `
+        + "dumps — Chromium's coordinator gave up on it (~15s) and emitted an empty process dump. So its "
+        + 'shared_memory figure is not small, it is ABSENT, and it eliminates nothing. Measured in '
+        + 'dump-wedge-probe.mjs: no level and no timeout changes this, because there is no allocator data '
+        + 'to be had from a renderer that never emitted any. Do NOT go looking at the trigger or the '
+        + 'budget — the reading has to come from outside the process (VMTHREAD/VMSPAN in the region walk).',
+    };
+  }
   return { kind: 'joined', text: `the ramping renderer (pid ${target}, from the region walk) IS in this dump.` };
 }
 
@@ -364,6 +387,123 @@ export function mappedSwarmReading(
 export const NAME_CENSUS_ACCESS = 1040;
 
 export type MappedNameKind = 'no-access' | 'unsampled' | 'anonymous' | 'file-backed';
+
+/**
+ * A thread that holds most of a sampling window is SPINNING; a process with none is BLOCKED.
+ * Below this share of the window the top thread is not doing the work and saying so would be
+ * a story. One core for the whole window is 1.0; a quarter of it is still a busy thread.
+ */
+export const BUSY_THREAD_SHARE = 0.25;
+
+export type BusyThreadKind = 'unavailable' | 'spinning-main' | 'spinning-worker' | 'blocked';
+
+/**
+ * WHICH THREAD IS BUSY IN A RENDERER THAT WILL NOT TALK — and whether any is.
+ *
+ * Every CDP instrument is structurally unable to answer this: a wedged renderer contributes
+ * ZERO allocator dumps at every dump level (measured, `dump-wedge-probe.mjs`), and the alloc
+ * trail reported `[resident]: EMPTY — that renderer answered no CDP call at all` for a whole
+ * browser life. The region walk asks Windows instead and needs nothing from the process.
+ *
+ * The two branches need OPPOSITE fixes and nothing has ever distinguished them:
+ *
+ *   • SPINNING — one thread holds the window. `main=True` says the spin is on the renderer's
+ *     main thread (Blink, JS, the command-buffer client, the allocator), which is also why it
+ *     cannot answer a dump: it never returns to its message loop.
+ *   • BLOCKED — nobody is burning CPU. The 32 GB was mapped and then something stopped, and
+ *     `wait=` names what on. That would put the cause in an IPC peer rather than in a loop.
+ */
+export function busyThreadReading(
+  args: {
+    threads?: unknown;
+    windowMs?: unknown;
+    busyMs?: unknown;
+    /** The top thread by CPU delta: its delta, and whether it is the process's main thread. */
+    topDeltaMs?: unknown;
+    topIsMain?: unknown;
+    topWait?: unknown;
+  },
+): { kind: BusyThreadKind; text: string } {
+  const windowMs = Number(args.windowMs) || 0;
+  const threads = Number(args.threads) || 0;
+  const top = Number(args.topDeltaMs);
+  if (!windowMs || !threads || !Number.isFinite(top)) {
+    return {
+      kind: 'unavailable',
+      text: 'no thread census in this scan — the box predates VMTHREAD, or the census refused. That is an '
+        + 'absence, not a reading: it says nothing about whether the renderer was spinning.',
+    };
+  }
+  const share = top / windowMs;
+  if (share < BUSY_THREAD_SHARE) {
+    return {
+      kind: 'blocked',
+      text: `BLOCKED, not spinning: across ${threads} thread(s) the busiest burned ${Math.round(top)} ms of a `
+        + `${windowMs} ms window (${(share * 100).toFixed(0)}%). Nothing is looping, so the 32 GB was mapped `
+        + `and then the process stopped${args.topWait && args.topWait !== '-' ? `, waiting on ${String(args.topWait)}` : ''}. `
+        + 'That points at an IPC peer or a lock rather than at an allocation loop.',
+    };
+  }
+  const main = args.topIsMain === true || String(args.topIsMain).toLowerCase() === 'true';
+  return {
+    kind: main ? 'spinning-main' : 'spinning-worker',
+    text: `SPINNING on ${main ? 'the MAIN thread' : 'a WORKER thread'}: the busiest of ${threads} thread(s) `
+      + `burned ${Math.round(top)} ms of a ${windowMs} ms window (${(share * 100).toFixed(0)}% of a core). `
+      + (main
+        ? 'The renderer main thread is in a loop that never returns to its message loop, which is also why it '
+          + 'answers no CDP call. Blink, JS, the command-buffer client and the allocator all live there.'
+        : 'The main thread is NOT the busy one, so the loop is on a worker (raster, compositor, a pool thread) '
+          + 'and the main thread is blocked behind it — a different creator from anything on the main thread.'),
+  };
+}
+
+export type MappedSpanKind = 'unavailable' | 'packed' | 'scattered';
+
+/**
+ * ARE THE 16k SECTIONS SUB-ALLOCATIONS OF ONE RESERVATION, OR TAKEN ONE AT A TIME?
+ *
+ * The walk already established there is one allocation base per region — 16k separate
+ * `MapViewOfFile` calls, not a few big mappings carved up. What it never reported is WHERE
+ * those bases sit, and that separates two different creators:
+ *
+ *   • PACKED — the span is about what the regions themselves occupy, so they are consecutive
+ *     sub-allocations of a single reservation: a cage, a pool, a sandbox. `VMTOP` in the same
+ *     scan names which reservation the span falls inside.
+ *   • SCATTERED — the span is orders of magnitude larger than the regions, so each was taken
+ *     from wherever the allocator happened to land. That is ordinary shared memory.
+ *
+ * Free: `AllocationBase` is already in the MEMORY_BASIC_INFORMATION the walk reads.
+ */
+export function mappedSpanReading(
+  args: { spanMb?: unknown; packedMb?: unknown; regions?: unknown },
+): { kind: MappedSpanKind; text: string } {
+  const span = Number(args.spanMb);
+  const packed = Number(args.packedMb);
+  const regions = Number(args.regions) || 0;
+  if (!Number.isFinite(span) || !Number.isFinite(packed) || packed <= 0) {
+    return {
+      kind: 'unavailable',
+      text: 'no address span in this scan — the box predates VMSPAN. An absence, not a reading.',
+    };
+  }
+  // Twice the packed size still reads as one reservation: a cage holds other things too, and
+  // demanding exactness would call a real pool "scattered" over ordinary internal gaps.
+  if (span <= packed * 2) {
+    return {
+      kind: 'packed',
+      text: `PACKED: ${regions} region(s) totalling ${packed} MB sit inside a ${span} MB span, so they are `
+        + 'consecutive sub-allocations of ONE reservation rather than 16k independent mappings. Read the span '
+        + "against VMTOP in the same scan — whichever reservation contains it names the allocator, and that "
+        + 'is a cage/pool/sandbox, not ordinary shared memory.',
+    };
+  }
+  return {
+    kind: 'scattered',
+    text: `SCATTERED: ${regions} region(s) totalling ${packed} MB are spread over a ${span} MB span `
+      + `(${Math.round(span / packed)}x), so each was taken from wherever the allocator landed rather than `
+      + 'carved from one reservation. That is the shape of ordinary shared memory taken one mapping at a time.',
+  };
+}
 
 /**
  * Is there a FILE behind those mappings?

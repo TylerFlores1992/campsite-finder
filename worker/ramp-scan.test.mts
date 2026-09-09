@@ -290,3 +290,68 @@ test('the readout tells a scan that predates the walk from one whose walk refuse
   assert.match(READOUT, /predates it/);
   assert.match(READOUT, /did NOT run/);
 });
+
+/**
+ * ── THE THREAD CENSUS AND THE ADDRESS SPAN (2026-09-09) ──────────────────────────────────
+ *
+ * Both answer questions no CDP instrument can reach. A wedged renderer contributes ZERO
+ * allocator dumps at every dump level — measured in `dump-wedge-probe.mjs`, where Chromium's
+ * coordinator gives up on it at ~15 s and emits an EMPTY process dump — and the alloc trail
+ * reported `[resident]: EMPTY, that renderer answered no CDP call at all` for a whole browser
+ * life. So there is no "ask it before it goes quiet" window either. The walk asks Windows,
+ * which needs nothing from the process, and these two lines are what it asks.
+ *
+ * THESE ARE STRUCTURAL BECAUSE THE SUBJECT IS POWERSHELL AND THERE IS NONE IN THE DEV
+ * CONTAINER. That is a real limit and it is why the balance assertions below exist: PowerShell
+ * parses the WHOLE script before executing any of it, so a syntax error anywhere costs the
+ * region walk too — the one instrument that still works. Balanced delimiters are the strongest
+ * check available without an interpreter, and they are checked outside single-quoted strings
+ * so an apostrophe in a message cannot be read as a delimiter.
+ */
+test('the joined PowerShell is parseable-shaped: balanced, ASCII, no double quotes', () => {
+  let inStr = false; let brace = 0; let paren = 0; let bracket = 0; let firstNegative: string | null = null;
+  for (let i = 0; i < RAMP_SCAN_PS.length; i++) {
+    const c = RAMP_SCAN_PS[i];
+    if (c === "'") { if (inStr && RAMP_SCAN_PS[i + 1] === "'") { i++; continue; } inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') brace++; else if (c === '}') { brace--; if (brace < 0 && !firstNegative) firstNegative = `brace at ${i}`; }
+    else if (c === '(') paren++; else if (c === ')') { paren--; if (paren < 0 && !firstNegative) firstNegative = `paren at ${i}`; }
+    else if (c === '[') bracket++; else if (c === ']') { bracket--; if (bracket < 0 && !firstNegative) firstNegative = `bracket at ${i}`; }
+  }
+  assert.equal(inStr, false, 'an unterminated single-quoted string swallows the rest of the script');
+  assert.equal(firstNegative, null, `a closing delimiter with nothing open: ${firstNegative}`);
+  assert.equal(brace, 0, 'unbalanced braces — PowerShell parses the whole script before running any of it');
+  assert.equal(paren, 0, 'unbalanced parentheses');
+  assert.equal(bracket, 0, 'unbalanced brackets');
+});
+
+test('VMTHREAD samples TWICE and reports the window, or a delta means nothing', () => {
+  assert.match(RAMP_SCAN_PS, /Start-Sleep -Milliseconds 1200/, 'two snapshots with a gap ARE the measurement');
+  assert.match(RAMP_SCAN_PS, /windowMs=1200/, 'a delta without its window cannot be read as a share of a core');
+  assert.match(RAMP_SCAN_PS, /'VMTHREAD pid='/, 'the per-process line');
+  assert.match(RAMP_SCAN_PS, /'VMTHREADTOP pid='/, 'the per-thread lines');
+  // The main thread is the discriminator: a spin on it is Blink/JS/the command-buffer client
+  // and is also why the renderer answers no CDP call. Without StartTime there is nothing to
+  // identify it by, since this deliberately uses no P/Invoke to read thread NAMES.
+  assert.match(RAMP_SCAN_PS, /\$th\.StartTime -lt \$mainAt/, 'the earliest thread is the process main thread');
+  assert.match(RAMP_SCAN_PS, /main=' \+ \(\$rw\.Tid -eq \$mainId\)/, 'each top thread says whether it is the main one');
+});
+
+test('VMTHREAD cannot take the whole scan down with it', () => {
+  // The region walk is the one instrument that still works and it is emitted BEFORE this. A
+  // runtime throw here must cost the census and nothing else.
+  const i = RAMP_SCAN_PS.indexOf("'VMTHREAD pid='");
+  const guard = RAMP_SCAN_PS.lastIndexOf("} catch { 'VMTHREAD unavailable: '", RAMP_SCAN_PS.length);
+  assert.ok(i > -1, 'the census is present');
+  assert.ok(guard > i, 'the census is wrapped in its own catch, which reports rather than going silent');
+  assert.ok(RAMP_SCAN_PS.indexOf("'VMWALK pid='") < i, 'the walk is emitted before the census, so a census fault cannot cost it');
+});
+
+test('VMSPAN reports the span AND what the regions themselves occupy', () => {
+  // A span alone is not a reading: it only means something against the packed size, which is
+  // what separates one reservation from 16k independent mappings.
+  assert.match(RAMP_SCAN_PS, /'VMSPAN pid='/);
+  assert.match(RAMP_SCAN_PS, /spanMB=/, 'how far apart the population is spread');
+  assert.match(RAMP_SCAN_PS, /packedMB=/, 'what it would occupy if it were contiguous — the comparison term');
+  assert.match(RAMP_SCAN_PS, /if \(\$n2m -gt 0\)/, 'a span over zero regions is not a span');
+});

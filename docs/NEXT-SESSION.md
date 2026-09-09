@@ -5,14 +5,68 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ### THE ONE OUTSTANDING READING, IN A SENTENCE
 >
-> **A ramping renderer answers NO CDP call, so Chromium's ownership graph — the only thing that
-> can name what maps 32 GB of anonymous 2 MB sections — is unreachable at the moment it matters.**
-> Three instruments have now hit this on three different calls (`newCDPSession`,
-> `Performance.getMetrics`, `Tracing.requestMemoryDump`). Everything else in the capture chain
-> works: the stall trigger fires 85 s ahead of the bail, the grace holds the bail while the dump
-> is in flight, the readout joins the dump against the walk and refuses a verdict on a mismatch.
-> **Nothing needs building to try again — it needs a ramp** (every 5-28 h), or a way to read a
-> renderer that has stopped talking.
+> **The memory dump is RETIRED — a wedged renderer contributes ZERO allocator dumps at every
+> level, so it can never name what maps the 32 GB. The reading moved OUTSIDE the process, into
+> the region walk, and the next ramp answers it with nothing left to build.**
+
+> ## THE DUMP CAN NEVER ANSWER; THE WALK NOW CAN (2026-09-09, later)
+>
+> **State: master `6de1bca` + this branch; the mini-PC is on `6de1bca` (`bot-ask git-status`,
+> never `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's
+> block 077-079.** **The walk additions are BOT-SIDE and inert until the box updates.**
+>
+> **READ `CLAUDE.md` → "THE DUMP CAN NEVER ANSWER — A WEDGED RENDERER IS *PRESENT AND EMPTY*".
+> Do not spend another ramp on the dump.** Measured off-box in under a minute with the new
+> `node scripts/auto-cart-bot/dump-wedge-probe.mjs`:
+> ```
+> detailed   ms=15083  success:false  peersWithData=4  wedgedRenderer=0 allocator dump(s)
+> background ms=15040  success:false  peersWithData=4  wedgedRenderer=0 allocator dump(s)
+> light      ms=15076  success:false  peersWithData=4  wedgedRenderer=0 allocator dump(s)
+> ```
+> Chromium's coordinator gives up at **~15,050 ms** and emits an **EMPTY** process dump for the
+> unresponsive child while its peers contribute normally. **A longer timeout buys an empty dump
+> sooner; a cheaper level buys the same empty dump.** And `alloc trail [resident]: EMPTY` for a
+> whole 165 s browser life (09-09 11:30) closes "ask it earlier": it is quiet from birth.
+>
+> **WHAT TO DO NEXT: NOTHING BUT WAIT FOR A RAMP.** They arrive every 5-28 h. Then
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` and read two new lines:
+> - **`VMTHREAD`** — **SPINNING** (one thread holds the 1200 ms window; `main=True` means
+>   Blink/JS/the command-buffer client, which is also why it answers no CDP call) or
+>   **BLOCKED** (nobody burning CPU — the 32 GB was mapped and then something stopped, and
+>   `wait=` names what on). **Nothing has ever distinguished these and they need opposite
+>   fixes.**
+> - **`VMSPAN`** — **PACKED** (consecutive sub-allocations of ONE reservation; `VMTOP` in the
+>   same scan names which — a cage/pool/sandbox) or **SCATTERED** (16k independent mappings,
+>   i.e. ordinary shared memory).
+>
+> **Until the box updates both render as ABSENCES** ("the box predates VMTHREAD"). That is
+> correct and is not a miss — it is an absence, not a reading.
+>
+> **THREE FREE READINGS FROM DATA ALREADY IN THE DATABASE, so nobody re-derives them:**
+> - **No peer holds the 32 GB** — the 09-08 dump's seven answering processes are the same
+>   generation as the walk, and the GPU process holds 2 MB / 601 handles against the target's
+>   32,849 MB / 17,306. **Do NOT promote this to "the GPU candidate is refuted"**: that
+>   hypothesis's failure mode predicts exactly this. The reading is "mapped in exactly one
+>   process".
+> - **The 32 GiB is a CEILING** — eight walks land on 15,499-16,387 regions and
+>   **16,384 × 2 MiB = 32 GiB exactly**. Ask "what has a 32 GiB budget?", not "what leaks?".
+> - **Two populations of ramp** (young + 17k-75k burst ×7; 85-125 min + no burst ×2), both
+>   reaching the same signature — so the burst/leak decoupling **holds**, and "the ramp is
+>   always on a young browser" is **false**.
+>
+> **AND THE FOUR EARLIER PROBE RUNS WERE ALL ARTIFACTS** — three said "no level answers"
+> because a previous arm left tracing started so nothing ever asked; one said "background
+> works" because a timed-out `detailed` arm's late data was counted as its own. **Each was one
+> sentence from being written up.** One arm per browser now, and the score is the allocator
+> COUNT rather than the pid's presence, because presence is what an empty dump has.
+>
+> **DEFECTS FIXED IN THE DUMP ITSELF** (it still collects the PEERS, which is where the free
+> reading above came from): `Tracing.end` does not stop tracing — the browser is done at
+> `tracingComplete`, and that is the mini-PC's `Tracing was stopped before start has been
+> completed` at 11:29:54 **which cost that ramp its dump**; `started_tracing` went up after the
+> send; and the fold dropped the empty process, which is why it read as absent. The
+> empty-process fix needed its own `target-empty` join cause or it would have flipped every
+> future ramp dump from VOID to a verdict that reads like success.
 
 > ## THE STALL TRIGGER CAUGHT A RAMP — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08)
 >

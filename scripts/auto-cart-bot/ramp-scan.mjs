@@ -198,7 +198,7 @@ export const RAMP_SCAN_PS = [
   // The 2-4M mapped bucket is the population under investigation (31-33 GB of it, 15-16k
   // regions, twice). Three facts about it, all from fields VirtualQueryEx already returns or
   // one bounded extra call, so a ramp answers every branch at once instead of one per event.
-  '  $ab = @{}; $prot = @{}; $nm = @{}; $n2m = 0; $nSamp = 0; $nNamed = 0; $nAnon = 0;',
+  '  $ab = @{}; $prot = @{}; $nm = @{}; $n2m = 0; $nSamp = 0; $nNamed = 0; $nAnon = 0; $lo2m = 0; $hi2m = 0;',
   '  $sb = New-Object System.Text.StringBuilder 300;',
   '  while ($true) {',
   '    if ($it -ge $cap) { $capped = $true; break };',
@@ -232,6 +232,13 @@ export const RAMP_SCAN_PS = [
   // that merely looked similar would make two lines about one bucket disagree by design.
   '        if ($mbi.Type -eq 262144 -and $rs -ge 2097152 -and $rs -le 4194304) {',
   '          $n2m++;',
+  // THE ADDRESS SPAN, and it costs one comparison per region on data already in hand.
+  // 16k sections scattered across a 128 TB address space are ordinary shared memory, taken
+  // one at a time from wherever the allocator landed. 16k sections packed into a span of a
+  // few tens of GB are sub-allocations of ONE reservation - a cage, a pool, a sandbox - and
+  // that is a different creator with a different fix. `VMTOP` already prints the big
+  // reservations, so a span that falls inside one of them names which.
+  '          if ($n2m -eq 1) { $lo2m = $ba; $hi2m = $ba } else { if ($ba -lt $lo2m) { $lo2m = $ba }; if ($ba -gt $hi2m) { $hi2m = $ba } };',
   "          $abk = '0x' + $mbi.AllocationBase.ToInt64().ToString('x');",
   '          if (-not $ab.ContainsKey($abk)) { $ab[$abk] = 0 }; $ab[$abk] = $ab[$abk] + 1;',
   "          $pk = '0x' + $mbi.Protect.ToString('x');",
@@ -268,11 +275,72 @@ export const RAMP_SCAN_PS = [
   // the healthy path too: a name census that could not run and one that ran and found every
   // region anonymous are opposite readings, and without both numbers they render identically.
   "  'VMMAP2M pid=' + $tp.Pid + ' regions=' + $n2m + ' allocBases=' + $ab.Keys.Count + ' access=' + $acc + ' sampled=' + $nSamp + ' named=' + $nNamed + ' anon=' + $nAnon;",
+  // Printed only when there IS a population, because a span over zero regions is not a span.
+  // `spanMB` against `regions * 2 MB` is the whole reading: equal-ish means one packed
+  // reservation, orders of magnitude larger means scattered.
+  "  if ($n2m -gt 0) { 'VMSPAN pid=' + $tp.Pid + ' lo=0x' + $lo2m.ToString('x') + ' hi=0x' + $hi2m.ToString('x') + ' spanMB=' + [int](($hi2m - $lo2m) / 1MB) + ' packedMB=' + [int]($n2m * 2) };",
   "  foreach ($pk in ($prot.Keys | Sort-Object)) { 'VMPROT pid=' + $tp.Pid + ' protect=' + $pk + ' count=' + $prot[$pk] };",
   '  $nt = @($nm.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 10);',
   "  foreach ($ne in $nt) { 'VMNAME pid=' + $tp.Pid + ' count=' + $ne.Value + ' name=' + $ne.Key };",
   '  };',
   '};',
+  // ── WHICH THREAD IS BUSY, AND IS IT BUSY AT ALL? ────────────────────────────────────────
+  // The one question every CDP instrument is structurally unable to answer. A ramping
+  // renderer answers NO memory dump at any level - `detailed`, `background` and `light` were
+  // each measured against a wedged renderer in the dev container and all three time out, and
+  // a wedged renderer blocks the WHOLE global dump so its healthy peers go missing too. The
+  // alloc trail says the same from the other side: `[resident]: EMPTY - that renderer
+  // answered no CDP call at all`, for a whole browser life. So there is no "ask it before it
+  // goes quiet" window either; it is quiet from birth.
+  //
+  // This asks WINDOWS instead, and needs nothing from the process. Two snapshots of every
+  // thread's CPU time, 1.2 s apart:
+  //
+  //   • one thread with ~1200 ms of delta  -> it is SPINNING, and `main=True` says whether
+  //     the spin is on the renderer's main thread (Blink/JS, the command-buffer client, the
+  //     allocator) or on a worker.
+  //   • no thread with meaningful delta    -> it is BLOCKED, not looping, and `wait=` names
+  //     what on. Nothing has ever distinguished these two and they need opposite fixes.
+  //
+  // PREDICTED READING on the known 9 GB event (the rule from 2026-09-08): the renderer holds
+  // 19 threads and answered no CDP call for 165 s, so either one thread reads ~1200 ms of
+  // delta or none does. Neither branch reads ~0, which is why this is worth building where a
+  // dump trail was not.
+  //
+  // NO P/INVOKE, DELIBERATELY. `GetThreadDescription` would name the thread (`CrRendererMain`)
+  // and needs three more DllImports in a C# blob that cannot be tested from the dev container
+  // - and PowerShell parses the WHOLE script before running any of it, so a syntax error here
+  // costs the region walk too. `StartTime` identifies the main thread for free: the earliest
+  // thread in a process is the one it started on.
+  '$busyMs = 0;',
+  'try {',
+  '  $t1 = @{};',
+  '  foreach ($tp in $targets) { $t1[$tp.Pid] = @{};',
+  '    try { $pr = Get-Process -Id $tp.Pid -ErrorAction Stop;',
+  '      foreach ($th in $pr.Threads) { try { $t1[$tp.Pid][[string]$th.Id] = [double]$th.TotalProcessorTime.TotalMilliseconds } catch { } } } catch { } };',
+  '  Start-Sleep -Milliseconds 1200;',
+  '  foreach ($tp in $targets) {',
+  '    $pr = $null; try { $pr = Get-Process -Id $tp.Pid -ErrorAction Stop } catch { };',
+  "    if ($pr -eq $null) { 'VMTHREAD pid=' + $tp.Pid + ' status=gone'; continue };",
+  '    $rows = @(); $mainId = 0; $mainAt = [DateTime]::MaxValue; $busyMs = 0;',
+  '    foreach ($th in $pr.Threads) {',
+  '      $tid = [string]$th.Id; $cpu = -1; $dl = -1;',
+  '      try { $cpu = [double]$th.TotalProcessorTime.TotalMilliseconds } catch { };',
+  '      $prev = -1; if ($t1[$tp.Pid].ContainsKey($tid)) { $prev = $t1[$tp.Pid][$tid] };',
+  '      if ($cpu -ge 0 -and $prev -ge 0) { $dl = $cpu - $prev };',
+  "      $stn = 'unknown'; try { $stn = [string]$th.ThreadState } catch { };",
+  "      $wtn = '-'; try { if ($stn -eq 'Wait') { $wtn = [string]$th.WaitReason } } catch { };",
+  '      try { if ($th.StartTime -lt $mainAt) { $mainAt = $th.StartTime; $mainId = $th.Id } } catch { };',
+  '      if ($dl -gt 0) { $busyMs = $busyMs + $dl };',
+  '      $rows += New-Object PSObject -Property @{ Tid = $th.Id; Cpu = $cpu; Dl = $dl; St = $stn; Wt = $wtn };',
+  '    };',
+  // `windowMs` is printed so a delta can be read as a fraction of a core rather than as a
+  // bare number, and `threads` so a truncated top-6 is never mistaken for the whole process.
+  "    'VMTHREAD pid=' + $tp.Pid + ' type=' + $tp.Ty + ' status=ok threads=' + $rows.Count + ' windowMs=1200 busyMs=' + [int]$busyMs + ' mainTid=' + $mainId;",
+  '    $rt = @($rows | Sort-Object -Property Dl -Descending | Select-Object -First 6);',
+  "    foreach ($rw in $rt) { 'VMTHREADTOP pid=' + $tp.Pid + ' tid=' + $rw.Tid + ' main=' + ($rw.Tid -eq $mainId) + ' cpuMs=' + [int]$rw.Cpu + ' deltaMs=' + [int]$rw.Dl + ' state=' + $rw.St + ' wait=' + $rw.Wt };",
+  '  };',
+  "} catch { 'VMTHREAD unavailable: ' + $_.Exception.Message };",
   "'END';",
 ].join(' ');
 
