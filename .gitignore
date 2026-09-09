@@ -73,3 +73,6 @@ scripts/apply-migration-004.mjs
 # mean two copies of the brand mark that can silently disagree, and the one in assets/
 # is the one @capacitor/assets builds the launcher icons from.
 /.play-assets/
+
+# Scratch query scripts used while diagnosing. Never committed.
+.q*.mts
