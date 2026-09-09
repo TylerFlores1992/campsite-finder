@@ -1,8 +1,97 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-08 (latest)** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-08 (evening)** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
+> ## A RAMP IS ORDERED FOR 22:30 PT — AND ONE CLAIM BELOW IS WRONG (2026-09-08, evening)
+>
+> **State: master `6eee69f`, mini-PC `c0b222c` (`bot-ask git-status`, never
+> `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
+> 077-079. Health 16/19, all three warns documented-benign.**
+>
+> **READ THIS CORRECTION BEFORE THE BLOCK BELOW.** It says the stall trigger fires "far more
+> often than a ramp". **It does not.** Measured against **133 tab-closes: the longest trip is
+> 71,552 ms and NOT ONE exceeds 90,000** — ordinary renewals sit at 68-71s. So a stall over 90s
+> has never happened outside a ramp, and **the trigger still needs a ramp to be exercised.**
+> That is the design working (no healthy trip can spend the ramp's slot) and the claim failing;
+> what got cheaper is the trigger PATH (`ramp-arm-probe.mjs`), not the reading.
+>
+> **NO RAMP FOR 12 HOURS** — last one 09-08 07:47 PT, *before* the box took the trigger at
+> 13:57, so the new code has never seen one. Peaks since: 307-500 MB. The spread is 5-28 h:
+> **neither a cure nor a fault.**
+>
+> **A RAMP IS THEREFORE ORDERED. `trig_01DbvqTrehodKTp1Axq52rzM` fires 2026-09-09 05:30Z
+> (22:30 PT)**, bound to the arming session, with the unit ids already looked up and pasted in
+> (Carpinteria SB — Santa Rosa **#R306, unit 4756, arrival 2026-12-01**, 36 bookable that night;
+> alternates 4757-4761). **If that session is gone the wake-up died with it** — the copyable
+> prompt to re-run it by hand is at the end of this block.
+>
+> **THE PRECONDITIONS ARE THE WHOLE THING: `okta=GONE` AND the RC token DEAD.** At arming both
+> failed (token 60m, Okta to 21:49 PT). **If either is still alive, DO NOTHING and re-arm ~45
+> min later** — a live token short-circuits `attemptLogin` in 4.5s and spends the warm-up's only
+> turn (#296). **An unspent turn is worth more than a wasted attempt.**
+>
+> **~3 in 5, one attempt per Okta lifetime.** A successful warm-up leaves Okta ALIVE and shuts
+> the window. **A miss is a NORMAL outcome — report it, do not hunt it.** No campsite is locked:
+> `--in 120` leaves 90 minutes of margin and the hold is deleted once the trip is under way.
+>
+> **HOW TO READ IT:** `tail-log rc-keepwarm` for `warming up the session … Okta is GONE`, then
+> `* holding the bail up to 20s`, then either `memory dump (ramp) in Nms` or one of two named
+> expiries (`still in flight` vs `without a dump` — different findings, different fixes). Then
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`, MEMORY DUMPS; the readout joins
+> the dump's `MDPROC` pids against the walk's TARGET and prints `VOID` on a mismatch.
+> **`gpu/mapped_memory` at ~32 GB confirms the `mapped_memory_chunk_size` candidate; absent or
+> small does not.**
+>
+> **`rc_release_readings` IS STILL ZERO AFTER FOUR FIRINGS** (09-05/06/07/08). Self-disables
+> 09-12, ~3 chances left. The remedy is **not** another schedule tweak — run it by hand before
+> 07:58:30 PT.
+>
+> ### THE COPYABLE PROMPT — paste this into a fresh session to run the forced ramp by hand
+>
+> ```
+> Force a ramp on the mini-PC. The owner approved this. Read docs/NEXT-SESSION.md's top
+> block first; do not re-derive anything it answers.
+>
+> STEP 1 — CHECK BOTH PRECONDITIONS. Do not trust any prediction:
+>   select okta_alive, okta_expires_at, session_ok, session_detail
+>     from rc_runner_heartbeat;
+> Need okta_alive false (or okta_expires_at past) AND the RC token dead.
+> IF EITHER IS ALIVE: do nothing, say so, and check again in ~45 min. A live token makes
+> attemptLogin short-circuit in 4.5s and SPENDS the warm-up's only turn for that release
+> (#296). An unspent turn is worth more than a wasted attempt.
+>
+> STEP 2 — IF BOTH ARE DEAD, queue it. Unit ids were found read-only on 09-08 (36 bookable
+> that night). Re-run --find if 2026-12-01 has moved:
+>   NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts \
+>     --unit 4756 --arrival 2026-12-01 --nights 1 \
+>     --watch 9c7b389c-fe04-40b1-b85b-5e488288f3c3 --in 120
+> NEVER invent a unit id — a sentinel is invisible to the warm-up via REAL_UNIT.
+> --in 120 opens the T-3h..T-30 window at once with 90 min of margin, so nothing can cart.
+>
+> STEP 3 — the warm-up fires within ~20s:
+>   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts tail-log rc-keepwarm
+> Look for "warming up the session ... Okta is GONE". THEN DELETE THE HOLD IMMEDIATELY:
+>   NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --delete <hold-id>
+>
+> STEP 4 — read it:
+>   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts     (MEMORY DUMPS)
+> plus tail-log rc-keepwarm for "* holding the bail up to 20s" then either
+> "memory dump (ramp) in Nms" or one of two named expiries ("still in flight" vs
+> "without a dump" — different findings, different fixes).
+>
+> READING RULES. The readout joins the dump's MDPROC pids against the ramp-scan walk's
+> TARGET and prints VOID on a mismatch — a dump of a healthy renderer says nothing.
+> gpu/mapped_memory at ~32 GB CONFIRMS the mapped_memory_chunk_size candidate; absent or
+> small does NOT confirm it and is its own finding. Odds are ~3 in 5 and the budget is one
+> attempt per Okta lifetime: a MISS (fast clean sign-in, no ramp) is a normal outcome —
+> report it as one, do not hunt a fault.
+>
+> Do not lower LOW_RAM_MB, do not build Track B, do not park the resident page, do not
+> narrow verify.yml's triggers. NODE_USE_ENV_PROXY=1 on every stage of npm run verify.
+> GitHub only through the MCP tools. Merges go through a PR, never a push to master.
+> ```
+>
 > ## THE TRIGGER NO LONGER NEEDS A RAMP TO TEST (2026-09-08, latest)
 >
 > **State: master and mini-PC both `c0b222c` (read by `bot-ask git-status`, never

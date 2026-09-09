@@ -5419,9 +5419,23 @@ renderer kept BUSY for twenty seconds while the dump was taken from the browser 
 - ~~**BOT-SIDE, so it is inert until the box updates.**~~ **MERGED AS #302 AND ON THE BOX
   (`c0b222c`, 2026-09-08 20:5x UTC, confirmed by `bot-ask git-status`).** Worker deploy green,
   3/3 shards, 10s heartbeat, health 17 of 19. Struck rather than deleted — "inert until the box
-  updates" is the sentence a later reader quotes as a task. **And the stall trigger fires on the
-  next stall over 90 seconds, which is far more often than a ramp: the first evidence that it
-  works arrives without waiting for one.**
+  updates" is the sentence a later reader quotes as a task.
+- ~~**And the stall trigger fires on the next stall over 90 seconds, which is far more often
+  than a ramp: the first evidence that it works arrives without waiting for one.**~~
+  **WRONG, AND MEASURED WRONG THE NEXT DAY. A STALL OVER 90 SECONDS HAS NEVER HAPPENED OUTSIDE
+  A RAMP.** Across **133 recorded tab-closes the longest trip is 71,552 ms and NOT ONE exceeds
+  90,000** — the ordinary renewal sits at 68-71s, run after run. So the trigger fires on ramps
+  and on essentially nothing else.
+  - **THAT IS THE DESIGN WORKING, AND IT IS ALSO THE CLAIM FAILING.** No false positives means
+    a slow-but-healthy trip can never spend the ramp's slot, which is exactly what the
+    per-episode budget was for. What it does NOT buy is early evidence: **the trigger still
+    needs a ramp to be exercised at all**, same as everything before it. What actually changed
+    is that the trigger PATH is testable off-box in seconds (`ramp-arm-probe.mjs`); the READING
+    still waits for an event.
+  - **Struck rather than deleted because it is the optimistic half that gets quoted.** It was
+    written into a summary within a day of the data that refutes it, and the data was already
+    in `bot_events` at the time — one query, never run. The house shape: a claim about how
+    often something fires, made without counting how often the thing fires.
 
 ### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
 Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
@@ -7781,6 +7795,52 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-08 (evening) — A RAMP IS ORDERED FOR 22:30 PT, AND ONE CLAIM IS CORRECTED
+>
+> **Master `6eee69f`, mini-PC `c0b222c` (`bot-ask git-status`), 3/3 shards, no holds queued,
+> highest migration 076, main's block 077-079. Health 16/19 — `rc_session` (dead between
+> releases), `bot_version` (box vs web, and the check itself says *"No bot-side code in the
+> gap"*), `rc_login` (rehearsal stand-down). All documented-benign.**
+>
+> **THE CORRECTION FIRST, BECAUSE IT IS THE OPTIMISTIC HALF.** *"The stall trigger fires on the
+> next stall over 90 seconds, which is far more often than a ramp"* is **WRONG**: across **133
+> tab-closes the longest trip is 71,552 ms and not one exceeds 90,000.** A stall over 90s has
+> never happened outside a ramp. The trigger is precisely discriminating — no healthy trip can
+> spend the ramp's slot — and it **still needs a ramp to be exercised**. Only the trigger PATH
+> got cheaper to test, not the reading.
+>
+> **NO RAMP FOR 12 HOURS.** Last one 09-08 07:47 PT, *before* the box took the stall trigger at
+> 13:57, so the new code has never seen one. Hourly peaks since: 307-500 MB. The spread is
+> 5-28 h, so this is **neither a cure nor a fault** — every "not reproduced this session"
+> reading in this file was a window that missed one.
+>
+> **SO ONE IS ORDERED: `trig_01DbvqTrehodKTp1Axq52rzM`, 2026-09-09 05:30Z (22:30 PT),** bound to
+> the session that armed it, with the unit ids already found and pasted into the prompt
+> (Carpinteria SB — Santa Rosa **#R306, unit 4756, arrival 2026-12-01, 36 bookable that
+> night**; alternates 4757-4761).
+> - **THE TIMING IS THE WHOLE DESIGN.** At arming, BOTH preconditions failed — token alive 60m,
+>   Okta alive to 21:49 PT. Okta's **absolute cap** lapses then and cannot be pushed out by our
+>   probing (measured not to reset across a sign-in on 08-16, 08-21 and 09-07); the token dies
+>   ~21:01 and the renewal will likely mint one more good to ~22:05. 22:30 sits just past both.
+> - **IF EITHER IS STILL ALIVE, THE FIRED SESSION DOES NOTHING AND RE-ARMS.** A live token makes
+>   `attemptLogin` short-circuit in 4.5s and **spends the warm-up's only turn** — the #296 trap.
+>   **An unspent turn is worth more than a wasted attempt.**
+> - **NO CAMPSITE IS LOCKED.** `--in 120` opens the T-3h..T-30 window at once with 90 minutes of
+>   margin, and the hold is deleted the moment the trip is under way.
+> - **~3 IN 5, ONE ATTEMPT PER OKTA LIFETIME.** A successful warm-up leaves Okta ALIVE and shuts
+>   the window until it lapses again. **A miss — a fast clean sign-in, no ramp — is a NORMAL
+>   outcome at these odds and must be reported as one, not hunted as a fault.**
+>
+> **WHAT IT BUYS: the first ramp the stall trigger has ever seen.** It fires at 90s reading no
+> file, three ticks ahead of the bail, with the dump's full 20s behind it and the grace holding
+> while it is in flight. If a dump lands, the readout joins its `MDPROC` pids against the walk's
+> TARGET and prints `VOID` on a mismatch — then **`gpu/mapped_memory` at ~32 GB confirms the
+> `mapped_memory_chunk_size` candidate and absent-or-small does not.**
+>
+> **AND `rc_release_readings` IS STILL ZERO ROWS AFTER FOUR FIRINGS** (09-05, 06, 07, 08). The
+> Routine self-disables 09-12, so ~3 chances remain. The recorded remedy is **not** another
+> schedule tweak — it is running it by hand before 07:58:30 PT.
+>
 > ### 2026-09-08 (latest) — THE METHOD CHANGED; THE TRIGGER NO LONGER NEEDS A RAMP TO TEST
 >
 > **Master and mini-PC both `c0b222c` (`bot-ask git-status`, never `autocart.bot_version`);
