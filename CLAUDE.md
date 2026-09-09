@@ -5082,7 +5082,7 @@ the correct cell (`no token at all` AND `okta=GONE(404)`). It ran the **full pas
 established` — in **15.6 seconds for 413 MB.** No ramp, so no dump, and nothing was wasted
 except the attempt.
 
-**DURATION AND COST TRACK EACH OTHER, FIVE FOR FIVE, AND THAT RETIRES THE CELL AS THE
+**DURATION AND COST TRACK EACH OTHER, SIX FOR SIX, AND THAT RETIRES THE CELL AS THE
 EXPLANATION.**
 
 | event | duration | cost |
@@ -5091,14 +5091,15 @@ EXPLANATION.**
 | 08-24 warm-up (ordered) | 11 min | 9,338 MB |
 | 09-07 20:38 warm-up (ordered) | ~4 min, bailed | 4,805 MB peak |
 | 08-26 rehearsal | 32 s | 0 |
-| **09-07 21:49 warm-up (ordered)** | **15.6 s** | **413 MB** |
+| 09-07 21:49 warm-up (ordered) | 15.6 s | 413 MB |
+| **09-08 22:33 warm-up (ordered)** | **16 s** | **587 MB peak** |
 
 - **SO THE QUESTION IS NO LONGER "WHICH CELL?" BUT "WHAT MAKES A TRIP SLOW?"** The
-  `okta=GONE` password form is now **three ramps in five**, and both misses completed cleanly
-  and quickly. A password sign-in does not cost gigabytes; a password sign-in **that struggles**
-  does. This file already said *"duration and cost track each other, which makes a retrying or
-  stalling navigation the better candidate than the password path itself"* — that was one
-  observation then and it is five now.
+  `okta=GONE` password form is now **three ramps in six**, and all three misses completed
+  cleanly and quickly. A password sign-in does not cost gigabytes; a password sign-in **that
+  struggles** does. This file already said *"duration and cost track each other, which makes a
+  retrying or stalling navigation the better candidate than the password path itself"* — that
+  was one observation then and it is six now.
 - **NOT THE BYTE COUNT.** This trip moved **233 responses / 17.0 MB**, roughly double the
   09-07 05:07 trace's 112 / 8.7 MB, and did not ramp. The three-way verdict refused to speak,
   correctly.
@@ -5109,9 +5110,42 @@ EXPLANATION.**
   clean one** — the ramping traces are the ones that bail, and `tail-log` rolls at 16,000
   characters. That comparison is the next cheap reading and it needs no new instrument, only
   the trace being stored rather than logged.
+  - **THE CLEAN-SIDE BASELINE IS NOW TWO READINGS AND THEY ARE THE SAME: `x7`, 2.4 MB, on
+    09-07 21:49 AND 09-08 22:33** — and the byte totals sit within 3% of each other (233
+    responses / 17.0 MB, then 239 / 17.4 MB). So a clean password trip has a stable shape, and
+    it is the RAMPING side that is unmeasured. **Do not read the matching pair as evidence
+    about the leak** — two samples of the same non-event say nothing about the event; what they
+    buy is a baseline to compare the next ramping trace against.
 - **A SUCCESSFUL WARM-UP CLOSES ITS OWN WINDOW.** It leaves Okta ALIVE, so the GONE
   precondition does not return until the session lapses, and `spent` is 1 for that release.
   **One forced attempt per Okta lifetime** is the real budget, whichever way the coin lands.
+
+##### A THIRD ORDERED ATTEMPT, AND THE MEMORY SERIES IS WHAT CONFIRMED THE MISS (2026-09-08 22:33 PT)
+Fired by a one-shot Routine timed to land just past Okta's absolute cap, and **both
+preconditions were read before it ran rather than predicted** — `okta_alive false`,
+`okta_expires_at null`, `session_ok false` (*"no token at all — signed out"*), checked 3.5
+minutes earlier, with the box on `c0b222c`, i.e. the stall trigger live. That is the recipe
+working: the gate this attempt needed is exactly the one #296 added.
+```
+22:33:23 warming up the session: the release is 120m away and Okta is GONE - signing in now
+22:33:35     -> password entered, submitting
+22:33:39   OK Okta session established - the sign-in before the release will be the cheap one
+           network trace: 239 response(s), 17.4 MB - RAM 10559 -> 10166 MB (-393)
+           => this navigation did NOT ramp
+```
+- **THE SERIES AGREES INDEPENDENTLY OF THE TRACE, WHICH IS THE PART WORTH KEEPING.** The
+  trace's RAM delta is one instrument; `chromium_memory_samples` is another, and it read
+  **250 -> 587 -> 328 MB on the SAME pid 8132**, commit 7.0 -> 7.7 GB, free RAM never below
+  10,055 MB. No browser replacement, no bail, no dump. A ramp is a new renderer pid and a ~35 GB
+  commit step; this is neither, twice over.
+- **NOTHING WAS AT STAKE AND NOTHING WAS LOCKED.** `--in 120` opens the T-3h..T-30 window
+  immediately with 90 minutes of margin, and the hold was deleted the moment the trip finished
+  — 0 live holds afterwards, confirmed by query rather than assumed.
+- **THE ODDS ARE NOW 3 IN 6 AND THE BUDGET IS UNCHANGED.** A successful warm-up leaves Okta
+  ALIVE, so this Okta lifetime's turn is spent and the next GONE window is ~12h out at the
+  earliest. **Do not re-arm a forced attempt on a miss** — natural ramps arrive every 5-28h and
+  the stall trigger is live for all of them, so waiting costs nothing, while every forced
+  attempt spends a password submission from the address that has eaten a twelve-hour block.
 
 **HOW TO READ THE NEXT ONE.** The walk half is answered and does not need repeating; what is
 outstanding is one `mem-dump` with `phase: ramp` whose `MDPROC` pids contain the walk's TARGET.
@@ -7795,7 +7829,7 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
-> ### 2026-09-08 (evening) — A RAMP IS ORDERED FOR 22:30 PT, AND ONE CLAIM IS CORRECTED
+> ### 2026-09-08 (evening) — THE ORDERED RAMP FIRED AND MISSED, AND ONE CLAIM IS CORRECTED
 >
 > **Master `6eee69f`, mini-PC `c0b222c` (`bot-ask git-status`), 3/3 shards, no holds queued,
 > highest migration 076, main's block 077-079. Health 16/19 — `rc_session` (dead between
@@ -7814,10 +7848,14 @@ tree, the deploy and the fleet were all correct.
 > 5-28 h, so this is **neither a cure nor a fault** — every "not reproduced this session"
 > reading in this file was a window that missed one.
 >
-> **SO ONE IS ORDERED: `trig_01DbvqTrehodKTp1Axq52rzM`, 2026-09-09 05:30Z (22:30 PT),** bound to
-> the session that armed it, with the unit ids already found and pasted into the prompt
-> (Carpinteria SB — Santa Rosa **#R306, unit 4756, arrival 2026-12-01, 36 bookable that
-> night**; alternates 4757-4761).
+> **SO ONE WAS ORDERED — `trig_01DbvqTrehodKTp1Axq52rzM`, 2026-09-09 05:30Z (22:30 PT) — AND IT
+> RAN, AND IT MISSED.** Both preconditions were READ and both were dead (`okta_alive false`,
+> `okta_expires_at null`, `session_ok false`, checked 3.5 min earlier), the hold went in on unit
+> 4756 (Carpinteria SB — Santa Rosa #R306), the warm-up fired 20 seconds later and completed the
+> full password form in **16 seconds for a 587 MB peak** — no ramp, no bail, no dump. The hold
+> was deleted immediately and 0 live holds remain. **The one-shot has disabled itself and will
+> not refire.** Full account: **"A THIRD ORDERED ATTEMPT, AND THE MEMORY SERIES IS WHAT
+> CONFIRMED THE MISS"**.
 > - **THE TIMING IS THE WHOLE DESIGN.** At arming, BOTH preconditions failed — token alive 60m,
 >   Okta alive to 21:49 PT. Okta's **absolute cap** lapses then and cannot be pushed out by our
 >   probing (measured not to reset across a sign-in on 08-16, 08-21 and 09-07); the token dies
@@ -7827,15 +7865,20 @@ tree, the deploy and the fleet were all correct.
 >   **An unspent turn is worth more than a wasted attempt.**
 > - **NO CAMPSITE IS LOCKED.** `--in 120` opens the T-3h..T-30 window at once with 90 minutes of
 >   margin, and the hold is deleted the moment the trip is under way.
-> - **~3 IN 5, ONE ATTEMPT PER OKTA LIFETIME.** A successful warm-up leaves Okta ALIVE and shuts
->   the window until it lapses again. **A miss — a fast clean sign-in, no ramp — is a NORMAL
->   outcome at these odds and must be reported as one, not hunted as a fault.**
+> - **3 IN 6 NOW, ONE ATTEMPT PER OKTA LIFETIME.** A successful warm-up leaves Okta ALIVE and
+>   shuts the window until it lapses again. **A miss — a fast clean sign-in, no ramp — is a
+>   NORMAL outcome at these odds and was reported as one, not hunted as a fault.**
+> - **DO NOT RE-ARM ON A MISS.** The next GONE window is ~12h out, natural ramps arrive every
+>   5-28h, and the stall trigger is live for all of them — so waiting costs nothing, while each
+>   forced attempt spends a password submission from the address that has eaten a twelve-hour
+>   block. Forcing is for when a reading is wanted at a known moment, not for impatience.
 >
-> **WHAT IT BUYS: the first ramp the stall trigger has ever seen.** It fires at 90s reading no
-> file, three ticks ahead of the bail, with the dump's full 20s behind it and the grace holding
-> while it is in flight. If a dump lands, the readout joins its `MDPROC` pids against the walk's
-> TARGET and prints `VOID` on a mismatch — then **`gpu/mapped_memory` at ~32 GB confirms the
-> `mapped_memory_chunk_size` candidate and absent-or-small does not.**
+> **SO WHAT IT WAS MEANT TO BUY IS STILL OUTSTANDING: the first ramp the stall trigger has ever
+> seen.** It fires at 90s reading no file, three ticks ahead of the bail, with the dump's full
+> 20s behind it and the grace holding while it is in flight. If a dump lands, the readout joins
+> its `MDPROC` pids against the walk's TARGET and prints `VOID` on a mismatch — then
+> **`gpu/mapped_memory` at ~32 GB confirms the `mapped_memory_chunk_size` candidate and
+> absent-or-small does not.** Nothing needs building; it needs a ramp.
 >
 > **AND `rc_release_readings` IS STILL ZERO ROWS AFTER FOUR FIRINGS** (09-05, 06, 07, 08). The
 > Routine self-disables 09-12, so ~3 chances remain. The recorded remedy is **not** another
@@ -8004,14 +8047,16 @@ tree, the deploy and the fleet were all correct.
 >
 > **AND IT IS ON THE BOX — `aae25bd`, applied 2026-09-07 19:01 PT, confirmed by `git-status`.**
 >
-> **TWO RAMPS WERE FORCED ON 09-07; THE FIRST HIT AND THE SECOND MISSED.** The `okta=GONE`
-> password form is **three ramps in five**, and **duration and cost track each other five for
-> five** — the two misses completed in 32 s and 15.6 s for nothing, the hits took 11-12 minutes
-> and 9 GB. **So the trigger is a trip that STRUGGLES, not the password path**, and the next
+> **TWO RAMPS WERE FORCED ON 09-07; THE FIRST HIT AND THE SECOND MISSED.** As of that evening
+> the `okta=GONE` password form stood at three ramps in five, and **duration and cost tracked
+> each other five for five** — the two misses completed in 32 s and 15.6 s for nothing, the hits
+> took 11-12 minutes and 9 GB. **(A third forced attempt on 09-08 22:33 missed too, so the count
+> is three in SIX and the pairing six for six — see the table above; these figures are as-of
+> 09-07.)** **So the trigger is a trip that STRUGGLES, not the password path**, and the next
 > cheap reading is comparing `recaptcha__en.js` fetch counts between a ramping trip and a clean
-> one (the clean one did 7; nobody has the ramping figure, because those traces bail and
-> `tail-log` rolls). **A successful warm-up leaves Okta ALIVE and spends its turn, so the real
-> budget is one forced attempt per Okta lifetime.**
+> one (the clean side has since read `x7` twice; nobody has the ramping figure, because those
+> traces bail and `tail-log` rolls). **A successful warm-up leaves Okta ALIVE and spends its
+> turn, so the real budget is one forced attempt per Okta lifetime.**
 >
 > **THE FIRST ONE ANSWERED BOTH THE WALK'S BRANCHES:
 > 15,493 separate anonymous READWRITE sections, one allocation base each, 31,005 MB — N
