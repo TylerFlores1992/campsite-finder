@@ -236,6 +236,28 @@ export function loopAnswerReading(
 export type DumpJoinKind = 'no-walk' | 'void' | 'joined';
 
 /**
+ * Why a join is void. Both suppress the verdict; they need OPPOSITE fixes.
+ *
+ * `generation` — the dump described a DIFFERENT browser. 2026-09-07: a `bail:ramp` killed the
+ * ramping generation, the supervisor restarted within seconds, and the dump measured the
+ * replacement. The fault is the dump's TIMING.
+ *
+ * `target-silent` — the dump described THIS browser and the ramping renderer alone is missing
+ * from it. 2026-09-08 21:43: the dump answered for seven pids, every one of them in the ramp
+ * scan's own process list, and spent its full 20,000 ms waiting for the eighth. The timing is
+ * RIGHT and the subject has stopped answering CDP — the third instrument to hit that wall,
+ * after `newCDPSession` and `Performance.getMetrics`.
+ *
+ * `unknown` — no generation list to compare against, so it names both and asserts neither.
+ *
+ * NAMING THE WRONG ONE IS THE EXPENSIVE ERROR, WHICH IS WHY THIS EXISTS. Until 2026-09-08 the
+ * void text asserted the `generation` mechanism unconditionally — so on the first ramp the
+ * stall trigger ever caught, the readout told the reader to go and fix the half that had just
+ * started working.
+ */
+export type DumpJoinVoidCause = 'generation' | 'target-silent' | 'unknown';
+
+/**
  * Did the memory dump measure the process the region walk walked?
  *
  * A COORDINATED DUMP OMITS A PROCESS THAT WILL NOT ANSWER — it does not report it as empty —
@@ -246,10 +268,21 @@ export type DumpJoinKind = 'no-walk' | 'void' | 'joined';
  * `no-walk` is NOT `void`. No walk to join against is an absence, and an absence must not be
  * dressed as a failed join — the reader still has the manual check available and should be
  * told so, which is a different sentence.
+ *
+ * THE KIND STAYS `void` FOR EVERY CAUSE, DELIBERATELY. The caller suppresses on
+ * `kind === 'void'`, so a cause it has never heard of must still suppress — a new variant
+ * must not be able to un-suppress the one sentence a reader quotes. The cause rides beside
+ * the kind rather than replacing it.
  */
 export function dumpJoinReading(
-  args: { walkTargetPid?: string | null; dumpPids?: readonly string[] | null; walkNearby?: boolean },
-): { kind: DumpJoinKind; text: string } {
+  args: {
+    walkTargetPid?: string | null;
+    dumpPids?: readonly string[] | null;
+    walkNearby?: boolean;
+    /** Every chrome.exe the region walk saw in the SAME event — the browser generation. */
+    walkGenerationPids?: readonly string[] | null;
+  },
+): { kind: DumpJoinKind; cause?: DumpJoinVoidCause; text: string } {
   const target = args.walkTargetPid ?? null;
   const pids = args.dumpPids ?? [];
   if (!target) {
@@ -263,12 +296,35 @@ export function dumpJoinReading(
     };
   }
   if (!pids.includes(target)) {
+    const generation = args.walkGenerationPids ?? null;
+    const overlap = generation ? pids.filter((p) => generation.includes(p)).length : 0;
+    const head = `VOID: the walk's target is pid ${target} and the dump answered for `
+      + `${pids.length ? pids.join(', ') : 'no process at all'}. A renderer missing from a coordinated dump `
+      + 'is MISSING, not empty, so its shared_memory figure eliminates NOTHING';
+    if (!generation || generation.length === 0) {
+      return {
+        kind: 'void',
+        cause: 'unknown',
+        text: `${head} — and with no process list from the walk, a dump of a DIFFERENT browser and a dump `
+          + 'this browser gave minus the ramping renderer are indistinguishable here. Compare the pids by hand.',
+      };
+    }
+    if (overlap === 0) {
+      return {
+        kind: 'void',
+        cause: 'generation',
+        text: `${head} — and NONE of those ${pids.length} pid(s) is in the walk's own process list, so this is `
+          + 'a DIFFERENT browser: the 2026-09-07 shape, where a bail killed the generation and the dump '
+          + 'measured its replacement. The fault is the timing.',
+      };
+    }
     return {
       kind: 'void',
-      text: `VOID: the walk's target is pid ${target} and the dump answered for `
-        + `${pids.length ? pids.join(', ') : 'no process at all'}. A renderer missing from a coordinated dump `
-        + 'is MISSING, not empty, so its shared_memory figure eliminates NOTHING — this is the 2026-09-07 '
-        + 'shape, where a bail killed the generation and the dump measured its replacement.',
+      cause: 'target-silent',
+      text: `${head} — but ${overlap} of those ${pids.length} pid(s) ARE in the walk's own process list, so the `
+        + 'dump reached the RIGHT browser and the ramping renderer alone did not answer it. The timing is '
+        + 'right; the subject has gone quiet, as it did for newCDPSession and Performance.getMetrics before '
+        + 'it. Do NOT go looking at the trigger.',
     };
   }
   return { kind: 'joined', text: `the ramping renderer (pid ${target}, from the region walk) IS in this dump.` };
