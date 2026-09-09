@@ -638,3 +638,174 @@ export function mappedNameReading(
       + 'asking Chromium anything.',
   };
 }
+
+export type SpinSiteKind =
+  | 'unavailable' | 'not-sampled' | 'unmeasured' | 'unread' | 'no-modules'
+  | 'suspect-offset' | 'module' | 'jit' | 'mixed';
+
+/**
+ * The leading class must carry this share of the samples that were read before it is named.
+ * Below it the two classes are reported as a MIXED reading rather than one of them being
+ * called the answer — the same share gate, and the same reason, as the bucket verdict in the
+ * readout: a verdict that fires on every input fires on the ones that mean nothing.
+ */
+export const SPIN_SITE_DOMINANCE = 0.6;
+
+/**
+ * WHAT IS THE SPINNING MAIN THREAD ACTUALLY EXECUTING?
+ *
+ * The thread census named the symptom — the ramping renderer's main thread burns 100% of a
+ * core against a control renderer at 0% — and that one fact explains every CDP instrument
+ * that has ever failed here, because CDP is serviced on that thread. It does not say what the
+ * loop IS, and the loop is the bug. `VMSTACK` samples the thread's instruction pointer from
+ * outside the process (see `ramp-scan.mjs`) and this turns the counts into the sentence.
+ *
+ * THE TWO ANSWERS NEED OPPOSITE FIXES, which is the whole reason the reading is worth taking:
+ *
+ *   • MODULE — the loop is native Chromium code. `chrome.dll+0x...` is fixed for a build, so
+ *     it symbolizes offline against that version and names the function, and the fix is a
+ *     Chromium-level one: a flag, or not using the feature.
+ *   • JIT — the addresses are executable and belong to no loaded image, so they are generated
+ *     code: RC's own page script is the loop. The fix is then on our side of the page and
+ *     needs no Chromium change at all.
+ *
+ * AND IT REFUSES BEFORE IT NAMES EITHER. `Rip` sits at byte 248 of the x64 CONTEXT because
+ * that struct carries six debug registers and not eight. Misremember that and the read returns
+ * `Rbp` or `R15` — a stack or data pointer, which belongs to no module and would be reported
+ * as JIT-compiled JavaScript: a plausible answer, for the wrong reason, pointing the next
+ * session at the wrong half of the system. So every address is asked whether its page is
+ * EXECUTABLE, on an axis kept independent of the module check, and a reading where the
+ * non-executable samples dominate is refused rather than explained.
+ */
+export function spinSiteReading(
+  args: {
+    /** Whether the scan carried a VMSTACK line at all. */
+    present?: boolean;
+    /** `not-spinning` when the census found a blocked thread, which is not sampled. */
+    status?: string;
+    /** How many instruction pointers came back non-zero. */
+    read?: unknown;
+    executable?: unknown;
+    notExecutable?: unknown;
+    module?: unknown;
+    anonExec?: unknown;
+    /** Distinct addresses over the samples read — how tight the loop is, not whether it is one. */
+    distinct?: unknown;
+    /** The most-sampled address, for the line a human acts on. */
+    topAt?: string;
+    topCount?: unknown;
+    /** chrome.dll's file version, without which an offset cannot be symbolized offline. */
+    build?: string;
+    /**
+     * How many loaded images the scan could enumerate. LOAD-BEARING: classification is
+     * `inside one of these, or not`, so an enumeration that returned NOTHING makes every
+     * address fall outside every module and renders as JIT — a confident wrong answer built
+     * out of a failed read. `Process.Modules` can throw part-way for a process under
+     * pressure, which is exactly the process this runs against.
+     */
+    modules?: unknown;
+    /** The script's own refusal, when it printed one. */
+    note?: string;
+  },
+): { kind: SpinSiteKind; text: string } {
+  if (!args.present) {
+    return {
+      kind: 'unavailable',
+      text: 'no VMSTACK reading in this scan'
+        + (args.note ? ` — ${args.note}` : ' — the box predates the sampler, or it refused')
+        + '. That is an ABSENCE, not a reading: it says nothing about what the thread was doing.',
+    };
+  }
+  if (args.status === 'unmeasured') {
+    return {
+      kind: 'unmeasured',
+      text: 'the census could not compute a CPU delta for that thread, so the sampler stood down. That is a '
+        + 'failed measurement and NOT a thread that was idle — it says nothing either way about a loop.',
+    };
+  }
+  if (args.status === 'not-spinning') {
+    return {
+      kind: 'not-sampled',
+      text: 'the thread was BLOCKED rather than spinning, so it was deliberately not sampled: a parked '
+        + 'thread sits in a wait, which the census already reports as `wait=`, and there is no loop to name. '
+        + 'Read the census verdict above instead.',
+    };
+  }
+  const read = Number(args.read) || 0;
+  if (read === 0) {
+    return {
+      kind: 'unread',
+      text: 'the sampler ran and read NO instruction pointer — the thread could not be opened, or every '
+        + 'GetThreadContext failed. That is a failed measurement, not a thread with nowhere to be, and it '
+        + 'must not be read as either answer.',
+    };
+  }
+  const notExec = Number(args.notExecutable) || 0;
+  const exec = Number(args.executable) || 0;
+  if (notExec > exec) {
+    return {
+      kind: 'suspect-offset',
+      text: `REFUSED: ${notExec} of ${read} sampled addresses are NOT on an executable page (${exec} are). `
+        + 'A spinning thread executes at every instant, so its instruction pointer is always code — these '
+        + 'are not instruction pointers. The CONTEXT offset is wrong, or the samples are not what they claim. '
+        + 'Do NOT read the classes below as an answer; fix the read first.',
+    };
+  }
+  const mod = Number(args.module) || 0;
+  const jit = Number(args.anonExec) || 0;
+  // NO MODULE LIST, NO JIT VERDICT. `anonExec` means `executable and in no loaded image`, and
+  // with an empty enumeration that is true of EVERY address — so a failed `Process.Modules`
+  // read would manufacture a unanimous JIT answer out of nothing and send the next session
+  // hunting a script that is not there. The module branch is unaffected: it cannot fire.
+  // `== null` CATCHES BOTH, AND THE NULL HALF IS THE ONE THAT BITES. `Number(undefined)` is
+  // NaN, which never equals 0 — but `Number(null)` IS 0, so a caller passing null for "not
+  // reported" would be refused as "zero modules found". That exact trap made the ramp-dump
+  // grace inert on 2026-09-08 (`Number(null)` read as an expiry at the epoch), and it is
+  // cheap to close once rather than rediscover.
+  const modules = args.modules == null ? null : Number(args.modules);
+  if (modules === 0) {
+    return {
+      kind: 'no-modules',
+      text: `REFUSED: the scan enumerated ZERO loaded modules, so every one of the ${read} addresses falls `
+        + 'outside every image by construction and the JIT reading would be an artefact of a failed read, '
+        + 'not a finding. A renderer always has dozens of modules; this is Process.Modules failing, which it '
+        + 'can do against a process under pressure. Fix the enumeration before reading the classes.',
+    };
+  }
+  const distinct = Number(args.distinct) || 0;
+  const tight = distinct > 0
+    ? ` ${distinct} distinct address(es) over ${read} samples`
+      + (distinct <= 8 ? ' — a tight loop.' : ' — a wide loop body or several sites, not a handful of instructions.')
+    : '';
+  const top = args.topAt && Number(args.topCount)
+    ? ` Most-sampled: ${args.topAt} (${Number(args.topCount)} of ${read}).`
+    : '';
+  if (mod / read >= SPIN_SITE_DOMINANCE) {
+    return {
+      kind: 'module',
+      text: `the loop is in NATIVE CODE: ${mod} of ${read} samples fall inside a loaded module.${tight}${top} `
+        + (args.build
+          ? `chrome.dll is ${args.build}, so the offset symbolizes offline against that build and names the `
+            + 'function. '
+          : 'No chrome.dll version was reported, so an offset cannot be symbolized until one is. ')
+        + 'This is the branch where the fix is Chromium-level — a flag, or not using the feature — and NOT in '
+        + 'anything we serve to the page.',
+    };
+  }
+  if (jit / read >= SPIN_SITE_DOMINANCE) {
+    return {
+      kind: 'jit',
+      text: `the loop is in GENERATED CODE: ${jit} of ${read} samples are on executable pages that belong to `
+        + `no loaded image, which is JIT-compiled JavaScript.${tight}${top} So the thread is spinning in `
+        + "RC's own page script, not inside Chromium — the fix is on our side of the page (what we let that "
+        + 'page run, and for how long) and needs no Chromium change. It does NOT by itself name which script.',
+    };
+  }
+  return {
+    kind: 'mixed',
+    text: `NO CLASS DOMINATES: ${mod} of ${read} samples are in a loaded module and ${jit} are in generated `
+      + `code, neither reaching ${Math.round(SPIN_SITE_DOMINANCE * 100)}%.${tight}${top} That is a real `
+      + 'reading and not a failure — it says the thread is not sitting in one place — but it does not choose '
+      + 'between a native loop and a script one, so do not quote it as either.',
+  };
+}

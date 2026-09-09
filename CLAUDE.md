@@ -5724,6 +5724,123 @@ process costs two thread enumerations and no extra wall clock.
   family. Recorded rather than changed; it does not affect the excess, which is what that control
   exists to produce.
 
+#### THE GPU CENSUS ANSWERED THREE MINUTES AFTER IT REACHED THE BOX (2026-09-09 10:19 PT)
+The entry above ships the census and says it "needs a box update and then one ramp". **It got
+both the same morning, and the reading is in.** The box applied `2f006b7` at 17:17 UTC and a
+natural ramp arrived at **17:19:40 UTC (10:19:40 PT)** — under three minutes later:
+```
+TARGET  pid=11588 renderer privateMB=2981  committed 29967 MB  mapped 26728 MB
+        2-4M 26655 MB across 13325 region(s), 13319 allocation bases, ALL ANONYMOUS
+        >>> SPINNING on the MAIN thread: tid=7128 main=True deltaMs=1203 of 1200 (100% of a core)
+CONTROL pid=768   renderer privateMB=17    committed 406 MB
+        >>> BLOCKED, not spinning: busiest burned 0 ms of the same window (0%)
+GPU     pid=7044  gpu-process threads=21 busyMs=0
+        >>> BLOCKED, not spinning: busiest burned 0 ms of the same window (0%)
+```
+- **THE PREDICTED READING WAS RIGHT AND IT IS THE INFORMATIVE BRANCH.** The census entry above
+  predicted BLOCKED and said the other branch would be a different investigation. The GPU
+  process reads **0 ms across 21 threads** beside a renderer at 100% of a core — the
+  client-allocates-service-never-drains shape, and what `MappedMemoryManager` predicts.
+- **THE VERDICT SAYS `CONSISTENT WITH, NOT PROOF` IN ITS OWN WORDS, AND THAT WORDING IS DOING
+  REAL WORK.** An idle service is also exactly what you see if nothing was ever sent to it, and
+  the same hypothesis's failure mode predicts an idle GPU either way. **Do not quote this as a
+  confirmation.** What it did was fail to refute: the branch that would have argued against the
+  candidate — a GPU process also burning CPU — did not fire.
+- **AND A FOURTH READING RIDES ALONG FOR FREE, from the same scan's baseline dump: on a HEALTHY
+  browser the biggest shared-memory owner is `gpu/command_buffer_memory — 2 MB across 2
+  mapping(s)`.** That is `MappedMemoryManager`'s own allocator, at one or two chunks, with
+  `mapped_memory_chunk_size` = 2,097,152 bytes. The ramping renderer holds 13,320 mappings of
+  the same size. Same allocator name, same unit, ~6,600x the count. **Still a candidate**, and
+  still not a creator — the dump cannot attribute the ramping renderer's mappings, because that
+  renderer contributes zero allocator dumps.
+- **BOTH DOCS SAID THE READING WAS STILL OUTSTANDING FOR HALF A DAY.** `#310` was committed at
+  **10:47 PT** under the title *"only a ramp is outstanding"* — twenty-eight minutes AFTER the
+  ramp that answered it. The stale-handover shape, in the commit written to prevent it.
+
+### THE SPINNING THREAD IS SAMPLED NOW (2026-09-09) — VMSTACK, built, awaiting a box update
+The census named the SYMPTOM and stopped one step short of the cause. `VMSTACK` takes the step:
+it samples the spinning thread's **instruction pointer** from outside the process and classifies
+each address against the renderer's loaded modules.
+- **IT IS THE ONLY ROUTE LEFT, AND THAT IS NOW A STATEMENT ABOUT THE DISPATCHER RATHER THAN AN
+  INDUCTION OVER THREE FAILURES.** CDP is serviced on the main thread, so a main thread that
+  never returns to its message loop answers no CDP call — which is why `newCDPSession`,
+  `Performance.getMetrics` and `Tracing.requestMemoryDump` all failed. Nothing that asks the
+  renderer can work. `SuspendThread`/`GetThreadContext` asks WINDOWS.
+- **TWO ANSWERS, OPPOSITE FIXES, AND NOTHING HAS EVER SEPARATED THEM.** Samples inside a loaded
+  image are a NATIVE loop, and `chrome.dll+0xOFFSET` is fixed for a build — the scan reports
+  chrome.dll's version beside it, so it symbolizes offline and names the function; the fix is
+  then Chromium-level. Samples on executable pages belonging to no image are **JIT-compiled
+  code**, i.e. RC's own page script is the loop, and the fix is on our side of the page with no
+  Chromium change at all. **A third outcome is also a reading**: samples spread over hundreds of
+  addresses would mean this is not a tight loop and the `MappedMemoryManager` story would need
+  re-examining.
+- **IT REFUSES BEFORE IT NAMES EITHER, AND THAT GUARD IS THE POINT.** `Rip` sits at byte **248**
+  of the x64 CONTEXT because that struct carries SIX debug registers and not eight. Misremember
+  it and the read returns `Rbp` or `R15` — a stack or data pointer, which belongs to no module
+  and would render as **JIT-compiled JavaScript**: a plausible answer, for the wrong reason,
+  pointing the next session at the wrong half of the system. So every address is asked whether
+  its page is EXECUTABLE (protect mask 240), **on an axis kept independent of the module check**
+  so that a bad offset landing in chrome.dll's *data* still shows up, and a reading whose
+  non-executable samples dominate is REFUSED rather than explained.
+- **THE SUSPEND IS BOUNDED BY WHAT IS BEING SUSPENDED.** The thread is, by the census's own
+  reading, in a loop that never returns to its message loop — already doing nothing the product
+  needs, so pausing it for microseconds cannot make the page less responsive than the spin
+  already has. The resume is in a C# `finally` **inside one method**, so PowerShell cannot be
+  interrupted between the two; the handle asks for `THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT`
+  and nothing wider; and `bail:ramp` fired **3-35 s** after every one of the five ramps on
+  09-09, so even a leaked suspend is bounded by a browser being destroyed anyway. It never
+  touches the browser process, the GPU process or the control — the gate is `$tp.Ty -eq
+  'renderer'` on the TARGET only.
+- **A SECOND `Add-Type` UNDER A SECOND FLAG, WHICH IS WHAT MAKES IT SAFE TO ADD AT ALL.**
+  `VMTHREAD`'s header records the standing decision against P/Invoke here: PowerShell parses the
+  WHOLE script before running any of it, so a fault costs the region walk — the one instrument
+  that still works. `ChThr` compiles separately, after `ChMem`, gated on its own `$stkOk`, and
+  emits last. A C# failure costs this instrument only.
+- **NOT `ReadProcessMemory` AND NOT A MINIDUMP.** Those are banned because they COPY the
+  process's memory — the cure arriving as the disease, and a renderer's pages are RC session
+  material. This collects a REGISTER and the name of the module it falls inside. No page is
+  ever read, and neither a code address nor a DLL name can carry a token.
+- `src/lib/leak-capture.test.mts`, **21 mutations, each verified to APPLY and each caught.**
+  **One survived the first round and it is the house shape**: the guard on the readout's render
+  matched `/VMSTACKTOP/`, which also occurs on the line that FILTERS for it — so it passed
+  against a render replaced by `void stkTops`. Re-anchored on the `console.log`. And one guard
+  failed at baseline for the mirror-image reason: it scanned the whole FILE for
+  `ReadProcessMemory`, which the comments NAME in order to explain why they are not used, so it
+  failed on its own explanation. Both now assert against the EMITTED PowerShell.
+- **GUARDS UNDER `src/` AND `scripts/`, WHICH ARE IN NEITHER OF `worker-deploy.yml`'s `paths:`
+  LISTS** — read, not remembered — **so this fires no worker deploy.**
+- **BOT-SIDE, so it is inert until the box updates**, then it needs one ramp. Confirm with
+  `npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`**.
+
+#### RAMPS ARE ARRIVING EVERY 2.3-4.2 HOURS, NOT EVERY 5-28 (2026-09-09)
+Five in 12.5 hours, off `bot_events` rather than the memory series: **04:45, 08:59, 11:30,
+13:47, 17:19 UTC**, gaps of 4h14m, 2h31m, 2h17m, 3h32m. Every entry in this file quoting 5-28 h
+is describing a quieter regime.
+- **`bail:ramp` FIRED ON ALL FIVE, 3-35 SECONDS AFTER THE SCAN.** That is the containment
+  working, and it is also what bounds every risk taken inside a ramp scan.
+- **NO `ramp` MEMORY DUMP FIRED ON ANY OF THEM, AND THAT IS ARITHMETIC.** The renewal trips in
+  `TAB CLOSES` ran **46.7-59.1 s** against `MEM_DUMP_STALL_MS` of 90 s, so the stall trigger
+  correctly never fired. **Read the trip durations before reading "no ramp dump" as a
+  regression**, and do not lower the threshold — a wedged renderer contributes zero allocator
+  dumps anyway.
+
+#### WHEN A RAMP CAN BE FORCED, MEASURED RATHER THAN ESTIMATED (2026-09-09)
+The recipe needs **Okta GONE *and* the RC token dead**, and the binding half is Okta's ABSOLUTE
+cap, which our own probing cannot bring forward (measured not to reset across a password sign-in
+on 08-16, a cookie-answered one on 08-21, and again on 09-07).
+- **THE CAP IS FROZEN AND THE READING IS A MEASUREMENT, NOT ARITHMETIC ON ONE SAMPLE.** Across a
+  real 20-minute probe the CHECK advanced (18:55:27 -> 19:15:28 UTC) and `okta_expires_at` did
+  **not** move, staying at `2026-09-10T05:33:36Z`. A ROLLING window prints exactly `+12.0000h`
+  from the moment it was checked (12 for 12, 08-18); this read `+10.64h` then `+10.30h`, i.e.
+  shrinking by the elapsed time. **Frozen, so it is the absolute cap.**
+- **SO THE WINDOW OPENS AT 22:33:36 PT** and not before — plus up to another hour for the token,
+  because `renewSession` can still mint from the `idx` cookie until Okta actually goes.
+- **AND IT SHOULD NOT BE USED, because four or five natural ramps arrive before it opens.** At
+  today's 2.3-4.2 h cadence the window is ~10 hours out and every instrument is already armed
+  for a free event. Forcing is 3-in-6, spends the warm-up's one turn per Okta lifetime, and
+  costs a password submission from an address that has eaten a twelve-hour block. **The gating
+  item is the BOX UPDATE, never the ramp.**
+
 ### THE METHOD WAS THE PROBLEM, NOT THE LEAK (2026-09-08) — asked "why do we keep missing things?"
 The owner's question after four missed ramps, and it is answerable with counting rather than
 feeling. **The weeks did not go into the leak. They went into the TRIGGER.**
@@ -8217,6 +8334,82 @@ tree, the deploy and the fleet were all correct.
   for a genuine incident, and a cosmetic blemish in a commit body is not one.
 
 ## Open / next session
+
+> ### 2026-09-09 (evening) — THE GPU CENSUS ANSWERED, AND THE SPIN IS SAMPLED NOW
+>
+> **THE READING THE LAST THREE BLOCKS WERE WAITING FOR IS IN.** A natural ramp arrived at
+> **10:19:40 PT, three minutes after the box took `2f006b7`**, and the GPU census fired on it:
+> the renderer's main thread at **100% of a core**, the control renderer at **0%**, and the
+> **GPU process at 0 ms across 21 threads** — the predicted BLOCKED branch, i.e. the
+> client-allocates-service-never-drains shape. **Quote it as the verdict does: CONSISTENT WITH,
+> NOT PROOF.** An idle service is also what you see if nothing was ever sent to it; what it did
+> was fail to refute. Free corroboration in the same scan's baseline dump: a HEALTHY browser's
+> biggest shared-memory owner is **`gpu/command_buffer_memory — 2 MB across 2 mappings`**, the
+> same allocator and the same 2 MB unit the ramping renderer holds 13,320 of.
+>
+> **`#310` WAS COMMITTED AT 10:47 PT SAYING "only a ramp is outstanding" — 28 MINUTES AFTER THE
+> RAMP THAT ANSWERED IT.** Read the corpus before trusting either doc's state line.
+>
+> **WHAT IS NEW AND WHAT IT NEEDS: `VMSTACK` (this branch) samples the spinning thread's
+> INSTRUCTION POINTER from outside the process.** The census named the symptom; this names the
+> cause, and its two answers live in opposite halves of the system:
+> - **inside a loaded module** -> a NATIVE loop; `chrome.dll+0xOFFSET` is fixed for a build and
+>   the scan reports chrome.dll's version beside it, so it symbolizes offline and names the
+>   function. The fix is then Chromium-level.
+> - **executable but in no loaded image** -> JIT-compiled code, i.e. **RC's own page script** is
+>   the loop, and the fix is on our side of the page with no Chromium change.
+>
+> **AND IT REFUSES BEFORE IT NAMES EITHER.** `Rip` is byte 248 of the x64 CONTEXT (six debug
+> registers, not eight); a wrong offset returns a stack pointer, which belongs to no module and
+> would render as JIT — a plausible answer for the wrong reason. Every address is asked whether
+> its page is executable, on an axis independent of the module check, and a non-executable
+> majority is REFUSED. `src/lib/leak-capture.test.mts`, 21 mutations, each verified to apply and
+> caught. **Guards under `src/` and `scripts/`, in neither `worker-deploy.yml` `paths:` list —
+> read, not remembered — so this fires NO worker deploy.**
+>
+> **THE GATING ITEM IS THE BOX UPDATE, NOT A RAMP.** It is bot-side and inert until the mini-PC
+> takes it; confirm with `npx tsx scripts/bot-ask.mts git-status`, **never
+> `autocart.bot_version`** (it COALESCEs). There are **no live holds**, so the 6 h release gate
+> is open and an "Update now" lifts the quiet window.
+>
+> ### RAMPS ARE EVERY 2.3-4.2 HOURS RIGHT NOW, NOT 5-28
+>
+> Five in 12.5 h off `bot_events`: **04:45, 08:59, 11:30, 13:47, 17:19 UTC**. `bail:ramp` fired
+> on all five, 3-35 s after the scan. **So the next reading is hours away, not days** — and
+> every entry quoting 5-28 h describes a quieter regime.
+>
+> **"No ramp dump" on any of them is ARITHMETIC, not a regression:** the renewal trips read
+> **46.7-59.1 s** in `TAB CLOSES` against `MEM_DUMP_STALL_MS` of 90 s, so the stall trigger
+> correctly never fired. Read the trip durations first, and do not lower the threshold — a
+> wedged renderer contributes zero allocator dumps anyway.
+>
+> ### WHEN A RAMP COULD BE FORCED — 22:33:36 PT TONIGHT, AND IT SHOULD NOT BE
+>
+> The recipe needs **Okta GONE and the RC token dead**. The token is already dead; Okta is the
+> binding half, and its ABSOLUTE cap is **FROZEN — measured, not inferred**: across a real
+> 20-minute probe the CHECK advanced (18:55:27 -> 19:15:28 UTC) and `okta_expires_at` did not
+> move from `2026-09-10T05:33:36Z`. A rolling window prints exactly `+12.0000h` from the check
+> (12 for 12); this read `+10.64h` then `+10.30h`, shrinking by the elapsed time.
+>
+> So the window opens at **22:33:36 PT**, plus up to an hour for the token to lapse behind it.
+> **Four or five natural ramps arrive before then.** Forcing is 3-in-6, spends the warm-up's one
+> turn per Okta lifetime, and costs a password submission from an address that has eaten a
+> twelve-hour block. **Do not.**
+>
+> ### STILL FORBIDDEN, each for a recorded reason
+>
+> The memory dump as a route to the owner (a wedged renderer contributes ZERO allocator dumps at
+> every level, measured off-box); **Track B** (the renewal's Okta trip is measured flat, -4 MB);
+> **parking the resident page** (refused by `checkAndReport`'s localStorage rule, which would
+> silence `autocart.rc_session` and the phone alarm); **lowering `LOW_RAM_MB`** (killed a working
+> repair on 08-19); **lowering `MEM_DUMP_STALL_MS`**; narrowing `verify.yml`'s triggers;
+> `ReadProcessMemory`/minidumps; and forcing a ramp out of impatience.
+>
+> ### AND DO NOT REBUILD THESE — each was measured blind for a knowable reason
+>
+> The heap trail (`JSHeapUsedSize` excludes external memory) · Track A / the sampling profiler
+> (1-74 MB against 8-9 GB) · the RAM arm (untouched commit never lowers free RAM; 16+ consecutive
+> ramps) · the memory dump's ownership graph for a wedged renderer.
 
 > ### 2026-09-09 (later) — VMTHREAD ANSWERED: THE MAIN THREAD IS SPINNING
 >
