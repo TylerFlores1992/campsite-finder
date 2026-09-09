@@ -5123,7 +5123,8 @@ EXPLANATION.**
 #### THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08 21:43 PT)
 **A natural ramp arrived fifty minutes before the ordered one, and #302's trigger caught it.
 Four consecutive missed ramps end here.** It is also still not a reading, and the reason is new
-— which is the part that matters, because the readout currently names the wrong one.
+— which is the part that matters, because the readout named the wrong one until it was fixed
+the same night (below).
 ```
 ~21:42:07  browser starts (3m old at the bail)
  21:43:42  mem-dump  phase=ramp  7 process(es)  20011ms  x PARTIAL (no answer in 20000ms)
@@ -5171,12 +5172,12 @@ Four consecutive missed ramps end here.** It is also still not a reading, and th
   budget, and the 08-18 entry closed this question once: *"the reading cannot be taken at the
   trip at all, and no timeout worth spending changes it."* That conclusion was drawn about the
   heap trail and it transfers.
-- **THE READOUT'S VOID GLOSS NAMES A MECHANISM THIS EVENT REFUTES, AND THAT IS A REAL DEFECT.**
-  It prints *"this is the 2026-09-07 shape, where a bail killed the generation and the dump
+- **THE READOUT'S VOID GLOSS NAMED A MECHANISM THIS EVENT REFUTES, AND THAT WAS A REAL DEFECT.**
+  It printed *"this is the 2026-09-07 shape, where a bail killed the generation and the dump
   measured its replacement."* **Here the bail came 85 seconds AFTER the dump** and the pids are
-  one generation. Read literally it sends the next session to fix the trigger — which is now
-  correct — and that is the most expensive kind of wrong: a instrument confidently naming the
-  half that already works. **Two VOID cases need telling apart and they need OPPOSITE fixes:**
+  one generation. Read literally it would have sent the next session to fix the trigger — which
+  is now correct — and that is the most expensive kind of wrong: an instrument confidently
+  naming the half that already works. **Two VOID cases need telling apart and they need OPPOSITE fixes:**
   - **generation mismatch** (09-07): NONE of the dump's pids are in the scan's list. The dump
     described a different browser; the fault is timing.
   - **target silent** (09-08): the dump's pids ARE the scan's list minus the TARGET. The timing
