@@ -5160,10 +5160,23 @@ Four consecutive missed ramps end here.** It is also still not a reading, and th
     described a different browser; the fault is timing.
   - **target silent** (09-08): the dump's pids ARE the scan's list minus the TARGET. The timing
     is right and the ramping renderer will not answer.
-  `dumpJoinReading` has both pid sets available in principle (the scan event carries its
-  `CHROME` lines), so this is a real distinction the function can make. **NOT BUILT** — recorded
-  rather than patched at the end of a session, because the whole value of that gloss is that it
-  is trusted at 08:15 by somebody who did not take the reading.
+  ~~**NOT BUILT**~~ — **BUILT THE SAME NIGHT, and the real event is what verified it.**
+  `dumpJoinReading` takes the walk's own `CHROME` pid list now and splits the cause; the readout
+  passes it. Rendered against the 21:43 row it prints *"**7 of those 7 pid(s) ARE in the walk's
+  own process list**, so the dump reached the RIGHT browser and the ramping renderer alone did
+  not answer it. The timing is right… **Do NOT go looking at the trigger.**"* — stronger than
+  the reasoning above, which only claimed overlap.
+  - **THE KIND STAYS `void` FOR EVERY CAUSE.** The caller suppresses on `kind === 'void'`, so a
+    cause it has never heard of must still suppress; the cause rides BESIDE the kind rather than
+    replacing it. A mutation returning `joined` for `target-silent` would un-suppress the one
+    sentence a reader quotes, and is pinned.
+  - **AND THE `unknown` CAUSE ASSERTS NEITHER MECHANISM.** With no generation list the two are
+    genuinely indistinguishable, so it says so instead of picking — which is the defect being
+    fixed, in miniature.
+  - Five mutations, each verified to APPLY and to fail: the overlap test inverted, `target-silent`
+    returning `joined`, **the readout dropping `walkGenerationPids`** (the fix-present-and-inert
+    shape — the function can be perfect and unreachable), the 09-07 mechanism asserted
+    unconditionally again, and the *"do not go looking at the trigger"* steer removed.
 - **THE WALK IS FOUR FOR FOUR AND NEEDS NO REPEATING.** 16,385 regions in `2-4M` across
   **16,381 allocation bases**, 32,773 MB, 16,380 READWRITE, 64 sampled and all anonymous, with
   the control's file-backed positive control (`SortDefault.nls`) present as ever. **EXCESS

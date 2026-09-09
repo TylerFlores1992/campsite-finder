@@ -20,11 +20,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > walk's TARGET). It came back `PARTIAL (no answer in 20000ms)` against a **194 ms** baseline on
 > the healthy replacement. **Third instrument, third CDP call, same silence.**
 >
-> **DO NOT TRUST THE READOUT'S VOID LINE ON THIS EVENT.** It says *"a bail killed the generation
-> and the dump measured its replacement"* — **the bail came 85 seconds AFTER the dump.** Read
-> literally it sends you to fix a trigger that is now correct. Distinguishing the two VOID cases
-> in `dumpJoinReading` (generation mismatch vs. target silent — opposite fixes) is the named
-> next change and is **NOT BUILT**.
+> **THE READOUT SAID THE WRONG THING ABOUT THIS EVENT AND IT IS FIXED.** It asserted *"a bail
+> killed the generation and the dump measured its replacement"* — **the bail came 85 seconds
+> AFTER the dump** — which would have sent you to fix a trigger that had just worked.
+> `dumpJoinReading` now splits the cause on the walk's own process list and prints, against the
+> real row: *"7 of those 7 pid(s) ARE in the walk's own process list … Do NOT go looking at the
+> trigger."* Five mutations, each verified to apply and to fail.
 >
 > **DO NOT LOWER `MEM_DUMP_STALL_MS` AS THE OBVIOUS FIX.** 90 s was measured against 133
 > tab-closes whose longest trip is 71,552 ms; a lower floor starts firing on healthy trips, and
