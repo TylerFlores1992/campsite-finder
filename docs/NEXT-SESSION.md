@@ -27,9 +27,15 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > real row: *"7 of those 7 pid(s) ARE in the walk's own process list … Do NOT go looking at the
 > trigger."* Five mutations, each verified to apply and to fail.
 >
-> **DO NOT LOWER `MEM_DUMP_STALL_MS` AS THE OBVIOUS FIX.** 90 s was measured against 133
-> tab-closes whose longest trip is 71,552 ms; a lower floor starts firing on healthy trips, and
-> a healthy trip can then spend the ramp's slot. That trade needs a measurement, not a guess.
+> **DO NOT LOWER `MEM_DUMP_STALL_MS` AS THE OBVIOUS FIX — and the series says why, not just the
+> guard.** 90 s was measured against 133 tab-closes whose longest trip is 71,552 ms, so a lower
+> floor starts firing on healthy trips and a healthy trip can then spend the ramp's slot. **And
+> it buys almost no window:** at 21:40:54 the browser did not exist; by 21:42:54 its renderer
+> held 2,297 MB with the ~35 GB commit step **already complete**. There is no comfortable moment
+> where the renderer both holds the sections and still answers.
+>
+> **The "7644 did not exist yet" alternative is ruled out from the series** (it was the max pid
+> at 2,297 MB, 48 s before the dump), so this is the target going silent and not a timing fault.
 >
 > **The walk is four for four** (16,385 regions / 16,381 allocation bases / 32,773 MB, all
 > anonymous, EXCESS 37,054 MB vs an OS gap of 36,730 MB) and **needs no repeating**. The

@@ -5144,6 +5144,27 @@ Four consecutive missed ramps end here.** It is also still not a reading, and th
 - **AND IT SPENT ITS ENTIRE BUDGET WAITING FOR IT.** `20011ms · PARTIAL (no answer in 20000ms)`
   against a **194 ms** baseline on the healthy replacement two minutes later. The instrument is
   fine; the subject stopped speaking.
+- **THE ONE ALTERNATIVE IS RULED OUT BY THE SERIES, NOT BY REASONING.** "7644 did not exist
+  yet" would make this a timing fault after all — and 2026-09-04 records that a ramping renderer
+  is often *"a pid that did not exist a minute earlier"*, so it is a live possibility rather than
+  a pedantic one. The 2-minute series answers it:
+  ```
+  21:40:54  rc 0 procs                    commit  6,609 MB   <- browser not yet started
+  21:42:54  max pid 7644 at 2,297 MB      commit 43,964 MB   <- 48s BEFORE the dump
+  21:43:42  the dump runs — 7644 absent, PARTIAL after 20s
+  21:44:54  max pid 7644 at 4,277 MB      commit 45,948 MB
+  21:46:55  new pid 8132 at 81 MB         commit  6,980 MB
+  ```
+  **7644 was already the ramping renderer and had already taken the ~35 GB commit step 48
+  seconds before the dump asked it anything.** So it was there, it was the right process, and it
+  did not answer.
+- **AND THAT IS THE ARGUMENT AGAINST "JUST FIRE EARLIER", WHICH IS THE OBVIOUS FIX.** The
+  browser did not exist at 21:40:54 and by 21:42:54 its renderer held 2.3 GB with the commit
+  step **already complete** — so the whole step happens inside one two-minute sample, within
+  ~2 minutes of browser start, and there is no comfortable window in which the renderer is both
+  holding the sections and still answering. A lower `MEM_DUMP_STALL_MS` buys very little of that
+  window and spends the discrimination 90s was measured for. **Neither half of that trade is
+  free; do not take it on the strength of "earlier is obviously better".**
 - **THIRD INSTRUMENT, THIRD CDP CALL, SAME SILENCE.** `newCDPSession` (2026-08-18),
   `Performance.getMetrics` (08-18 and 08-19), now `Tracing.requestMemoryDump`. **A renderer
   eating the machine does not answer CDP, and no timeout buys it** — 20,000 ms was already the
