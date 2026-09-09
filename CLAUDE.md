@@ -5082,7 +5082,7 @@ the correct cell (`no token at all` AND `okta=GONE(404)`). It ran the **full pas
 established` — in **15.6 seconds for 413 MB.** No ramp, so no dump, and nothing was wasted
 except the attempt.
 
-**DURATION AND COST TRACK EACH OTHER, FIVE FOR FIVE, AND THAT RETIRES THE CELL AS THE
+**DURATION AND COST TRACK EACH OTHER, SIX FOR SIX, AND THAT RETIRES THE CELL AS THE
 EXPLANATION.**
 
 | event | duration | cost |
@@ -5091,14 +5091,15 @@ EXPLANATION.**
 | 08-24 warm-up (ordered) | 11 min | 9,338 MB |
 | 09-07 20:38 warm-up (ordered) | ~4 min, bailed | 4,805 MB peak |
 | 08-26 rehearsal | 32 s | 0 |
-| **09-07 21:49 warm-up (ordered)** | **15.6 s** | **413 MB** |
+| 09-07 21:49 warm-up (ordered) | 15.6 s | 413 MB |
+| **09-08 22:33 warm-up (ordered)** | **16 s** | **587 MB peak** |
 
 - **SO THE QUESTION IS NO LONGER "WHICH CELL?" BUT "WHAT MAKES A TRIP SLOW?"** The
-  `okta=GONE` password form is now **three ramps in five**, and both misses completed cleanly
-  and quickly. A password sign-in does not cost gigabytes; a password sign-in **that struggles**
-  does. This file already said *"duration and cost track each other, which makes a retrying or
-  stalling navigation the better candidate than the password path itself"* — that was one
-  observation then and it is five now.
+  `okta=GONE` password form is now **three ramps in six**, and all three misses completed
+  cleanly and quickly. A password sign-in does not cost gigabytes; a password sign-in **that
+  struggles** does. This file already said *"duration and cost track each other, which makes a
+  retrying or stalling navigation the better candidate than the password path itself"* — that
+  was one observation then and it is six now.
 - **NOT THE BYTE COUNT.** This trip moved **233 responses / 17.0 MB**, roughly double the
   09-07 05:07 trace's 112 / 8.7 MB, and did not ramp. The three-way verdict refused to speak,
   correctly.
@@ -5109,9 +5110,141 @@ EXPLANATION.**
   clean one** — the ramping traces are the ones that bail, and `tail-log` rolls at 16,000
   characters. That comparison is the next cheap reading and it needs no new instrument, only
   the trace being stored rather than logged.
+  - **THE CLEAN-SIDE BASELINE IS NOW TWO READINGS AND THEY ARE THE SAME: `x7`, 2.4 MB, on
+    09-07 21:49 AND 09-08 22:33** — and the byte totals sit within 3% of each other (233
+    responses / 17.0 MB, then 239 / 17.4 MB). So a clean password trip has a stable shape, and
+    it is the RAMPING side that is unmeasured. **Do not read the matching pair as evidence
+    about the leak** — two samples of the same non-event say nothing about the event; what they
+    buy is a baseline to compare the next ramping trace against.
 - **A SUCCESSFUL WARM-UP CLOSES ITS OWN WINDOW.** It leaves Okta ALIVE, so the GONE
   precondition does not return until the session lapses, and `spent` is 1 for that release.
   **One forced attempt per Okta lifetime** is the real budget, whichever way the coin lands.
+
+#### THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08 21:43 PT)
+**A natural ramp arrived fifty minutes before the ordered one, and #302's trigger caught it.
+Four consecutive missed ramps end here.** It is also still not a reading, and the reason is new
+— which is the part that matters, because the readout named the wrong one until it was fixed
+the same night (below).
+```
+~21:42:07  browser starts (3m old at the bail)
+ 21:43:42  mem-dump  phase=ramp  7 process(es)  20011ms  x PARTIAL (no answer in 20000ms)
+ 21:44:55  ramp-scan walk: TARGET pid 7644 renderer, 4366 MB private, 17,306 handles
+ 21:45:07  bail:ramp
+ 21:48:24  mem-dump  phase=baseline  7 process(es)  194ms      <- the control, healthy
+```
+- **THE TIMING IS THE DESIGN, TO THE SECOND.** `MEM_DUMP_STALL_MS` is 90s and the dump ran ~90s
+  into a browser whose loop had stalled from the start — **85 seconds ahead of the bail**, i.e.
+  the three-tick head start #302 specifies, obtained by reading NO file. The grace was never
+  needed: the dump had finished long before the arm fired. **Threshold, grace and stall trigger
+  are three mechanisms and only the third had to work.**
+- **IT REACHED THE RIGHT BROWSER GENERATION, AND THE JOIN IS WHAT PROVES IT.** Every one of the
+  dump's seven pids — 9472, 1864, 6864, 14316, 4568, 5896, 13364 — appears in the ramp scan's
+  own `CHROME` list for the same event. What is missing is **pid 7644, the ramping renderer**,
+  and 1664, a crashpad handler that does not participate. So the dump is not describing a
+  replacement browser; it is describing this one, minus the single process that holds the 32 GB.
+- **AND IT SPENT ITS ENTIRE BUDGET WAITING FOR IT.** `20011ms · PARTIAL (no answer in 20000ms)`
+  against a **194 ms** baseline on the healthy replacement two minutes later. The instrument is
+  fine; the subject stopped speaking.
+- **THE ONE ALTERNATIVE IS RULED OUT BY THE SERIES, NOT BY REASONING.** "7644 did not exist
+  yet" would make this a timing fault after all — and 2026-09-04 records that a ramping renderer
+  is often *"a pid that did not exist a minute earlier"*, so it is a live possibility rather than
+  a pedantic one. The 2-minute series answers it:
+  ```
+  21:40:54  rc 0 procs                    commit  6,609 MB   <- browser not yet started
+  21:42:54  max pid 7644 at 2,297 MB      commit 43,964 MB   <- 48s BEFORE the dump
+  21:43:42  the dump runs — 7644 absent, PARTIAL after 20s
+  21:44:54  max pid 7644 at 4,277 MB      commit 45,948 MB
+  21:46:55  new pid 8132 at 81 MB         commit  6,980 MB
+  ```
+  **7644 was already the ramping renderer and had already taken the ~35 GB commit step 48
+  seconds before the dump asked it anything.** So it was there, it was the right process, and it
+  did not answer.
+- **AND THAT IS THE ARGUMENT AGAINST "JUST FIRE EARLIER", WHICH IS THE OBVIOUS FIX.** The
+  browser did not exist at 21:40:54 and by 21:42:54 its renderer held 2.3 GB with the commit
+  step **already complete** — so the whole step happens inside one two-minute sample, within
+  ~2 minutes of browser start, and there is no comfortable window in which the renderer is both
+  holding the sections and still answering. A lower `MEM_DUMP_STALL_MS` buys very little of that
+  window and spends the discrimination 90s was measured for. **Neither half of that trade is
+  free; do not take it on the strength of "earlier is obviously better".**
+- **THIRD INSTRUMENT, THIRD CDP CALL, SAME SILENCE.** `newCDPSession` (2026-08-18),
+  `Performance.getMetrics` (08-18 and 08-19), now `Tracing.requestMemoryDump`. **A renderer
+  eating the machine does not answer CDP, and no timeout buys it** — 20,000 ms was already the
+  budget, and the 08-18 entry closed this question once: *"the reading cannot be taken at the
+  trip at all, and no timeout worth spending changes it."* That conclusion was drawn about the
+  heap trail and it transfers.
+- **THE READOUT'S VOID GLOSS NAMED A MECHANISM THIS EVENT REFUTES, AND THAT WAS A REAL DEFECT.**
+  It printed *"this is the 2026-09-07 shape, where a bail killed the generation and the dump
+  measured its replacement."* **Here the bail came 85 seconds AFTER the dump** and the pids are
+  one generation. Read literally it would have sent the next session to fix the trigger — which
+  is now correct — and that is the most expensive kind of wrong: an instrument confidently
+  naming the half that already works. **Two VOID cases need telling apart and they need OPPOSITE fixes:**
+  - **generation mismatch** (09-07): NONE of the dump's pids are in the scan's list. The dump
+    described a different browser; the fault is timing.
+  - **target silent** (09-08): the dump's pids ARE the scan's list minus the TARGET. The timing
+    is right and the ramping renderer will not answer.
+  ~~**NOT BUILT**~~ — **BUILT THE SAME NIGHT, and the real event is what verified it.**
+  `dumpJoinReading` takes the walk's own `CHROME` pid list now and splits the cause; the readout
+  passes it. Rendered against the 21:43 row it prints *"**7 of those 7 pid(s) ARE in the walk's
+  own process list**, so the dump reached the RIGHT browser and the ramping renderer alone did
+  not answer it. The timing is right… **Do NOT go looking at the trigger.**"* — stronger than
+  the reasoning above, which only claimed overlap.
+  - **THE KIND STAYS `void` FOR EVERY CAUSE.** The caller suppresses on `kind === 'void'`, so a
+    cause it has never heard of must still suppress; the cause rides BESIDE the kind rather than
+    replacing it. A mutation returning `joined` for `target-silent` would un-suppress the one
+    sentence a reader quotes, and is pinned.
+  - **AND THE `unknown` CAUSE ASSERTS NEITHER MECHANISM.** With no generation list the two are
+    genuinely indistinguishable, so it says so instead of picking — which is the defect being
+    fixed, in miniature.
+  - Five mutations, each verified to APPLY and to fail: the overlap test inverted, `target-silent`
+    returning `joined`, **the readout dropping `walkGenerationPids`** (the fix-present-and-inert
+    shape — the function can be perfect and unreachable), the 09-07 mechanism asserted
+    unconditionally again, and the *"do not go looking at the trigger"* steer removed.
+- **THE WALK IS FOUR FOR FOUR AND NEEDS NO REPEATING.** 16,385 regions in `2-4M` across
+  **16,381 allocation bases**, 32,773 MB, 16,380 READWRITE, 64 sampled and all anonymous, with
+  the control's file-backed positive control (`SortDefault.nls`) present as ever. **EXCESS
+  37,054 MB against an OS commit gap of 36,730 MB** — the walk has named the 35 GB, again.
+- **AND THE REQUEST COUNTER CARRIED A LOAD BURST — 17,093 lifetime on a browser 3 MINUTES OLD,
+  with 0 in the last 120s.** "Flat" would be wrong: that lifetime count IS a burst, fired at page
+  load and over before the ramp peaked, exactly the recorded shape. Sixth sighting.
+  **It still says nothing about the leak**, and this event plus 09-07 20:42 are the pair that
+  show it: same 32 GB mapping, 17,093 lifetime requests here against **110** there. Independent
+  in both directions.
+- **SO THE FORK IS NARROWER AND IT IS NOT A FREE CHOICE.** Chromium's ownership graph is the
+  only thing that can name the creator of an anonymous section, and reaching it requires the
+  ramping renderer to answer. Firing the dump EARLIER is the obvious move and it costs the one
+  property that makes the trigger sound: 90s was measured against **133 tab-closes whose longest
+  trip is 71,552 ms**, so a lower floor starts firing on healthy trips and a healthy trip can
+  then spend the ramp's slot. **Do not lower it without measuring what replaces that
+  discrimination.** The falsifiable candidate is unchanged and needs no instrument:
+  `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is **2,097,152 bytes**, which is
+  32,773 MB / 16,385 exactly.
+
+##### A THIRD ORDERED ATTEMPT, AND THE MEMORY SERIES IS WHAT CONFIRMED THE MISS (2026-09-08 22:33 PT)
+Fired by a one-shot Routine timed to land just past Okta's absolute cap, and **both
+preconditions were read before it ran rather than predicted** — `okta_alive false`,
+`okta_expires_at null`, `session_ok false` (*"no token at all — signed out"*), checked 3.5
+minutes earlier, with the box on `c0b222c`, i.e. the stall trigger live. That is the recipe
+working: the gate this attempt needed is exactly the one #296 added.
+```
+22:33:23 warming up the session: the release is 120m away and Okta is GONE - signing in now
+22:33:35     -> password entered, submitting
+22:33:39   OK Okta session established - the sign-in before the release will be the cheap one
+           network trace: 239 response(s), 17.4 MB - RAM 10559 -> 10166 MB (-393)
+           => this navigation did NOT ramp
+```
+- **THE SERIES AGREES INDEPENDENTLY OF THE TRACE, WHICH IS THE PART WORTH KEEPING.** The
+  trace's RAM delta is one instrument; `chromium_memory_samples` is another, and it read
+  **250 -> 587 -> 328 MB on the SAME pid 8132**, commit 7.0 -> 7.7 GB, free RAM never below
+  10,055 MB. No browser replacement, no bail, no dump. A ramp is a new renderer pid and a ~35 GB
+  commit step; this is neither, twice over.
+- **NOTHING WAS AT STAKE AND NOTHING WAS LOCKED.** `--in 120` opens the T-3h..T-30 window
+  immediately with 90 minutes of margin, and the hold was deleted the moment the trip finished
+  — 0 live holds afterwards, confirmed by query rather than assumed.
+- **THE ODDS ARE NOW 3 IN 6 AND THE BUDGET IS UNCHANGED.** A successful warm-up leaves Okta
+  ALIVE, so this Okta lifetime's turn is spent and the next GONE window is ~12h out at the
+  earliest. **Do not re-arm a forced attempt on a miss** — natural ramps arrive every 5-28h and
+  the stall trigger is live for all of them, so waiting costs nothing, while every forced
+  attempt spends a password submission from the address that has eaten a twelve-hour block.
 
 **HOW TO READ THE NEXT ONE.** The walk half is answered and does not need repeating; what is
 outstanding is one `mem-dump` with `phase: ramp` whose `MDPROC` pids contain the walk's TARGET.
@@ -7795,7 +7928,7 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
-> ### 2026-09-08 (evening) — A RAMP IS ORDERED FOR 22:30 PT, AND ONE CLAIM IS CORRECTED
+> ### 2026-09-08 (evening) — THE ORDERED RAMP FIRED AND MISSED, AND ONE CLAIM IS CORRECTED
 >
 > **Master `6eee69f`, mini-PC `c0b222c` (`bot-ask git-status`), 3/3 shards, no holds queued,
 > highest migration 076, main's block 077-079. Health 16/19 — `rc_session` (dead between
@@ -7814,10 +7947,14 @@ tree, the deploy and the fleet were all correct.
 > 5-28 h, so this is **neither a cure nor a fault** — every "not reproduced this session"
 > reading in this file was a window that missed one.
 >
-> **SO ONE IS ORDERED: `trig_01DbvqTrehodKTp1Axq52rzM`, 2026-09-09 05:30Z (22:30 PT),** bound to
-> the session that armed it, with the unit ids already found and pasted into the prompt
-> (Carpinteria SB — Santa Rosa **#R306, unit 4756, arrival 2026-12-01, 36 bookable that
-> night**; alternates 4757-4761).
+> **SO ONE WAS ORDERED — `trig_01DbvqTrehodKTp1Axq52rzM`, 2026-09-09 05:30Z (22:30 PT) — AND IT
+> RAN, AND IT MISSED.** Both preconditions were READ and both were dead (`okta_alive false`,
+> `okta_expires_at null`, `session_ok false`, checked 3.5 min earlier), the hold went in on unit
+> 4756 (Carpinteria SB — Santa Rosa #R306), the warm-up fired 20 seconds later and completed the
+> full password form in **16 seconds for a 587 MB peak** — no ramp, no bail, no dump. The hold
+> was deleted immediately and 0 live holds remain. **The one-shot has disabled itself and will
+> not refire.** Full account: **"A THIRD ORDERED ATTEMPT, AND THE MEMORY SERIES IS WHAT
+> CONFIRMED THE MISS"**.
 > - **THE TIMING IS THE WHOLE DESIGN.** At arming, BOTH preconditions failed — token alive 60m,
 >   Okta alive to 21:49 PT. Okta's **absolute cap** lapses then and cannot be pushed out by our
 >   probing (measured not to reset across a sign-in on 08-16, 08-21 and 09-07); the token dies
@@ -7827,15 +7964,20 @@ tree, the deploy and the fleet were all correct.
 >   **An unspent turn is worth more than a wasted attempt.**
 > - **NO CAMPSITE IS LOCKED.** `--in 120` opens the T-3h..T-30 window at once with 90 minutes of
 >   margin, and the hold is deleted the moment the trip is under way.
-> - **~3 IN 5, ONE ATTEMPT PER OKTA LIFETIME.** A successful warm-up leaves Okta ALIVE and shuts
->   the window until it lapses again. **A miss — a fast clean sign-in, no ramp — is a NORMAL
->   outcome at these odds and must be reported as one, not hunted as a fault.**
+> - **3 IN 6 NOW, ONE ATTEMPT PER OKTA LIFETIME.** A successful warm-up leaves Okta ALIVE and
+>   shuts the window until it lapses again. **A miss — a fast clean sign-in, no ramp — is a
+>   NORMAL outcome at these odds and was reported as one, not hunted as a fault.**
+> - **DO NOT RE-ARM ON A MISS.** The next GONE window is ~12h out, natural ramps arrive every
+>   5-28h, and the stall trigger is live for all of them — so waiting costs nothing, while each
+>   forced attempt spends a password submission from the address that has eaten a twelve-hour
+>   block. Forcing is for when a reading is wanted at a known moment, not for impatience.
 >
-> **WHAT IT BUYS: the first ramp the stall trigger has ever seen.** It fires at 90s reading no
-> file, three ticks ahead of the bail, with the dump's full 20s behind it and the grace holding
-> while it is in flight. If a dump lands, the readout joins its `MDPROC` pids against the walk's
-> TARGET and prints `VOID` on a mismatch — then **`gpu/mapped_memory` at ~32 GB confirms the
-> `mapped_memory_chunk_size` candidate and absent-or-small does not.**
+> **SO WHAT IT WAS MEANT TO BUY IS STILL OUTSTANDING: the first ramp the stall trigger has ever
+> seen.** It fires at 90s reading no file, three ticks ahead of the bail, with the dump's full
+> 20s behind it and the grace holding while it is in flight. If a dump lands, the readout joins
+> its `MDPROC` pids against the walk's TARGET and prints `VOID` on a mismatch — then
+> **`gpu/mapped_memory` at ~32 GB confirms the `mapped_memory_chunk_size` candidate and
+> absent-or-small does not.** Nothing needs building; it needs a ramp.
 >
 > **AND `rc_release_readings` IS STILL ZERO ROWS AFTER FOUR FIRINGS** (09-05, 06, 07, 08). The
 > Routine self-disables 09-12, so ~3 chances remain. The recorded remedy is **not** another
@@ -8004,14 +8146,16 @@ tree, the deploy and the fleet were all correct.
 >
 > **AND IT IS ON THE BOX — `aae25bd`, applied 2026-09-07 19:01 PT, confirmed by `git-status`.**
 >
-> **TWO RAMPS WERE FORCED ON 09-07; THE FIRST HIT AND THE SECOND MISSED.** The `okta=GONE`
-> password form is **three ramps in five**, and **duration and cost track each other five for
-> five** — the two misses completed in 32 s and 15.6 s for nothing, the hits took 11-12 minutes
-> and 9 GB. **So the trigger is a trip that STRUGGLES, not the password path**, and the next
+> **TWO RAMPS WERE FORCED ON 09-07; THE FIRST HIT AND THE SECOND MISSED.** As of that evening
+> the `okta=GONE` password form stood at three ramps in five, and **duration and cost tracked
+> each other five for five** — the two misses completed in 32 s and 15.6 s for nothing, the hits
+> took 11-12 minutes and 9 GB. **(A third forced attempt on 09-08 22:33 missed too, so the count
+> is three in SIX and the pairing six for six — see the table above; these figures are as-of
+> 09-07.)** **So the trigger is a trip that STRUGGLES, not the password path**, and the next
 > cheap reading is comparing `recaptcha__en.js` fetch counts between a ramping trip and a clean
-> one (the clean one did 7; nobody has the ramping figure, because those traces bail and
-> `tail-log` rolls). **A successful warm-up leaves Okta ALIVE and spends its turn, so the real
-> budget is one forced attempt per Okta lifetime.**
+> one (the clean side has since read `x7` twice; nobody has the ramping figure, because those
+> traces bail and `tail-log` rolls). **A successful warm-up leaves Okta ALIVE and spends its
+> turn, so the real budget is one forced attempt per Okta lifetime.**
 >
 > **THE FIRST ONE ANSWERED BOTH THE WALK'S BRANCHES:
 > 15,493 separate anonymous READWRITE sections, one allocation base each, 31,005 MB — N

@@ -287,6 +287,12 @@ if (dumps.length === 0) {
          * That readout told a human to check the pid themselves. Nobody can be relied on to,
          * so it is checked here: the verdict below is not printed at all unless the ramping
          * renderer is in the dump.
+         *
+         * A SECOND WAY IT GOES VOID, AND IT IS NOT THIS ONE. On 2026-09-08 21:43 the dump
+         * reached the RIGHT generation — seven pids, every one in the scan's own CHROME list —
+         * and spent its whole 20,000 ms waiting for the eighth, the ramping renderer. Passing
+         * the generation is what lets the text say which happened; asserting the 09-07
+         * mechanism on that event sent the reader to fix a trigger that had just worked.
          */
         const near = scans
           .map((sc) => ({ sc, gap: Math.abs(Date.parse(sc.at) - Date.parse(row.at)) }))
@@ -295,6 +301,10 @@ if (dumps.length === 0) {
         const join = dumpJoinReading({
           walkTargetPid: near ? /^VMWALK pid=(\d+) .*status=ok/m.exec(near.text ?? '')?.[1] ?? null : null,
           dumpPids: [...String(row.text ?? '').matchAll(/^MDPROC pid=(\d+)/gm)].map((m) => m[1]),
+          // Every chrome.exe the scan saw — the browser GENERATION. Without it, "the dump
+          // measured a different browser" and "this browser answered minus the ramping
+          // renderer" are the same line, and those need opposite fixes.
+          walkGenerationPids: near ? [...String(near.text ?? '').matchAll(/^ *CHROME pid=(\d+)/gm)].map((m) => m[1]) : null,
           walkNearby: !!near,
         });
             printVerdict('  ', join.text);

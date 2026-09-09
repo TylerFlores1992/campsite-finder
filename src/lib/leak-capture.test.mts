@@ -60,6 +60,66 @@ test('an EMPTY dump is void rather than joined', () => {
   assert.match(r.text, /no process at all/);
 });
 
+test('a void join with NO generation list asserts neither mechanism', () => {
+  // Until 2026-09-08 this text asserted the 09-07 "a bail killed the generation" mechanism
+  // unconditionally, and on the first ramp the stall trigger ever caught that was false.
+  const r = dumpJoinReading({ walkTargetPid: '9912', dumpPids: ['7316', '2960'] });
+  assert.equal(r.kind, 'void');
+  assert.equal(r.cause, 'unknown');
+  assert.doesNotMatch(r.text, /2026-09-07 shape/, 'a mechanism must not be named without evidence for it');
+});
+
+test('NO overlap with the walk generation is the 09-07 shape, and says so', () => {
+  const r = dumpJoinReading({
+    walkTargetPid: '9912',
+    dumpPids: ['7316', '2960', '6376'],
+    walkGenerationPids: ['9912', '3836', '4444'],
+  });
+  assert.equal(r.kind, 'void');
+  assert.equal(r.cause, 'generation');
+  assert.match(r.text, /2026-09-07/);
+  assert.match(r.text, /timing/, 'the generation case must point at the timing, which is its fix');
+});
+
+test('OVERLAP with the walk generation means the TARGET went silent — a different fix', () => {
+  // 2026-09-08 21:43, the real numbers: the dump answered for seven pids, every one of them in
+  // the scan's own CHROME list, and waited out its full 20,000 ms for the eighth.
+  const r = dumpJoinReading({
+    walkTargetPid: '7644',
+    dumpPids: ['9472', '1864', '6864', '14316', '4568', '5896', '13364'],
+    walkGenerationPids: ['9472', '1664', '6864', '14316', '13364', '4568', '7644', '1864', '5896'],
+  });
+  assert.equal(r.kind, 'void');
+  assert.equal(r.cause, 'target-silent');
+  assert.match(r.text, /RIGHT browser/);
+  // The whole point: this event must NOT be reported as the 09-07 mechanism, and must not
+  // send the reader back to the trigger, which had just worked for the first time.
+  assert.doesNotMatch(r.text, /2026-09-07/);
+  assert.match(r.text, /Do NOT go looking at the trigger/);
+});
+
+test('every void cause still reports kind "void", so none can un-suppress the verdict', () => {
+  // The caller branches on `kind === 'void'`. A cause it has never heard of must still
+  // suppress — a new variant must not be able to put the quoted sentence back on the page.
+  const cases = [
+    dumpJoinReading({ walkTargetPid: '1', dumpPids: ['2'] }),
+    dumpJoinReading({ walkTargetPid: '1', dumpPids: ['2'], walkGenerationPids: ['1', '3'] }),
+    dumpJoinReading({ walkTargetPid: '1', dumpPids: ['3'], walkGenerationPids: ['1', '3'] }),
+    dumpJoinReading({ walkTargetPid: '1', dumpPids: [], walkGenerationPids: ['1', '3'] }),
+  ];
+  for (const c of cases) assert.equal(c.kind, 'void', `cause ${c.cause} must still be void`);
+  // And they must not all say the same thing, or the split buys nothing.
+  assert.equal(new Set(cases.map((c) => c.cause)).size, 3);
+});
+
+test('the readout PASSES the walk generation, or the split is inert', () => {
+  // The pure function can be perfect and unreachable: without this argument every void falls
+  // to `unknown` and the two mechanisms stay indistinguishable in the only place they are read.
+  const c = code(readout);
+  assert.match(c, /walkGenerationPids:/, 'the readout must pass the browser generation');
+  assert.match(c, /CHROME pid=/, 'it must read the pids out of the scan itself');
+});
+
 test('the readout SUPPRESSES the shared-memory verdict on a void join', () => {
   const c = code(readout);
   const void_ = c.indexOf("join.kind === 'void'");
