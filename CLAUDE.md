@@ -5650,7 +5650,7 @@ symbols for `chrome.dll`, which the box does not have.
   ~15,050 ms timeout and the spinning main thread are what stop it, not the trigger. It spends
   the discrimination 90 s was measured for and buys nothing.
 
-#### THE CENSUS TAKES THE GPU PROCESS NOW (2026-09-09) — built, and awaiting a box update
+#### THE CENSUS TAKES THE GPU PROCESS NOW (2026-09-09) — ON THE BOX, awaiting one ramp
 The section above names the cheap next reading and this is it. `$tthreads` is `$targets` plus
 the **GPU process of the target's own browser generation**, and the census loops iterate it.
 **The WALK deliberately keeps `$targets`**: a third `VirtualQueryEx` sweep costs csc.exe plus a
@@ -5705,8 +5705,13 @@ process costs two thread enumerations and no extra wall clock.
 - **THE ABSENT BRANCH IS WHAT RENDERS TODAY, and that is the expected state.** Verified by
   running the real readout against the real corpus: *"no GPU-process reading in this scan — the
   box predates the GPU census … That is an ABSENCE, not a reading."* **Bot-side, so it needs a
-  box update and then one ramp.** Confirm the sha with `npx tsx scripts/bot-ask.mts git-status`,
-  never `autocart.bot_version`.
+  box update and then one ramp.** **APPLIED 2026-09-09 17:17 UTC in 23 seconds (`updated and
+  verified`, `2f006b7`), confirmed by the box's own `git rev-parse HEAD` through `bot-ask
+  git-status` and NOT by `autocart.bot_version`** — which COALESCEs and can show a stale sha
+  beside a live heartbeat. Health 19 of 19 afterwards, 3/3 shards, and the RC session survived
+  with a fresh 58-minute token. **So only a ramp is outstanding**, and the three scans taken
+  before 17:17 still print the absent verdict, correctly — **read the scan's own timestamp
+  before treating an absence as a fault.**
 - **I NEARLY RECORDED A FABRICATED FACT OUT OF MY OWN INSTRUMENT.** A first pass at counting the
   processes used an `awk` range whose end pattern did not match, so it ran to EOF and merged all
   three scans — reading as **three rc browsers and four gpu-processes simultaneously**, which

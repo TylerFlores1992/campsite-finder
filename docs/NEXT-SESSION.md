@@ -11,9 +11,9 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ## VMTHREAD ANSWERED ON ITS FIRST RAMP (2026-09-09, evening)
 >
-> **State: master `bbfca81` (#308 merged) plus #309; the mini-PC is on `45019ec`, confirmed with
-> `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version` — so VMTHREAD and
-> VMSPAN are live on the box and HAVE fired, and the GPU census in #309 is NOT on it yet.**
+> **State: master `2f006b7` (#308 and #309 merged) and the mini-PC is on `2f006b7` TOO —
+> confirmed by its own `git rev-parse HEAD` via `npx tsx scripts/bot-ask.mts git-status`, never
+> `autocart.bot_version`. So the GPU census is LIVE on the box and has NOT yet seen a ramp.**
 > 3/3 shards, health **19 of 19 ok**, no holds queued, highest migration 076, main's block
 > **077-079**. One other open PR (**#307**) and it is the **side lane's**.
 >
@@ -42,7 +42,8 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > ### THAT NEXT MOVE IS BUILT — IT NEEDS A BOX UPDATE AND ONE RAMP
 >
-> **`VMTHREAD` takes the GPU process of the target's own browser generation now** (#309). The
+> **`VMTHREAD` takes the GPU process of the target's own browser generation now** (#309, and it
+> is **on the box** — applied 17:17 UTC in 23 seconds, `updated and verified`). The
 > census list is `$tthreads` = `$targets` + that process; **the WALK deliberately keeps
 > `$targets`**, because a third `VirtualQueryEx` sweep costs csc.exe plus a full walk inside the
 > 90-second budget and the 09-08 dump already answered that question (2 MB across 25 mappings).
@@ -61,7 +62,9 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   in its own words, because an idle service is also what you see if nothing was ever sent to
 >   it. **Do not quote it as a confirmation.**
 > - **BUSY** is the branch that argues against the candidate. Take it as a new investigation.
-> - **`ABSENCE, not a reading`** is what renders until the box updates, and it is correct.
+> - **`ABSENCE, not a reading`** is what the three PRE-UPDATE scans still print, and it is
+>   correct for them. Only a scan taken from 17:17 UTC onward can carry a GPU line, so **check
+>   the scan's own timestamp before reading an absence as a fault.**
 >
 > **The hazard it is built around, and it is live on the very event this targets:** the 06:47
 > scan's own `CHROME` lines carry **two gpu-processes — `rc` at 82 MB and `recgov` at 23 MB**.
