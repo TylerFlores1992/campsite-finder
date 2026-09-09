@@ -163,13 +163,57 @@ export const RAMP_SCAN_PS = [
   '$cand = @();',
   'foreach ($o in $ours) { $pr = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue;',
   "  if ($pr) { $ty = 'browser'; if ($o.CommandLine -match '--type=([a-zA-Z-]+)') { $ty = $Matches[1] };",
-  '    $cand += New-Object PSObject -Property @{ Pid = $o.ProcessId; Priv = [double]$pr.PrivateMemorySize64; Ty = $ty } } };',
+  '    $cand += New-Object PSObject -Property @{ Pid = $o.ProcessId; Priv = [double]$pr.PrivateMemorySize64; Ty = $ty; PPid = $o.ParentProcessId } } };',
   '$cand = @($cand | Sort-Object -Property Priv -Descending);',
   '$targets = @();',
   'if ($cand.Count -gt 0) { $targets += $cand[0] };',
   "$ctl = @($cand | Where-Object { $_.Ty -eq 'renderer' } | Select-Object -Last 1);",
   'if ($ctl.Count -gt 0 -and $targets.Count -gt 0 -and $ctl[0].Pid -ne $targets[0].Pid) { $targets += $ctl[0] };',
   "if ($cand.Count -eq 0) { 'VMWALK no chrome.exe on our profiles to walk' };",
+  // ── THE THREAD CENSUS TAKES A THIRD SUBJECT: THE GPU PROCESS ────────────────────────────
+  // The census below runs on whatever is in $tthreads, which is $targets PLUS the GPU
+  // process of the TARGET'S OWN browser generation. The WALK deliberately keeps $targets:
+  // a third address-space walk costs csc.exe plus a full VirtualQueryEx sweep inside the
+  // 90 s budget, and the 09-08 memory dump already reported the GPU process holding 2 MB
+  // across 25 mappings — it does not hold the 32 GB and that question is answered. The
+  // census is the cheap half: ONE Start-Sleep is shared by every subject, so a third
+  // process costs two thread enumerations and no extra wall clock.
+  //
+  // WHY IT IS WORTH ASKING. 2026-09-09 measured the ramping renderer's MAIN thread burning
+  // 100% of a core against a control renderer at 0%. `MappedMemoryManager` — the candidate
+  // that fits every reading so far, whose `mapped_memory_chunk_size` is 2,097,152 bytes
+  // against a 2-4M bucket of 2.0000 MB — reclaims a chunk only when the command buffer's
+  // TOKENS have passed, and a main thread that never returns to its message loop cannot
+  // advance them. That story says the GPU service is not draining anything, and a service
+  // that is not draining is a service that is not busy. This asks it, from OUTSIDE, without
+  // needing one CDP call from a process that answers none.
+  //
+  // PREDICTED READING, per the 2026-09-08 rule, and it is NOT the ~0 the rule forbids. On
+  // the known event the GPU process reads privateMB=82 / handles=609 against the target's
+  // 3325 / 18119, so the prediction is BLOCKED — a busiest thread near 0 ms of the 1200 ms
+  // window. Zero is the INFORMATIVE answer here rather than a blind one, exactly as the
+  // control renderer's 0 ms is what made the target's 1203 ms mean anything: the other
+  // branch, a GPU process also burning CPU, is a different investigation with a different
+  // fix. Both words are findings, which is the test that rule actually applies.
+  //
+  // MATCHED ON PARENT, NEVER ON SIZE. $ours spans BOTH profile families, and the rec.gov
+  // keepalive opens its own browser — with its own GPU process — twice per 30 minutes. A
+  // largest-first pick would sometimes read a DIFFERENT browser's idle GPU process and
+  // report it as this one's, which is a false confirmation of the leading hypothesis: the
+  // most expensive kind of wrong, and the one 2026-08-31 already paid for. Chromium spawns
+  // its children from the browser process, so the GPU process of this generation is the one
+  // sharing the target's parent (or, if the target IS the browser, whose parent is it).
+  // No match REPORTS ITSELF and never falls back to a guess.
+  '$tthreads = @($targets);',
+  'if ($targets.Count -gt 0) { $tg = $targets[0];',
+  // NEVER THE TARGET ITSELF. If the largest process by private bytes ever IS the GPU
+  // process, a sibling match on PPid matches it, $tthreads carries it twice, and the
+  // readout pairs a process with a second copy of itself — reporting a client and an idle
+  // service where there is one process. A verdict that fires on one subject wearing two
+  // hats is worse than no verdict.
+  "  $gp = @($cand | Where-Object { $_.Ty -eq 'gpu-process' -and $_.Pid -ne $tg.Pid -and ($_.PPid -eq $tg.PPid -or $_.PPid -eq $tg.Pid) });",
+  '  if ($gp.Count -gt 0) { $tthreads += $gp[0] }',
+  "  else { 'VMTHREAD gpu-process not found in the target browser generation (target pid=' + $tg.Pid + ' ppid=' + $tg.PPid + ')' } };",
   'foreach ($tp in $targets) { if (-not $vmOk) { break };',
   // PROCESS_QUERY_INFORMATION (0x400), then PROCESS_QUERY_LIMITED_INFORMATION (0x1000).
   // These are our own children under our own user, so the first should be granted; a refusal
@@ -315,11 +359,11 @@ export const RAMP_SCAN_PS = [
   '$busyMs = 0;',
   'try {',
   '  $t1 = @{};',
-  '  foreach ($tp in $targets) { $t1[$tp.Pid] = @{};',
+  '  foreach ($tp in $tthreads) { $t1[$tp.Pid] = @{};',
   '    try { $pr = Get-Process -Id $tp.Pid -ErrorAction Stop;',
   '      foreach ($th in $pr.Threads) { try { $t1[$tp.Pid][[string]$th.Id] = [double]$th.TotalProcessorTime.TotalMilliseconds } catch { } } } catch { } };',
   '  Start-Sleep -Milliseconds 1200;',
-  '  foreach ($tp in $targets) {',
+  '  foreach ($tp in $tthreads) {',
   '    $pr = $null; try { $pr = Get-Process -Id $tp.Pid -ErrorAction Stop } catch { };',
   "    if ($pr -eq $null) { 'VMTHREAD pid=' + $tp.Pid + ' status=gone'; continue };",
   '    $rows = @(); $mainId = 0; $mainAt = [DateTime]::MaxValue; $busyMs = 0;',

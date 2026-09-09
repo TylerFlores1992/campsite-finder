@@ -457,6 +457,99 @@ export function busyThreadReading(
   };
 }
 
+export type ServicePairKind =
+  | 'absent'
+  | 'no-renderer-reading'
+  | 'renderer-not-spinning'
+  | 'service-idle'
+  | 'service-busy';
+
+/**
+ * IS THE GPU SERVICE DRAINING, WHILE THE RENDERER SPINS?
+ *
+ * 2026-09-09 measured the ramping renderer's MAIN thread at 100% of a core against a control
+ * renderer at 0%. That named WHY no CDP instrument can reach it — the main thread is where CDP
+ * is serviced — and it left the creator of the 16,384 anonymous 2 MB sections unnamed.
+ *
+ * `MappedMemoryManager` is the candidate that fits every reading taken so far:
+ * `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is 2,097,152 bytes against a 2-4M bucket
+ * of 32,778 MB / 16,387 = 2.0000 MB; one shared region per chunk; in the renderer; anonymous
+ * and READWRITE; with the JS heap flat at 8-11 MB so it is not JS retention. Its `FreeUnused()`
+ * reclaims a chunk only when the command buffer's TOKENS have passed, and a main thread that
+ * never returns to its message loop cannot advance them — so every allocation takes a fresh
+ * chunk and nothing is ever given back.
+ *
+ * That story makes a prediction about a SECOND process, and the prediction can be checked from
+ * OUTSIDE without asking Chromium anything: a service nobody is pumping is a service that is
+ * not busy. The census already runs on Windows' own thread times, so this costs one more
+ * subject and no new instrument.
+ *
+ * THE TWO BRANCHES ARE DIFFERENT INVESTIGATIONS, which is what makes the reading worth taking:
+ * an idle service is consistent with the client filling a queue nobody drains; a service that
+ * is itself burning CPU is not that shape at all, and would move the question to what the GPU
+ * process is doing.
+ *
+ * IT TAKES KINDS, NOT NUMBERS, ON PURPOSE. `busyThreadReading` owns the definition of "busy"
+ * (`BUSY_THREAD_SHARE`); deriving a second one here would let the renderer's verdict and this
+ * pairing disagree about the same process on the same scan.
+ */
+export function servicePairReading(
+  args: {
+    /** The TARGET renderer's census verdict, or undefined when it has none. */
+    renderer?: BusyThreadKind;
+    /** The GPU process's census verdict, or undefined when the scan carries no GPU line. */
+    gpu?: BusyThreadKind;
+    /** Why no GPU line, when the scan said so — a not-found report reads differently from silence. */
+    gpuNote?: string;
+  },
+): { kind: ServicePairKind; text: string } {
+  if (!args.gpu || args.gpu === 'unavailable') {
+    return {
+      kind: 'absent',
+      text: 'no GPU-process reading in this scan'
+        + (args.gpuNote ? ` — ${args.gpuNote}` : ' — the box predates the GPU census, or the census refused')
+        + '. That is an ABSENCE, not a reading: it says nothing about whether the service was draining, and '
+        + 'must not be read as an idle one.',
+    };
+  }
+  const gpuBusy = args.gpu === 'spinning-main' || args.gpu === 'spinning-worker';
+  if (!args.renderer || args.renderer === 'unavailable') {
+    return {
+      kind: 'no-renderer-reading',
+      text: `the GPU process reads ${gpuBusy ? 'BUSY' : 'IDLE'}, but there is no renderer census beside it. `
+        + 'One process is a number and not a pairing — the whole reading is the comparison.',
+    };
+  }
+  if (args.renderer === 'blocked') {
+    return {
+      kind: 'renderer-not-spinning',
+      text: `the renderer is BLOCKED rather than spinning, so the client-allocates-service-never-drains pairing `
+        + `does not arise: that shape needs a client that is filling a queue. The GPU process reads `
+        + `${gpuBusy ? 'BUSY' : 'IDLE'}, and neither value says anything about the candidate on this scan. `
+        + 'Read the renderer verdict above first.',
+    };
+  }
+  if (gpuBusy) {
+    return {
+      kind: 'service-busy',
+      text: 'the renderer is SPINNING and the GPU process is BURNING CPU TOO. That is NOT the '
+        + 'client-allocates-service-never-drains shape: a service that is itself looping is being pumped, or is '
+        + 'looping on its own account, and either way the question moves to what the GPU process is doing. '
+        + 'This is the branch that argues AGAINST MappedMemoryManager — take it as a new investigation, not a '
+        + 'failed one.',
+    };
+  }
+  return {
+    kind: 'service-idle',
+    text: 'the renderer is SPINNING and the GPU process is IDLE — the client-allocates-service-never-drains '
+      + 'shape, and what MappedMemoryManager predicts: the command buffer\'s tokens cannot advance while the '
+      + 'main thread never returns to its message loop, so chunks are taken and never reclaimed. '
+      + 'CONSISTENT WITH, NOT PROOF. An idle service is also exactly what you see if nothing was ever sent to '
+      + 'it, and the same hypothesis\'s failure mode predicts an idle GPU either way — this narrows the field '
+      + 'and names no creator. What would have refuted it is the other branch, and it did not fire.',
+  };
+}
+
 export type MappedSpanKind = 'unavailable' | 'packed' | 'scattered';
 
 /**
