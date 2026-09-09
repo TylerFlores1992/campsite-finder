@@ -64,6 +64,46 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > warm-up's one turn per Okta lifetime, and costs a password submission from an address that has
 > eaten a twelve-hour block.
 
+> ## AND A SECOND MAIN LANE RAN TODAY — THE SUBSCRIBER READ (#307)
+>
+> **Two main-lane sessions on 2026-09-09.** This section is billing/acquisition; the leak
+> sections above and below it are the standing priority and they touch no common files.
+> `git fetch origin master` before trusting either — the 09-04 incident came out of exactly
+> this.
+>
+> **#307: three commits, CI green on all three, `npm run verify` 2022/2022 locally.** Check
+> whether it merged rather than assuming. Full write-up: `CLAUDE.md` → "THE TWO NEW SUBSCRIBERS
+> PAID FOR THREE FINDINGS". No `worker/` runtime code and no bot-side change, so **nothing in it
+> waits on a box update**; the one `worker/*.test.mts` re-anchor does fire a worker deploy and
+> restart the pollers, which is expected — check `poller.shards` after.
+>
+> **THE THREE FIXES, IN ONE LINE EACH:**
+> - `users.sms_consent_at` is written by the save that captures it. **Ten accounts still have
+>   none and are deliberately NOT backfilled** — `created_at` predates the save and `updated_at`
+>   is bumped on every page load, so both would be inventions. That is the honest answer if a
+>   carrier ever asks about those ten.
+> - `/new` no longer promises auto-cart — or an 8am RC hold — to a reader with no entitlement.
+>   `unknown` keeps the promise; a failed lookup must never downgrade somebody who is paying.
+> - `watches.notify_sms/notify_email/notify_push` are dead (migration 001 and nowhere else) and
+>   are now guarded as dead rather than left looking like preferences.
+>
+> **THE ACQUISITION INSTRUMENT HAS ITS FIRST READING WORTH LOOKING AT: `chatgpt.com`** — landing
+> to paid in **3.5 minutes**, first watch on the exact campground page they landed on. **n=1,
+> client-supplied, do not act on it yet.** `NODE_USE_ENV_PROXY=1 npx tsx
+> scripts/funnel-readout.mts`; **37 accounts carry no source, so that table is not a share of
+> anything.**
+>
+> **ONE CHURN RISK LEFT UNACTIONED BY INSTRUCTION.** An Auto-Cart subscriber ($10/mo, converted
+> 09-08) has zero active watches after his trip dates passed. A note is **drafted in Gmail and
+> unsent** — the owner said not to send it. He is `email_alerts_opt_in = false`, which is an
+> alert preference and not a blanket unsubscribe; whether that permits an account email is the
+> owner's call.
+>
+> **TWO TRAPS PAID FOR TODAY:** the GitHub API's `head_sha` needs the **full 40 characters** —
+> a short sha returns zero runs and reads as "CI never started", which my own monitor did; and
+> `git checkout -- <file>` during mutation testing reverts to HEAD, so **commit before mutating**
+> or the fix under test is what gets deleted.
+
 > ### THE OUTSTANDING READING WAS TAKEN. HERE IS WHAT IT SAID.
 >
 > **The ramping renderer's MAIN THREAD is spinning at 100% of a core and never returns to its
@@ -76,7 +116,11 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > confirmed by its own `git rev-parse HEAD` via `npx tsx scripts/bot-ask.mts git-status`, never
 > `autocart.bot_version`. So the GPU census is LIVE on the box and has NOT yet seen a ramp.**
 > 3/3 shards, health **19 of 19 ok**, no holds queued, highest migration 076, main's block
-> **077-079**. One other open PR (**#307**) and it is the **side lane's**.
+> **077-079**. One other open PR (**#307**) and it is a **MAIN lane** one — its branch is named
+> `claude/camphawk-side-lane-status-iij2xm`, which is a leftover name and not a lane token;
+> it touches `src/lib/`, an API route and a `worker/*.test.mts`, all main-lane files. **That
+> misread is the 09-04 shape in miniature: the branch name is the lane token only when the
+> branch was named for the lane.**
 >
 > **READ `CLAUDE.md` → "VMTHREAD ANSWERED ON ITS FIRST RAMP: THE MAIN THREAD IS SPINNING"
 > BEFORE ANYTHING ELSE.** From the 06:47 PT ramp scan:

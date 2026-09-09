@@ -8333,6 +8333,139 @@ tree, the deploy and the fleet were all correct.
   not buy any of that.** `CH_ALLOW_MASTER_PUSH=1` stays unspent: `docs/LANES.md` reserves it
   for a genuine incident, and a cosmetic blemish in a commit body is not one.
 
+### THE TWO NEW SUBSCRIBERS PAID FOR THREE FINDINGS (2026-09-09)
+
+Asked what we knew about two new subscribers and how they found us. Reading their rows
+produced three defects, all the same shape this file keeps recording: **a fact captured once
+and never wired to the thing that needed it.** Merged as #307.
+
+**FIRST, THE ACQUISITION ANSWER, because it is the one that changes what to build.** The two
+who converted (trial → paid on 09-07 and 09-08, both **Auto-Cart at $10/mo**) signed up 08-31
+and 09-01 — **before migration 072 shipped on 09-04**, so their source is unknowable and
+always will be. The one who signed up 09-08 carries it, and it is worth reading twice:
+
+```
+ref:  https://chatgpt.com
+path: /campground/231868       -> COLLEGIATE PEAKS, Salida, Colorado (rec.gov)
+16:09:39  lands from ChatGPT
+16:10:46  account created          (67 seconds)
+16:13:10  subscribed               (3.5 minutes from landing to paid)
+16:14     first watch: Collegiate Peaks, the exact page they landed on
+```
+
+**n=1, and `document.referrer` is client-supplied and untrusted by design** — 072's own header
+says to read it as evidence about a population, never as a fact about one account. But it is
+the first thing the instrument caught, five days after it shipped, and it is an LLM referral
+rather than a search one. The only other sourced signup (`google.com` → a ReserveAmerica page
+in NY) made zero watches.
+
+**Both converters converted after the product actually delivered.** rachelrvt: 28 alerts across
+her trial, **6 of them `carted`**, every SMS carrier-confirmed. brentwolfe: one `carted` on
+09-02, two days before his Tahoe trip. That is a better retention story than any funnel number,
+and it is the argument for reading `client_reports` and `notifications` per subscriber rather
+than only counting rows.
+
+#### SMS CONSENT HAS BEEN EVIDENCED FOR NOBODY SINCE 2026-08-01
+
+Migration 034 added `users.sms_consent_at` so A2P 10DLC consent could be shown per subscriber —
+*"it exists so the evidence is there if a carrier ever asks"* — backfilled everyone holding a
+number, and **nothing ever wrote the column again.** Counted against production:
+
+```
+17 accounts hold a phone
+10 have no consent row
+10 of those 10 were created AFTER the backfill ran
+all 10 are being sent SMS
+```
+
+`src/lib/sms-consent.ts` owns both writes now. **COALESCE**, so changing your number does not
+restamp the date the evidence is about (same posture as `grandfathered`, `signup_source` and
+`onboarded_at`); **removing the number CLEARS it**, because removal is the withdrawal and a
+re-add must not inherit consent from a period the subscriber had opted out of — a consent
+record that overstates itself is worse than none, since it is the document you would hand a
+carrier. Extracted rather than left inline for the reason `applyMutes` was: the behaviour is
+two SQL statements, so a test against a copy of them would assert the copy.
+
+- **NOT BACKFILLED for the ten, deliberately.** `created_at` predates the save and `updated_at`
+  is bumped by `syncUser` on every authenticated page load, so both would be inventions. An
+  absent reading stays absent. **If a carrier ever asks about those ten, the honest answer is
+  that we have their number and no record of when they gave it.**
+
+#### `/new` PROMISED AUTO-CART TO A PLAN THE READER DOES NOT HAVE
+
+The toggle was gated on `supportsAutoCart(campgroundSource)` alone — *"is this rec.gov"* — and
+on **nothing about the reader**. It defaults ON, says *"We put the site in your Recreation.gov
+cart the moment it opens"*, and renders a `TrustPanel` under it. A $2.50 base-tier subscriber
+created three watches with it on. `isAutocartLane` refuses correctly and fails open to an
+ordinary alert, so the **SAFETY was never in question — the PROMISE was**, and this product's
+own rule is that the cost of a miss is a user who believes the site is handled and stops
+watching.
+
+`src/lib/autocart-offer.ts` decides the copy.
+
+- **`unknown` and unresolved both KEEP the promise.** A failed status lookup must never tell a
+  paying subscriber they are on the wrong plan. The failure direction of `unknown` is always
+  "behave as we did before", never "downgrade the reader".
+- **NOT a seventh enforcer.** `hasAutocartEntitlement` still has six and a client value gates
+  no spend. This decides COPY, which is the half none of the six covers.
+- **An upsell reader records `auto_cart = false`.** The column outlives the watch, so a stale
+  `true` would mean that the day they upgrade, every watch made while they were told they could
+  not have this silently starts carting real campsites — a standing consent nobody gave.
+- **A signed-out visitor gets the upsell**, pinned as a decision. `/new` is public and
+  `useSubscription` reports signed-out with the same shape as base tier, which is correct: for
+  both, auto-cart will not happen for the watch they are about to create.
+- **THE RC HOLD PANEL THREE LINES DOWN HAD IT TOO.** *"we'll offer to cart it the second it
+  does"* — and the poller's hold offer is gated on `hasAutocartEntitlement`, so that offer never
+  arrives for a base-tier reader. Fixing one of two siblings asking the same question is the
+  shape this file keeps recording, so both are gated. The upsell twin carries **no BETA badge**:
+  that badge caveats a promise, and there is no promise here to caveat.
+
+#### `watches.notify_sms` / `notify_email` / `notify_push` ARE DEAD COLUMNS
+
+They appear in **migration 001 and nowhere else in the repository** — never written, never read
+— so every row carries 001's defaults for ever. That is why a subscriber's watches read
+`notify_sms = false` next to a delivered text, and disproving it cost a diagnosis. The real
+gates are per USER: `email_alerts_opt_in` and `phone IS NOT NULL`, in `lib/notifications`.
+`src/lib/notify-columns.test.mts` guards it bidirectionally, the `watch-filters.test.mts`
+pattern: it fails if a control ever collects a per-watch channel choice nothing honours, and
+tells you to delete it if an implementation lands.
+
+#### TWO THINGS EXPLAINED AND DELIBERATELY NOT CHANGED
+
+- **brentwolfe gets SMS and no email** because he set `email_alerts_opt_in = false` at the
+  welcome step. The system honoured his preference exactly. **Do not read a channel asymmetry
+  as a delivery fault before checking the per-user flag.**
+- **No server-side sanitising of `auto_cart` at watch creation.** Entitlement is checked where
+  it would be spent; freezing it at creation would be wrong the day someone upgrades.
+
+#### AND I RECORDED A FALSE PREMISE, THEN CORRECTED IT IN PLACE
+
+The fixture for the new real-DB suite was a **fixed sentinel deleted by exact id** — the class
+this file names as the one #203 does NOT cover. Scoped per run with an age-gated sweep. **The
+justification I first wrote was wrong**: I said two CI runs per push make concurrent runs the
+ordinary case. They do not — `verify.yml` has carried a concurrency group keyed on the bare
+branch name with `cancel-in-progress` since 2026-08-15, added after PR #44 measured that exact
+race. The two runs overlap for seconds and one is cancelled.
+
+- **The fix stands on two exposures that ARE real and are documented as having happened:** a
+  local `npm run verify` while CI runs (twice on 2026-08-28, both times by the person enforcing
+  the rule against it), and a branch run overlapping a MASTER run, where different branch names
+  are different concurrency groups and nothing cancels either.
+- **MEASURED, not argued.** Two concurrent runs of the pre-fix version fail **2 of 5 each**, on
+  exactly the predicted assertions; two of the fixed version pass 5/5.
+- **Corrected in the code comment, the commit message and the PR body**, rather than quietly
+  rewritten — a fix resting on a false premise is how the premise survives to be quoted later.
+- **AND MY OWN MONITOR PRODUCED A FALSE NEGATIVE while this was happening**: it reported "no run
+  yet" because it queried GitHub with a SHORT sha, while both runs were live. The
+  absent-reading-as-a-negative shape, built into the instrument watching my own work. **The
+  GitHub API's `head_sha` needs the full 40 characters.**
+
+#### THE FIXED-SENTINEL CLASS IS STILL OPEN ELSEWHERE
+
+`sync-claim`, `ridb-photos` and the hold suites' fixed sentinels still have it. One suite is
+done; widening it to the rest is the deliberate change this file already says should not be
+made in passing.
+
 ## Open / next session
 
 > ### 2026-09-09 (evening) — THE GPU CENSUS ANSWERED, AND THE SPIN IS SAMPLED NOW
@@ -8486,6 +8619,48 @@ tree, the deploy and the fleet were all correct.
 >   recorded remedy for a missed one is still to run it by hand before 07:58:30 PT, **not**
 >   another schedule tweak.
 
+> ### 2026-09-09 — THE SUBSCRIBER READ (#307). THE LEAK ENTRY BELOW IS THE STANDING PRIORITY.
+>
+> **Two main-lane sessions ran today.** This block is the billing/acquisition side; the leak
+> blocks either side of it are the other lane's live thread and outrank this for attention.
+> Neither touches the other's files. **`git fetch origin master` before trusting either.**
+>
+> **#307 IS MERGED-OR-OPEN — CHECK, DO NOT ASSUME.** Three commits, CI green on all three,
+> `npm run verify` 2022/2022 locally. Full write-up: CLAUDE.md → "THE TWO NEW SUBSCRIBERS PAID
+> FOR THREE FINDINGS".
+>
+> **NOTHING IN IT NEEDS A BOX UPDATE OR A DEPLOY BEYOND VERCEL.** No `worker/` runtime code and
+> no `scripts/auto-cart-bot/` change; the one `worker/*.test.mts` touched is a re-anchor, which
+> does fire a worker deploy and restarts the pollers — expected, check `poller.shards` after.
+>
+> **THREE THINGS ARE NOW TRUE THAT WERE NOT:**
+> - `users.sms_consent_at` is written by the save that captures it. **Ten accounts remain
+>   without one and are NOT backfilled** — the honest date does not exist. If a carrier ever
+>   asks about those ten, that is the answer.
+> - `/new` no longer promises auto-cart, or an 8am RC hold, to a reader with no entitlement.
+> - `watches.notify_sms/notify_email/notify_push` are documented as dead by a guard rather
+>   than by a comment nobody reads.
+>
+> **THE ACQUISITION INSTRUMENT HAS ITS FIRST INTERESTING READING AND IT IS `chatgpt.com`** —
+> landing to paid in **3.5 minutes**, first watch on the exact campground page they landed on.
+> **n=1 and client-supplied.** Worth watching, not yet worth acting on:
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/funnel-readout.mts`. **37 accounts still carry no
+> source, so the source table is not a share of anything yet.**
+>
+> **ONE CHURN RISK, UNACTIONED BY CHOICE.** An Auto-Cart subscriber ($10/mo, trial converted
+> 09-08) has **zero active watches** — his Tahoe watches closed themselves when the trip
+> passed, which is correct. A re-engagement note is **drafted in Gmail and deliberately
+> unsent** (owner's instruction, 09-09). He set `email_alerts_opt_in = false`, which is an
+> ALERT preference rather than a blanket unsubscribe — that distinction is the owner's call,
+> not an agent's.
+>
+> **STILL OPEN, AND NOT TO BE DONE IN PASSING:** the fixed-sentinel fixture class is fixed for
+> `sms-consent` only. `sync-claim`, `ridb-photos` and the hold suites still have it.
+>
+> **TWO TRAPS THIS SESSION PAID FOR:** the GitHub API's `head_sha` needs the **full 40
+> characters** — a short sha returns zero runs and reads as "CI never started"; and
+> `git checkout -- <file>` during mutation testing reverts to HEAD, so **commit before
+> mutating** or the fix under test is what gets deleted.
 
 > ### 2026-09-09 (later) — THE DUMP IS RETIRED; THE READING MOVED OUTSIDE THE PROCESS
 >
