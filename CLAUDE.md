@@ -5120,6 +5120,66 @@ EXPLANATION.**
   precondition does not return until the session lapses, and `spent` is 1 for that release.
   **One forced attempt per Okta lifetime** is the real budget, whichever way the coin lands.
 
+#### THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08 21:43 PT)
+**A natural ramp arrived fifty minutes before the ordered one, and #302's trigger caught it.
+Four consecutive missed ramps end here.** It is also still not a reading, and the reason is new
+— which is the part that matters, because the readout currently names the wrong one.
+```
+~21:42:07  browser starts (3m old at the bail)
+ 21:43:42  mem-dump  phase=ramp  7 process(es)  20011ms  x PARTIAL (no answer in 20000ms)
+ 21:44:55  ramp-scan walk: TARGET pid 7644 renderer, 4366 MB private, 17,306 handles
+ 21:45:07  bail:ramp
+ 21:48:24  mem-dump  phase=baseline  7 process(es)  194ms      <- the control, healthy
+```
+- **THE TIMING IS THE DESIGN, TO THE SECOND.** `MEM_DUMP_STALL_MS` is 90s and the dump ran ~90s
+  into a browser whose loop had stalled from the start — **85 seconds ahead of the bail**, i.e.
+  the three-tick head start #302 specifies, obtained by reading NO file. The grace was never
+  needed: the dump had finished long before the arm fired. **Threshold, grace and stall trigger
+  are three mechanisms and only the third had to work.**
+- **IT REACHED THE RIGHT BROWSER GENERATION, AND THE JOIN IS WHAT PROVES IT.** Every one of the
+  dump's seven pids — 9472, 1864, 6864, 14316, 4568, 5896, 13364 — appears in the ramp scan's
+  own `CHROME` list for the same event. What is missing is **pid 7644, the ramping renderer**,
+  and 1664, a crashpad handler that does not participate. So the dump is not describing a
+  replacement browser; it is describing this one, minus the single process that holds the 32 GB.
+- **AND IT SPENT ITS ENTIRE BUDGET WAITING FOR IT.** `20011ms · PARTIAL (no answer in 20000ms)`
+  against a **194 ms** baseline on the healthy replacement two minutes later. The instrument is
+  fine; the subject stopped speaking.
+- **THIRD INSTRUMENT, THIRD CDP CALL, SAME SILENCE.** `newCDPSession` (2026-08-18),
+  `Performance.getMetrics` (08-18 and 08-19), now `Tracing.requestMemoryDump`. **A renderer
+  eating the machine does not answer CDP, and no timeout buys it** — 20,000 ms was already the
+  budget, and the 08-18 entry closed this question once: *"the reading cannot be taken at the
+  trip at all, and no timeout worth spending changes it."* That conclusion was drawn about the
+  heap trail and it transfers.
+- **THE READOUT'S VOID GLOSS NAMES A MECHANISM THIS EVENT REFUTES, AND THAT IS A REAL DEFECT.**
+  It prints *"this is the 2026-09-07 shape, where a bail killed the generation and the dump
+  measured its replacement."* **Here the bail came 85 seconds AFTER the dump** and the pids are
+  one generation. Read literally it sends the next session to fix the trigger — which is now
+  correct — and that is the most expensive kind of wrong: a instrument confidently naming the
+  half that already works. **Two VOID cases need telling apart and they need OPPOSITE fixes:**
+  - **generation mismatch** (09-07): NONE of the dump's pids are in the scan's list. The dump
+    described a different browser; the fault is timing.
+  - **target silent** (09-08): the dump's pids ARE the scan's list minus the TARGET. The timing
+    is right and the ramping renderer will not answer.
+  `dumpJoinReading` has both pid sets available in principle (the scan event carries its
+  `CHROME` lines), so this is a real distinction the function can make. **NOT BUILT** — recorded
+  rather than patched at the end of a session, because the whole value of that gloss is that it
+  is trusted at 08:15 by somebody who did not take the reading.
+- **THE WALK IS FOUR FOR FOUR AND NEEDS NO REPEATING.** 16,385 regions in `2-4M` across
+  **16,381 allocation bases**, 32,773 MB, 16,380 READWRITE, 64 sampled and all anonymous, with
+  the control's file-backed positive control (`SortDefault.nls`) present as ever. **EXCESS
+  37,054 MB against an OS commit gap of 36,730 MB** — the walk has named the 35 GB, again.
+- **AND THE REQUEST COUNTER WAS FLAT — 0 in 120s, 17,093 lifetime.** Fifth independent
+  confirmation that the RDR burst and the ramp are unrelated in both directions.
+- **SO THE FORK IS NARROWER AND IT IS NOT A FREE CHOICE.** Chromium's ownership graph is the
+  only thing that can name the creator of an anonymous section, and reaching it requires the
+  ramping renderer to answer. Firing the dump EARLIER is the obvious move and it costs the one
+  property that makes the trigger sound: 90s was measured against **133 tab-closes whose longest
+  trip is 71,552 ms**, so a lower floor starts firing on healthy trips and a healthy trip can
+  then spend the ramp's slot. **Do not lower it without measuring what replaces that
+  discrimination.** The falsifiable candidate is unchanged and needs no instrument:
+  `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is **2,097,152 bytes**, which is
+  32,773 MB / 16,385 exactly.
+
 ##### A THIRD ORDERED ATTEMPT, AND THE MEMORY SERIES IS WHAT CONFIRMED THE MISS (2026-09-08 22:33 PT)
 Fired by a one-shot Routine timed to land just past Okta's absolute cap, and **both
 preconditions were read before it ran rather than predicted** — `okta_alive false`,

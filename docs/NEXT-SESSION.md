@@ -3,6 +3,39 @@
 *Rewritten 2026-08-25; state refreshed **2026-09-08 (22:4x PT)** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
+> ## THE STALL TRIGGER CAUGHT A RAMP — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08)
+>
+> **State: master `0c52d08` + this branch, mini-PC `c0b222c` (`bot-ask git-status`, never
+> `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
+> 077-079.**
+>
+> **READ `CLAUDE.md` → "THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED" FIRST.** A natural
+> ramp at **21:43 PT** was caught by #302's trigger — the dump ran ~90 s into the stall, **85
+> seconds ahead of the bail**, reading no file. **That ends four consecutive missed ramps and
+> the trigger question is CLOSED.**
+>
+> **IT IS STILL NOT A READING, FOR A NEW REASON.** The dump reached the RIGHT browser generation
+> — all seven of its pids are in the ramp scan's own `CHROME` list for the same event — and the
+> one process missing is **pid 7644, the ramping renderer** (4,366 MB, 17,306 handles, the
+> walk's TARGET). It came back `PARTIAL (no answer in 20000ms)` against a **194 ms** baseline on
+> the healthy replacement. **Third instrument, third CDP call, same silence.**
+>
+> **DO NOT TRUST THE READOUT'S VOID LINE ON THIS EVENT.** It says *"a bail killed the generation
+> and the dump measured its replacement"* — **the bail came 85 seconds AFTER the dump.** Read
+> literally it sends you to fix a trigger that is now correct. Distinguishing the two VOID cases
+> in `dumpJoinReading` (generation mismatch vs. target silent — opposite fixes) is the named
+> next change and is **NOT BUILT**.
+>
+> **DO NOT LOWER `MEM_DUMP_STALL_MS` AS THE OBVIOUS FIX.** 90 s was measured against 133
+> tab-closes whose longest trip is 71,552 ms; a lower floor starts firing on healthy trips, and
+> a healthy trip can then spend the ramp's slot. That trade needs a measurement, not a guess.
+>
+> **The walk is four for four** (16,385 regions / 16,381 allocation bases / 32,773 MB, all
+> anonymous, EXCESS 37,054 MB vs an OS gap of 36,730 MB) and **needs no repeating**. The
+> request counter was flat — the RDR burst and the ramp are unrelated, fifth confirmation. The
+> falsifiable candidate needs no instrument: `mapped_memory_chunk_size` is **2,097,152 bytes**,
+> which is 32,773 MB / 16,385 exactly.
+>
 > ## THE ORDERED RAMP FIRED AND MISSED — NOTHING IS PENDING (2026-09-08, 22:33 PT)
 >
 > **State: master `0c52d08`, mini-PC `c0b222c` (`bot-ask git-status`, never
