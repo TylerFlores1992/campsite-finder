@@ -155,7 +155,19 @@ test('a beta BADGE never sits beside hand-written beta prose', () => {
 test('/new tells an RC watcher the capability exists', () => {
   const nw = read('src/components/v2/NewWatch.tsx');
   assert.match(nw, /canRcHold = campgroundSource \? supportsRcHold\(campgroundSource\) : false/);
-  assert.match(nw, /\{canRcHold && \(/, 'the panel must be gated on the hold-capable source');
+  // RE-ANCHORED 2026-09-09, NOT RELAXED — and the FIRST re-anchor was vacuous, which is the
+  // whole lesson. This pinned the exact expression `{canRcHold && (`; gating the panel on the
+  // reader's ENTITLEMENT too (`{canRcHold && offer === "promise" && (`) broke it over a change
+  // that makes the promise stricter. Loosening it to /\{canRcHold &&/ then PASSED against a
+  // mutation removing the source gate from the promise panel — because the new upsell twin
+  // still matched the pattern. Verified by running it.
+  //
+  // So it COUNTS. There are two RC panels, the promise and its upsell twin, and both must be
+  // source-gated or RC hold copy renders on a Recreation.gov campground. A third panel, or one
+  // losing its gate, fails here and is the moment to re-read this rather than re-loosen it.
+  const rcGates = [...nw.matchAll(/\{canRcHold &&/g)];
+  assert.equal(rcGates.length, 2,
+    'every RC hold panel must be gated on the hold-capable source — found ' + rcGates.length);
   assert.match(nw, /AUTOCART_BETA_LABEL/);
   // NO TOGGLE. An RC hold is offered per release and only a tap authorises it; a switch
   // here would imply a standing consent this product deliberately does not take.
