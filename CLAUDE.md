@@ -7928,6 +7928,65 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-09 — THE CAPTURE CHAIN IS FINISHED; THE RENDERER IS WHAT WILL NOT ANSWER
+>
+> **Master `6de1bca` (#305) and the mini-PC `6de1bca` too — the box took it in the quiet
+> window, so box and web agree for once; read with `bot-ask git-status`, NEVER
+> `autocart.bot_version`. 3/3 shards, no holds queued, highest migration 076, main's block
+> 077-079. Health **19 of 19**, which is the `bot_version` warn clearing BECAUSE the shas met —
+> do not read a later warn there as a regression, it is the ordinary state for most of a day.
+> Nothing bot-side moved: #305 is `src/lib/bot-events.ts` plus the readout, so the box's
+> BEHAVIOUR is unchanged from `c0b222c`.**
+>
+> **#305 FIRED NO WORKER DEPLOY, AND THAT WAS READ RATHER THAN ASSUMED.** `src/lib/bot-events.ts`
+> and `scripts/**` appear in NEITHER list in `worker-deploy.yml`'s `paths:`; the newest run is
+> still #302's from 09-08 20:49. **A merge-scope claim is not evidence — read `paths:`.**
+>
+> **THE TRIGGER QUESTION IS CLOSED.** #302's stall trigger caught the 21:43 PT natural ramp, ran
+> the dump ~90 s into the stall — **85 seconds ahead of the bail**, reading no file — and four
+> consecutive missed ramps end there. The grace, the threshold and the join all did their jobs.
+>
+> **WHAT IS LEFT IS ONE FACT AND IT IS NOT A PLUMBING FACT: A RAMPING RENDERER ANSWERS NO CDP
+> CALL.** pid 7644 held 4,366 MB and 17,306 handles, was the walk's TARGET, was present in the
+> dump's own generation, and spent the full 20,000 ms budget in silence against a **194 ms**
+> baseline on the healthy replacement. Third instrument, third CDP call, same silence
+> (`newCDPSession` 08-18, `Performance.getMetrics` 08-18/19, `Tracing.requestMemoryDump` now).
+> **So Chromium's ownership graph — the only thing that can name the creator of an anonymous
+> section — is unreachable exactly when it would say something.**
+>
+> **DO NOT REACH FOR THE TWO OBVIOUS FIXES WITHOUT PAYING THEIR PRICE.** *Fire earlier*: 90 s was
+> measured against 133 tab-closes whose longest trip is 71,552 ms, and the series says the window
+> is not there anyway — at 21:40:54 the browser did not exist, and by 21:42:54 its renderer held
+> 2,297 MB with the ~35 GB commit step already complete. *Raise the timeout*: 20,000 ms is
+> already the budget, and 2026-08-18 closed this once — *"the reading cannot be taken at the trip
+> at all, and no timeout worth spending changes it."* **The honest shapes are a reading that does
+> not need the renderer's cooperation, or one taken BEFORE it goes quiet — the trail move that
+> retired the heap trail's own silence.**
+>
+> **THE FALSIFIABLE CANDIDATE NEEDS NO INSTRUMENT AND NO RAMP TO STATE:**
+> `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is **2,097,152 bytes**, and the walk's
+> 32,773 MB / 16,385 regions is 2.0000 MB exactly, one allocation base each, anonymous,
+> READWRITE, in the renderer. **`gpu/mapped_memory` at ~32 GB in a ramp dump confirms it;
+> absent-or-small does not and is its own finding.** Discardable is already weakened on the same
+> evidence (4 MB segments, not 2).
+>
+> **THE WALK IS FOUR FOR FOUR AND NEEDS NO REPEATING.** So does the burst: still independent of
+> the leak in both directions, five sightings now.
+>
+> **DO NOT FORCE A RAMP OUT OF IMPATIENCE.** Three ordered attempts, three in six overall for the
+> `okta=GONE` cell, and a successful warm-up leaves Okta ALIVE — so the real budget is **one
+> forced attempt per Okta lifetime**, spending a password submission from an address that has
+> eaten a twelve-hour block. Natural ramps arrive every 5-28 h and the trigger is live for all of
+> them. The recipe, for when a reading IS wanted at a known moment, is in `docs/NEXT-SESSION.md`.
+>
+> **STILL FORBIDDEN, each for a recorded reason:** Track B (the renewal's trip is measured flat),
+> parking the resident page (refused by `checkAndReport`'s localStorage rule), lowering
+> `LOW_RAM_MB` (killed a working repair on 08-19), and narrowing `verify.yml`'s triggers.
+>
+> **AND `rc_release_readings` IS STILL ZERO AFTER FOUR FIRINGS** (09-05/06/07/08). The Routine
+> self-disables 09-12, so ~3 chances remain, and the recorded remedy is **not** another schedule
+> tweak — run it by hand before 07:58:30 PT.
+
 > ### 2026-09-08 (evening) — THE ORDERED RAMP FIRED AND MISSED, AND ONE CLAIM IS CORRECTED
 >
 > **Master `6eee69f`, mini-PC `c0b222c` (`bot-ask git-status`), 3/3 shards, no holds queued,

@@ -1,13 +1,27 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-08 (22:4x PT)** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-09** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
+
+> ### THE ONE OUTSTANDING READING, IN A SENTENCE
+>
+> **A ramping renderer answers NO CDP call, so Chromium's ownership graph — the only thing that
+> can name what maps 32 GB of anonymous 2 MB sections — is unreachable at the moment it matters.**
+> Three instruments have now hit this on three different calls (`newCDPSession`,
+> `Performance.getMetrics`, `Tracing.requestMemoryDump`). Everything else in the capture chain
+> works: the stall trigger fires 85 s ahead of the bail, the grace holds the bail while the dump
+> is in flight, the readout joins the dump against the walk and refuses a verdict on a mismatch.
+> **Nothing needs building to try again — it needs a ramp** (every 5-28 h), or a way to read a
+> renderer that has stopped talking.
 
 > ## THE STALL TRIGGER CAUGHT A RAMP — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08)
 >
-> **State: master `0c52d08` + this branch, mini-PC `c0b222c` (`bot-ask git-status`, never
-> `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
-> 077-079.**
+> **State: master `6de1bca` (#305 merged — `src/lib/bot-events.ts` and `scripts/**` are in
+> NEITHER of `worker-deploy.yml`'s `paths:`, read not remembered, so **no worker deploy fired**);
+> **the mini-PC is on `6de1bca` as well**, having taken it in the quiet window (`bot-ask
+> git-status`, never `autocart.bot_version`); 3/3 shards; no holds queued; **health 19 of 19**,
+> the `bot_version` warn having cleared because the shas met; highest migration 076; main's block
+> 077-079. #305 carries no bot-side code, so the box behaves exactly as it did on `c0b222c`.**
 >
 > **READ `CLAUDE.md` → "THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED" FIRST.** A natural
 > ramp at **21:43 PT** was caught by #302's trigger — the dump ran ~90 s into the stall, **85
@@ -47,9 +61,7 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > ## THE ORDERED RAMP FIRED AND MISSED — NOTHING IS PENDING (2026-09-08, 22:33 PT)
 >
-> **State: master `0c52d08`, mini-PC `c0b222c` (`bot-ask git-status`, never
-> `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's block
-> 077-079.**
+> *(State as above — this is the earlier half of the same evening.)*
 >
 > **WHAT HAPPENED, SO NOBODY RE-RUNS IT.** `trig_01DbvqTrehodKTp1Axq52rzM` fired on time. Both
 > preconditions were **read, not predicted** — `okta_alive false`, `okta_expires_at null`,
