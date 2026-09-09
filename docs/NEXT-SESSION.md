@@ -1,72 +1,106 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-09** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-09 (evening)** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
-> ### THE ONE OUTSTANDING READING, IN A SENTENCE
+> ### THE OUTSTANDING READING WAS TAKEN. HERE IS WHAT IT SAID.
 >
-> **The memory dump is RETIRED — a wedged renderer contributes ZERO allocator dumps at every
-> level, so it can never name what maps the 32 GB. The reading moved OUTSIDE the process, into
-> the region walk, and the next ramp answers it with nothing left to build.**
+> **The ramping renderer's MAIN THREAD is spinning at 100% of a core and never returns to its
+> message loop — which is where CDP is serviced, so three instruments failing on three
+> different calls was never three reasons. It was one, and it is now named.**
 
-> ## THE DUMP CAN NEVER ANSWER; THE WALK NOW CAN (2026-09-09, later)
+> ## VMTHREAD ANSWERED ON ITS FIRST RAMP (2026-09-09, evening)
 >
-> **State: master `6de1bca` + this branch; the mini-PC is on `6de1bca` (`bot-ask git-status`,
-> never `autocart.bot_version`); 3/3 shards; no holds queued; highest migration 076; main's
-> block 077-079.** **The walk additions are BOT-SIDE and inert until the box updates.**
+> **State: master `45019ec` (#306 merged), and the mini-PC is on `45019ec` TOO — confirmed with
+> `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`. So both new
+> instruments are LIVE and have already fired.** 3/3 shards, health **19 of 19 ok**, no holds
+> queued, highest migration 076, main's block **077-079**. One open PR (**#307**) and it is the
+> **side lane's**.
 >
-> **READ `CLAUDE.md` → "THE DUMP CAN NEVER ANSWER — A WEDGED RENDERER IS *PRESENT AND EMPTY*".
-> Do not spend another ramp on the dump.** Measured off-box in under a minute with the new
-> `node scripts/auto-cart-bot/dump-wedge-probe.mjs`:
+> **READ `CLAUDE.md` → "VMTHREAD ANSWERED ON ITS FIRST RAMP: THE MAIN THREAD IS SPINNING"
+> BEFORE ANYTHING ELSE.** From the 06:47 PT ramp scan:
 > ```
-> detailed   ms=15083  success:false  peersWithData=4  wedgedRenderer=0 allocator dump(s)
-> background ms=15040  success:false  peersWithData=4  wedgedRenderer=0 allocator dump(s)
-> light      ms=15076  success:false  peersWithData=4  wedgedRenderer=0 allocator dump(s)
+> >>> SPINNING on the MAIN thread: the busiest of 20 thread(s) burned 1203 ms of a 1200 ms
+>     window (100% of a core).
+>     tid=7876  main=True   cpuMs=121031  deltaMs=1203  state=Running  wait=-
+>   CONTROL (an ordinary renderer, same scan)
+> >>> BLOCKED, not spinning: the busiest of 15 burned 0 ms of the same window (0%).
+>     tid=9724  main=False  cpuMs=0  deltaMs=0  state=Wait  wait=EventPairLow
 > ```
-> Chromium's coordinator gives up at **~15,050 ms** and emits an **EMPTY** process dump for the
-> unresponsive child while its peers contribute normally. **A longer timeout buys an empty dump
-> sooner; a cheaper level buys the same empty dump.** And `alloc trail [resident]: EMPTY` for a
-> whole 165 s browser life (09-09 11:30) closes "ask it earlier": it is quiet from birth.
+> - **The control at 0% is what makes it a reading.** A busy renderer on its own would be
+>   unremarkable.
+> - **`cpuMs=121031` is LIFETIME, not the duration of the spin.** Do not quote it as one; the
+>   only rate here is `deltaMs=1203` of a 1200 ms window.
+> - **"Fire earlier" is closed from the other side too** — the resident trail read `EMPTY` for a
+>   whole 165 s browser life. It is quiet from birth. **There is no window in which that
+>   renderer both holds the sections and answers.**
 >
-> **WHAT TO DO NEXT: NOTHING BUT WAIT FOR A RAMP.** They arrive every 5-28 h. Then
-> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` and read two new lines:
-> - **`VMTHREAD`** — **SPINNING** (one thread holds the 1200 ms window; `main=True` means
->   Blink/JS/the command-buffer client, which is also why it answers no CDP call) or
->   **BLOCKED** (nobody burning CPU — the 32 GB was mapped and then something stopped, and
->   `wait=` names what on). **Nothing has ever distinguished these and they need opposite
->   fixes.**
-> - **`VMSPAN`** — **PACKED** (consecutive sub-allocations of ONE reservation; `VMTOP` in the
->   same scan names which — a cage/pool/sandbox) or **SCATTERED** (16k independent mappings,
->   i.e. ordinary shared memory).
+> **VMSPAN ANSWERED AS WELL: SCATTERED** — 16,383 regions over a 132,797,914 MB span (4053x), so
+> not carved from one reservation, and the cage/pool/sandbox branch is out. **Read `VMMAP2M`
+> (16,383 regions across 16,382 allocation bases), not the adjective**: `SCATTERED` fires on the
+> 4-region control too and does not discriminate.
 >
-> **Until the box updates both render as ABSENCES** ("the box predates VMTHREAD"). That is
-> correct and is not a miss — it is an absence, not a reading.
+> ### THE NEXT MOVE — one line, no new instrument
 >
-> **THREE FREE READINGS FROM DATA ALREADY IN THE DATABASE, so nobody re-derives them:**
-> - **No peer holds the 32 GB** — the 09-08 dump's seven answering processes are the same
->   generation as the walk, and the GPU process holds 2 MB / 601 handles against the target's
->   32,849 MB / 17,306. **Do NOT promote this to "the GPU candidate is refuted"**: that
->   hypothesis's failure mode predicts exactly this. The reading is "mapped in exactly one
->   process".
-> - **The 32 GiB is a CEILING** — eight walks land on 15,499-16,387 regions and
->   **16,384 × 2 MiB = 32 GiB exactly**. Ask "what has a 32 GiB budget?", not "what leaks?".
-> - **Two populations of ramp** (young + 17k-75k burst ×7; 85-125 min + no burst ×2), both
->   reaching the same signature — so the burst/leak decoupling **holds**, and "the ramp is
->   always on a young browser" is **false**.
+> **Point `VMTHREAD` at the GPU PROCESS of the same family.** It runs on TARGET and CONTROL
+> today (`ramp-scan.mjs`). **Renderer main thread spinning + GPU process idle is the
+> client-allocates-service-never-drains shape**, which confirms the `MappedMemoryManager`
+> candidate from OUTSIDE, without asking Chromium anything. A GPU process that is also busy is a
+> different investigation. The same scan's `CHROME` lines already lean that way and are **not** a
+> thread census: `gpu-process privateMB=82 handles=609` against the target's `3325 / 18119`.
 >
-> **AND THE FOUR EARLIER PROBE RUNS WERE ALL ARTIFACTS** — three said "no level answers"
-> because a previous arm left tracing started so nothing ever asked; one said "background
-> works" because a timed-out `detailed` arm's late data was counted as its own. **Each was one
-> sentence from being written up.** One arm per browser now, and the score is the allocator
-> COUNT rather than the pid's presence, because presence is what an empty dump has.
+> A **stack of tid 7876** would name it outright and is the expensive route: it needs ETW with
+> symbols for `chrome.dll`, which the box does not have.
 >
-> **DEFECTS FIXED IN THE DUMP ITSELF** (it still collects the PEERS, which is where the free
-> reading above came from): `Tracing.end` does not stop tracing — the browser is done at
-> `tracingComplete`, and that is the mini-PC's `Tracing was stopped before start has been
-> completed` at 11:29:54 **which cost that ramp its dump**; `started_tracing` went up after the
-> send; and the fold dropped the empty process, which is why it read as absent. The
-> empty-process fix needed its own `target-empty` join cause or it would have flipped every
-> future ramp dump from VOID to a verdict that reads like success.
+> **THE CANDIDATE IS SHARPER AND IS STILL A CANDIDATE — do not write it in.**
+> `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is 2,097,152 bytes against 32,778 MB /
+> 16,387 = **2.0000 MB**; one shared region per chunk, in the renderer, anonymous, READWRITE; JS
+> heap flat at 8-11 MB; RC runs a WebGL ArcGIS map whose command-buffer client lives on the main
+> thread; and `FreeUnused()` reclaims only blocks whose **tokens have passed**, which a thread
+> that never returns to its message loop cannot advance. It fits every reading and has been
+> tested by nothing. Three mechanisms have been guessed on this leak and each cost a session.
+>
+> ### TWO THINGS NOT TO MISREAD ON THE NEXT RAMP
+>
+> **1. "No ramp dump" is arithmetic, not a regression.** All three of today's ramps (01:57,
+> 04:27, 06:46 PT) resolved in ~2-4 minutes and the renewal trips completed in **46.9 s and
+> 47.5 s** — under `MEM_DUMP_STALL_MS` (90 s) — so the trigger correctly never fired. The 09-08
+> 21:43 dump fired only because that trip never completed at all. **Read the trip durations in
+> `TAB CLOSES` before concluding anything.** And **do not lower the threshold**: it would fire on
+> more ramps and every one would return an empty dump, spending the discrimination 90 s was
+> measured against 133 tab-closes for.
+>
+> **2. The peak is DOWN — 3.9-4.0 GB against 8-9 GB all week — and that is creditable to
+> nothing.** Three ramps is not a regime, and every "not reproduced this session" reading in
+> this file was a window that happened to miss one. The 32 GB mapping is fully present at 3.5 GB
+> of private bytes: the mapping arrives in one step and the private bytes are the pages being
+> touched, so a shorter ramp is a shorter *touching*, not a smaller mapping.
+>
+> ### STILL FORBIDDEN, each for a recorded reason
+>
+> The memory dump as a route to the owner (a wedged renderer contributes **zero** allocator
+> dumps at every level — measured off-box); **Track B** (the renewal's Okta trip is measured
+> flat, −4 MB); **parking the resident page** (refused by `checkAndReport`'s localStorage rule,
+> which would silence `autocart.rc_session` and the phone alarm); **lowering `LOW_RAM_MB`**
+> (killed a working repair on 08-19); narrowing `verify.yml`'s triggers;
+> `ReadProcessMemory`/minidumps; and **forcing a ramp out of impatience** — 3-in-6 odds, one
+> attempt per Okta lifetime, and it spends a password submission from an address that has eaten
+> a twelve-hour block. Natural ramps arrive every 5-28 h and every instrument is armed for them.
+>
+> ### AND THE RELEASE-WINDOW ROUTINE FINALLY RECORDED (07:56 PT)
+>
+> `rc_release_readings` is **non-empty for the first time** after four lost firings. Today:
+> **15 nights, 279 polls, 0 unreadable, 15 of 15 flipped**, `recorded 2 facility row(s)`.
+> - `rc-583` locked **−1.6s** → free **+0.4s** (13 nights) · `rc-539` locked **−0.9s** → free
+>   **+1.1s** (2) · `rc-542` had no locked nights for this release.
+> - **Both brackets straddle T, so neither confirms nor contradicts the 09-04 finding** — that
+>   rests on rc-583's `−2.2 → −0.2`, entirely before T, and is untouched. **Quote the negative
+>   bracket, never the `+0.4s` median.**
+> - **One CLEAN contention observation, which is rare:** `#L015 @2026-09-11` was re-taken by
+>   **+74.3s**, and the hold for that unit was **offered and never tapped** — so we demonstrably
+>   did not cart it, and the usual "our own carts look identical" caveat does not apply.
+> - It self-disables on any Pacific date ≥ 2026-09-12, so **~2 firings remain**. A missed one is
+>   run by hand before 07:58:30 PT — **not** fixed with another schedule tweak.
 
 > ## THE STALL TRIGGER CAUGHT A RAMP — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08)
 >
@@ -915,6 +949,14 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   and all three were missed; a staged one locks a real campsite.
 
 > ## SUPERSEDED HANDOVERS — deleted 2026-09-04, and here is where they went
+>
+> **Also deleted 2026-09-09 (evening): the "THE DUMP CAN NEVER ANSWER; THE WALK NOW CAN"
+> block.** Its whole action item was *"wait for a ramp and read VMTHREAD and VMSPAN"*, and
+> the ramp arrived at 06:47 PT and both answered — so read as current it sends the next
+> session to wait for a reading that is already taken. Every finding in it is in `CLAUDE.md`
+> under "THE DUMP CAN NEVER ANSWER — A WEDGED RENDERER IS *PRESENT AND EMPTY*": the off-box
+> `dump-wedge-probe.mjs` measurement, the four artifact runs before it, the 32 GiB ceiling,
+> the two populations of ramp, and "no peer holds the 32 GB".
 >
 > Roughly 450 lines of 2026-08-29 → 09-04 handover sat here: the Android hand-off
 > investigation, the two-phone divergence, the trace analyses, and the queued-hold checklists
