@@ -29,10 +29,27 @@ import { setUserPhone, clearUserPhone } from './sms-consent';
 // the hold suites a per-SUITE prefix plus a ten-minute age gate, which stops one suite wiping
 // another — and CLAUDE.md records in as many words that it does NOT cover "a suite with a
 // single FIXED sentinel deleted by exact id", which is "mutually destructive between two runs
-// of ITSELF". This repo runs two workflows per push (`push` and `pull_request`), so two runs
-// of this file against one production database is the ORDINARY case, not an edge: run B's
-// DELETE lands between run A's write and its read, and A fails asserting a consent date that
-// B removed. `email` is UNIQUE too, so the INSERT would collide outright.
+// of ITSELF".
+//
+// CORRECTED 2026-09-09, an hour after this was written. The first version said two CI runs per
+// push make that the ORDINARY case. IT DOES NOT: `verify.yml` has carried a concurrency group
+// keyed on the bare branch name with `cancel-in-progress` since 2026-08-15, added after PR #44
+// measured exactly this — two runs 18s apart, one failing in `ridb-photos.test.mts` on a row
+// the sibling was writing. The `push` and `pull_request` runs collide for seconds and then one
+// is cancelled. Recorded rather than quietly rewritten, because a fix resting on a false
+// premise is how the premise survives.
+//
+// THE REAL EXPOSURE IS TWO OTHER THINGS, AND BOTH ARE DOCUMENTED AS HAVING HAPPENED:
+//   1. A local `npm run verify` while CI runs. CLAUDE.md records it TWICE on 2026-08-28, both
+//      times by the person enforcing the rule against it — once while idling waiting on that
+//      very CI run. LANES.md's SERIAL rule is the only guard, and it is a habit.
+//   2. A branch run overlapping a MASTER run. Different branch names are different concurrency
+//      groups, so nothing cancels either: "merging IS starting a test run".
+//
+// Under either, run B's DELETE lands between run A's write and its read, and A fails asserting
+// a consent date B removed. `email` is UNIQUE too, so the INSERT collides outright. MEASURED
+// rather than argued: two concurrent runs of the pre-fix version failed 2 of 5 each, on exactly
+// those assertions; two of the fixed version pass 5/5.
 //
 // A per-run suffix removes the shared row entirely. The prefix stays so the sweep below can
 // find strays, and so nothing else can mistake these for real accounts.
