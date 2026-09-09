@@ -5650,6 +5650,75 @@ symbols for `chrome.dll`, which the box does not have.
   ~15,050 ms timeout and the spinning main thread are what stop it, not the trigger. It spends
   the discrimination 90 s was measured for and buys nothing.
 
+#### THE CENSUS TAKES THE GPU PROCESS NOW (2026-09-09) — built, and awaiting a box update
+The section above names the cheap next reading and this is it. `$tthreads` is `$targets` plus
+the **GPU process of the target's own browser generation**, and the census loops iterate it.
+**The WALK deliberately keeps `$targets`**: a third `VirtualQueryEx` sweep costs csc.exe plus a
+full walk inside the 90-second budget, and the 09-08 dump already reported the GPU process
+holding **2 MB across 25 mappings** — it does not hold the 32 GB, and that question is answered.
+The census is the cheap half, because **one `Start-Sleep` is shared by every subject**: a third
+process costs two thread enumerations and no extra wall clock.
+
+- **PREDICTED READING, STATED BEFORE IT WAS WRITTEN, and it is not the ~0 the rule forbids.** On
+  the known event the GPU process reads `privateMB=82 handles=609` against the target's
+  `3325 / 18119`, so the prediction is **BLOCKED — a busiest thread near 0 ms of the 1200 ms
+  window.** Zero is the INFORMATIVE answer here rather than a blind one, exactly as the control
+  renderer's 0 ms is what made the target's 1203 ms mean anything. The other branch — a GPU
+  process also burning CPU — is a different investigation with a different fix. **Both words are
+  findings, which is the test that rule actually applies.**
+- **MATCHED ON PARENT, NEVER ON SIZE — AND THE HAZARD IS REAL ON THIS VERY EVENT.** `$ours` spans
+  BOTH profile families, and the 06:47 scan's own `CHROME` lines carry **two gpu-processes: `rc`
+  at 82 MB and `recgov` at 23 MB**, live at the same instant. A largest-first pick happens to get
+  the right one there, and that is luck of size rather than a discriminator — the rec.gov
+  keepalive opens its own browser twice per 30 minutes, so which sizes are present is not
+  something to rest a reading on. Reporting a DIFFERENT browser's idle GPU process as this one's
+  is a **false confirmation of the leading hypothesis**, the most expensive kind of wrong.
+- **AND NEVER THE TARGET ITSELF.** If the largest process by private bytes were ever the GPU
+  process, a sibling match on `PPid` matches it, `$tthreads` carries it twice, and the readout
+  pairs a process with a second copy of itself — reporting a spinning client beside an idle
+  service where there is **one process**. Found by writing the match and then reading it, not by
+  a test.
+- **NO MATCH REPORTS ITSELF.** The parent relationship is an assumption (Chromium spawns its
+  children from the browser process on Windows), and it is one this repo cannot verify from
+  here — the stored `CHROME` lines carry no `ParentProcessId`. **The failure direction is what
+  makes that acceptable:** a wrong assumption yields `gpu-process not found in the target browser
+  generation`, i.e. an absence, never a confident reading about the wrong process.
+- **THE VERDICT REFUSES TO CLAIM PROOF, AND THAT IS PINNED.** `servicePairReading` prints
+  *"CONSISTENT WITH, NOT PROOF"* on the idle branch and says why in the same breath: **an idle
+  service is also exactly what you see if nothing was ever sent to it**, and the same
+  hypothesis's failure mode predicts an idle GPU either way. A mutation deleting that caveat, and
+  one making the busy branch render as the idle one, are both caught.
+- **AN ABSENT CENSUS IS AN ABSENCE.** No GPU line must never render as an idle service — that is
+  the one sentence away from a confirmation this whole instrument could manufacture. A scan that
+  LOOKED and found nothing carries its own sentence into the verdict, because *"we could not
+  look"* and *"the service was idle"* point in opposite directions.
+- **RENDERED, OR IT WOULD HAVE BEEN INERT.** The GPU process is not walked, so nothing in the
+  readout's per-pid loop would ever have printed it — the fix-present-and-inert shape, for the
+  eighth time. The render and the pairing are both pinned as line-initial statements.
+- **AN EXISTING GUARD WAS RE-ANCHORED, NOT RELAXED.** `printVerdict('      ', busyThreadReading({`
+  was pinned by exact expression; the verdict is assigned now so its KIND can be paired, so the
+  guard pins the assignment AND the render, both line-initial so `void 0 && …` and `if (false) …`
+  still fail it. Verified failing against a computed-but-never-printed verdict.
+- **`src/lib/leak-capture.test.mts`, 14 mutations, each asserted to APPLY and each caught.**
+  Guards under `src/` and `scripts/`, **not `worker/`** — checked against `worker-deploy.yml`'s
+  `paths:` rather than remembered, so **this fires no worker deploy.**
+- **THE ABSENT BRANCH IS WHAT RENDERS TODAY, and that is the expected state.** Verified by
+  running the real readout against the real corpus: *"no GPU-process reading in this scan — the
+  box predates the GPU census … That is an ABSENCE, not a reading."* **Bot-side, so it needs a
+  box update and then one ramp.** Confirm the sha with `npx tsx scripts/bot-ask.mts git-status`,
+  never `autocart.bot_version`.
+- **I NEARLY RECORDED A FABRICATED FACT OUT OF MY OWN INSTRUMENT.** A first pass at counting the
+  processes used an `awk` range whose end pattern did not match, so it ran to EOF and merged all
+  three scans — reading as **three rc browsers and four gpu-processes simultaneously**, which
+  would have been written up as a finding about the box. Segmenting on the scan headers gives
+  **two browsers and two gpu-processes** in the 06:47 event. Same shape as the 08-14 reconstructed
+  log buffer: **evidence assembled by a tool needs its own audit before it is quoted.**
+- **AN OBSERVATION IN PASSING, NOT ACTED ON:** in the 06:47 scan the walk's CONTROL renderer was
+  `pid=5116 fam=recgov` — an ordinary renderer, so the comparison stands, but it came from the
+  rec.gov browser rather than the rc one. `$ctl` takes the smallest renderer regardless of
+  family. Recorded rather than changed; it does not affect the excess, which is what that control
+  exists to produce.
+
 ### THE METHOD WAS THE PROBLEM, NOT THE LEAK (2026-09-08) — asked "why do we keep missing things?"
 The owner's question after four missed ramps, and it is answerable with counting rather than
 feeling. **The weeks did not go into the leak. They went into the TRIGGER.**

@@ -48,7 +48,8 @@
  */
 import {
   recentBotEvents, requestCountReason, loopAnswerReading, dumpJoinReading, mappedSwarmReading,
-  mappedNameReading, busyThreadReading, mappedSpanReading, type BotEventRow, type RequestCountReason,
+  mappedNameReading, busyThreadReading, mappedSpanReading, servicePairReading,
+  type BotEventRow, type RequestCountReason, type BusyThreadKind,
 } from '@/lib/bot-events';
 
 /**
@@ -129,6 +130,8 @@ for (const s of scans) {
   const walked = walks.filter((l) => / status=ok/.test(l));
   const num = (re: RegExp, on: string) => Number(re.exec(on)?.[1]);
   const committedByPid: Array<{ pid: string, role: string, mb: number }> = [];
+  /** The TARGET renderer's census verdict, for the service pairing after the loop. */
+  let rendererBusy: BusyThreadKind | undefined;
   for (const [i, w] of walked.entries()) {
     const pid = /pid=(\d+)/.exec(w)?.[1];
     if (!pid) continue;
@@ -212,14 +215,19 @@ for (const s of scans) {
      */
     const th = mine('VMTHREAD')[0];
     const tops = mine('VMTHREADTOP');
-    printVerdict('      ', busyThreadReading({
+    const busy = busyThreadReading({
       threads: th && num(/threads=(\d+)/, th),
       windowMs: th && num(/windowMs=(\d+)/, th),
       busyMs: th && num(/busyMs=(\d+)/, th),
       topDeltaMs: tops[0] && num(/deltaMs=(-?\d+)/, tops[0]),
       topIsMain: tops[0] && /main=True/i.test(tops[0]),
       topWait: tops[0] && /wait=(\S+)/.exec(tops[0])?.[1],
-    }).text);
+    });
+    printVerdict('      ', busy.text);
+    // Kept so the GPU-process census below can be PAIRED with it. The pairing is the reading:
+    // an idle service beside a spinning client is a different fact from an idle service beside
+    // an idle client, and one verdict on its own cannot tell them apart.
+    if (i === 0) rendererBusy = busy.kind;
     for (const t of tops.slice(0, 4)) console.log(`          ${t.replace(`VMTHREADTOP pid=${pid} `, '')}`);
     committedByPid.push({ pid, role: i === 0 ? 'target' : 'control', mb: totalMb });
   }
@@ -235,6 +243,48 @@ for (const s of scans) {
     console.log('  >>> NO CONTROL in this scan — there was only one chrome.exe to walk, so the figures above');
     console.log('      are a measurement and not yet a difference. Do not read them as abnormal on their own.');
   }
+
+  /**
+   * THE SERVICE BESIDE THE CLIENT (2026-09-09).
+   *
+   * The census runs on a THIRD subject — the GPU process of the target's own browser
+   * generation — and it is not walked, so nothing in the loop above would ever print it. A
+   * reading produced and never rendered is the fix-present-and-inert shape this file has now
+   * paid for seven times, so the render is here and it is pinned by a test.
+   *
+   * The pairing is the point. `MappedMemoryManager` predicts a service nobody is pumping,
+   * because the command buffer's tokens cannot advance while the renderer's main thread never
+   * returns to its message loop. An idle GPU process is what that predicts; a busy one is a
+   * different investigation. Neither is proof, and the verdict says so.
+   */
+  const gpuTh = lines.find((l) => l.startsWith('VMTHREAD pid=') && / type=gpu-process /.test(l));
+  const gpuPid = gpuTh && /pid=(\d+)/.exec(gpuTh)?.[1];
+  const gpuTops = gpuPid ? lines.filter((l) => l.startsWith(`VMTHREADTOP pid=${gpuPid} `)) : [];
+  const gpuBusy = gpuTh
+    ? busyThreadReading({
+      threads: num(/threads=(\d+)/, gpuTh),
+      windowMs: num(/windowMs=(\d+)/, gpuTh),
+      busyMs: num(/busyMs=(\d+)/, gpuTh),
+      topDeltaMs: gpuTops[0] && num(/deltaMs=(-?\d+)/, gpuTops[0]),
+      topIsMain: gpuTops[0] && /main=True/i.test(gpuTops[0]),
+      topWait: gpuTops[0] && /wait=(\S+)/.exec(gpuTops[0])?.[1],
+    })
+    : undefined;
+  if (gpuTh) {
+    console.log(`  >>> GPU process (the service beside the ramping renderer)`);
+    console.log(`      ${gpuTh.replace('VMTHREAD ', '')}`);
+    printVerdict('      ', gpuBusy!.text);
+    for (const t of gpuTops.slice(0, 3)) console.log(`          ${t.replace(`VMTHREADTOP pid=${gpuPid} `, '')}`);
+  }
+  // A scan that looked and found no GPU process in the target's generation says so in its own
+  // words, and that sentence is carried into the verdict — `we could not look` and `the service
+  // was idle` point in opposite directions and must never render alike.
+  const gpuMiss = lines.find((l) => l.startsWith('VMTHREAD gpu-process not found'));
+  printVerdict('  ', servicePairReading({
+    renderer: rendererBusy,
+    gpu: gpuBusy?.kind,
+    gpuNote: gpuMiss?.replace('VMTHREAD ', ''),
+  }).text);
 
   for (const l of lines) console.log(`    ${l}`);
 }

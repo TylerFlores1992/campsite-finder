@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   dumpJoinReading, mappedSwarmReading, mappedNameReading, NAME_CENSUS_ACCESS,
-  busyThreadReading, mappedSpanReading, BUSY_THREAD_SHARE,
+  busyThreadReading, mappedSpanReading, BUSY_THREAD_SHARE, servicePairReading,
 } from './bot-events';
 
 const scan = readFileSync('scripts/auto-cart-bot/ramp-scan.mjs', 'utf8');
@@ -335,9 +335,118 @@ test('the readout passes the empty pids, or the pure function cannot see them', 
   // REACHABLE, not merely present. `void 0 && printVerdict(..., busyThreadReading({...}))`
   // matches a bare name check just as happily as a live call — the `if (false)` shape this
   // file has now paid for twice — so the call is pinned as the statement it has to be.
-  assert.match(code(readout), /\n\s*printVerdict\('      ', busyThreadReading\(\{/,
+  // RE-ANCHORED 2026-09-09, NOT RELAXED. The verdict is assigned now so its KIND can be
+  // paired with the GPU process's; the property is unchanged and both halves are pinned as
+  // line-initial statements, so `void 0 && ...` and `if (false) ...` still fail it.
+  assert.match(code(readout), /\n\s*const busy = busyThreadReading\(\{/,
+    'the thread verdict must be computed');
+  assert.match(code(readout), /\n\s*printVerdict\('      ', busy\.text\)/,
     'the thread verdict must be rendered, not merely constructed');
   assert.match(code(readout), /\n\s*printVerdict\('      ', mappedSpanReading\(\{/,
     'the span verdict must be rendered, not merely constructed');
   assert.match(readout, /VMTHREADTOP/, 'the per-thread lines are rendered, not just the verdict');
+});
+
+/* ── THE SERVICE BESIDE THE CLIENT (2026-09-09) ──────────────────────────────────────────────
+ *
+ * The thread census takes a third subject: the GPU process of the target's own browser
+ * generation. `MappedMemoryManager` predicts a service nobody is pumping, because the command
+ * buffer's tokens cannot advance while the renderer's main thread never returns to its message
+ * loop — so an IDLE GPU process is what the candidate predicts and a BUSY one is a different
+ * investigation. Both words are findings, which is what makes the reading worth taking.
+ *
+ * The magnitudes are already guarded above; these pin the DECISIONS, and above all the two
+ * that would each turn a non-answer into a confident one: an absence rendering as an idle
+ * service, and a target paired with a second copy of itself.
+ */
+
+test('an absent GPU census is an ABSENCE, never an idle service', () => {
+  const r = servicePairReading({ renderer: 'spinning-main', gpu: undefined });
+  assert.equal(r.kind, 'absent');
+  assert.match(r.text, /ABSENCE/);
+  // The whole hazard: 'we could not look' and 'the service was idle' point in opposite
+  // directions, and this verdict is one sentence away from being read as a confirmation.
+  assert.doesNotMatch(r.text, /client-allocates|MappedMemoryManager|predicts/);
+  // A census that RAN and could not be read is the same non-answer.
+  assert.equal(servicePairReading({ renderer: 'spinning-main', gpu: 'unavailable' }).kind, 'absent');
+});
+
+test('a scan that looked and found no GPU process says so in its own words', () => {
+  const note = 'gpu-process not found in the target browser generation (target pid=10604 ppid=8100)';
+  const r = servicePairReading({ renderer: 'spinning-main', gpu: undefined, gpuNote: note });
+  assert.match(r.text, /not found in the target browser generation/,
+    'the scan\'s own sentence, or a deliberate miss reads like a box that predates the census');
+  assert.match(r.text, /10604/, 'which target it looked from');
+});
+
+test('spinning renderer beside an idle GPU is the shape — and says it is not proof', () => {
+  const r = servicePairReading({ renderer: 'spinning-main', gpu: 'blocked' });
+  assert.equal(r.kind, 'service-idle');
+  assert.match(r.text, /client-allocates-service-never-drains/);
+  assert.match(r.text, /CONSISTENT WITH, NOT PROOF/,
+    'three mechanisms have been guessed on this leak and each cost a session');
+  // The failure mode of the same hypothesis predicts an idle GPU too, so the verdict has to
+  // carry that or it reads as a confirmation it has not earned.
+  assert.match(r.text, /nothing was ever sent to it/);
+  assert.doesNotMatch(r.text, /CONFIRM(ED|S)\b/i);
+});
+
+test('a busy GPU process is the branch that argues AGAINST the candidate, not a failure', () => {
+  const r = servicePairReading({ renderer: 'spinning-main', gpu: 'spinning-worker' });
+  assert.equal(r.kind, 'service-busy');
+  assert.match(r.text, /NOT the client-allocates-service-never-drains shape/);
+  assert.match(r.text, /new investigation/);
+});
+
+test('the pairing refuses when either half is missing its own reading', () => {
+  assert.equal(servicePairReading({ renderer: 'blocked', gpu: 'blocked' }).kind, 'renderer-not-spinning');
+  assert.match(servicePairReading({ renderer: 'blocked', gpu: 'blocked' }).text, /does not arise/);
+  // One process is a number; the reading is the comparison. Same argument that put a control
+  // renderer in the walk at all.
+  assert.equal(servicePairReading({ renderer: undefined, gpu: 'blocked' }).kind, 'no-renderer-reading');
+});
+
+test('the census takes the GPU process and the WALK deliberately does not', () => {
+  const c = code(scan);
+  // A third address-space walk costs csc.exe plus a full VirtualQueryEx sweep inside the 90 s
+  // budget, and the 09-08 dump already reported the GPU process holding 2 MB across 25
+  // mappings — it does not hold the 32 GB. The census is the cheap half: ONE Start-Sleep is
+  // shared by every subject.
+  assert.match(c, /\$tthreads = @\(\$targets\)/, 'the census list starts from the walk list');
+  assert.match(c, /foreach \(\$tp in \$tthreads\) \{ \$t1\[\$tp\.Pid\]/, 'first snapshot covers the GPU process');
+  assert.match(c, /foreach \(\$tp in \$tthreads\) \{',/, 'second snapshot covers it too');
+  const walk = c.indexOf('foreach ($tp in $targets) { if (-not $vmOk)');
+  assert.ok(walk > -1, 'the WALK still iterates $targets — a third walk is what the budget cannot afford');
+  assert.doesNotMatch(c, /foreach \(\$tp in \$tthreads\) \{ if \(-not \$vmOk\)/, 'the walk must not take the census list');
+});
+
+test('the GPU process is matched on PARENT and is never the target itself', () => {
+  const c = code(scan);
+  // $ours spans BOTH profile families and the rec.gov keepalive opens its own browser twice
+  // per 30 minutes. A largest-first pick would sometimes read a DIFFERENT browser's idle GPU
+  // process and report it as this one's — a false confirmation of the leading hypothesis.
+  assert.match(c, /\$_\.PPid -eq \$tg\.PPid/, 'the sibling match: same browser generation');
+  assert.match(c, /\$_\.PPid -eq \$tg\.Pid/, 'and the case where the target IS the browser');
+  assert.match(c, /PPid = \$o\.ParentProcessId/, 'the parent has to be carried on the candidate or nothing can match on it');
+  // Without this the target matches its own sibling test, $tthreads carries it twice, and the
+  // readout pairs one process with a second copy of itself.
+  assert.match(c, /\$_\.Pid -ne \$tg\.Pid/, 'the target can never be its own service');
+  // No match REPORTS ITSELF rather than falling back to a guess.
+  assert.match(c, /'VMTHREAD gpu-process not found/, 'an absence that says so');
+});
+
+test('the readout RENDERS the GPU census and the pairing, or both are inert', () => {
+  const c = code(readout);
+  // The GPU process is not walked, so nothing in the per-pid loop would ever print it. A
+  // reading produced and never rendered is the shape this file has paid for seven times.
+  assert.match(c, /\n\s*printVerdict\('  ', servicePairReading\(\{/,
+    'the pairing verdict must be a rendered statement, not merely constructed');
+  assert.match(c, /type=gpu-process/, 'the GPU census line has to be found by type');
+  assert.match(c, /gpuNote: gpuMiss/, 'a deliberate miss must reach the verdict or it renders as silence');
+  assert.match(c, /rendererBusy = busy\.kind/, 'the renderer half of the pairing must be captured');
+  // Re-anchored 2026-09-09: the verdict is now assigned so its KIND can be paired. The
+  // property being pinned is unchanged — rendered, not merely constructed — and both halves
+  // are line-initial statements so `void 0 && ...` and `if (false) ...` cannot satisfy them.
+  assert.match(c, /\n\s*const busy = busyThreadReading\(\{/, 'the renderer verdict is computed once');
+  assert.match(c, /\n\s*printVerdict\('      ', busy\.text\)/, 'and rendered');
 });

@@ -11,11 +11,11 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ## VMTHREAD ANSWERED ON ITS FIRST RAMP (2026-09-09, evening)
 >
-> **State: master `45019ec` (#306 merged), and the mini-PC is on `45019ec` TOO — confirmed with
-> `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`. So both new
-> instruments are LIVE and have already fired.** 3/3 shards, health **19 of 19 ok**, no holds
-> queued, highest migration 076, main's block **077-079**. One open PR (**#307**) and it is the
-> **side lane's**.
+> **State: master `bbfca81` (#308 merged) plus #309; the mini-PC is on `45019ec`, confirmed with
+> `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version` — so VMTHREAD and
+> VMSPAN are live on the box and HAVE fired, and the GPU census in #309 is NOT on it yet.**
+> 3/3 shards, health **19 of 19 ok**, no holds queued, highest migration 076, main's block
+> **077-079**. One other open PR (**#307**) and it is the **side lane's**.
 >
 > **READ `CLAUDE.md` → "VMTHREAD ANSWERED ON ITS FIRST RAMP: THE MAIN THREAD IS SPINNING"
 > BEFORE ANYTHING ELSE.** From the 06:47 PT ramp scan:
@@ -40,25 +40,33 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > (16,383 regions across 16,382 allocation bases), not the adjective**: `SCATTERED` fires on the
 > 4-region control too and does not discriminate.
 >
-> ### THE NEXT MOVE — one line, no new instrument
+> ### THAT NEXT MOVE IS BUILT — IT NEEDS A BOX UPDATE AND ONE RAMP
 >
-> **Point `VMTHREAD` at the GPU PROCESS of the same family.** It runs on TARGET and CONTROL
-> today (`ramp-scan.mjs`). **Renderer main thread spinning + GPU process idle is the
-> client-allocates-service-never-drains shape**, which confirms the `MappedMemoryManager`
-> candidate from OUTSIDE, without asking Chromium anything. A GPU process that is also busy is a
-> different investigation. The same scan's `CHROME` lines already lean that way and are **not** a
-> thread census: `gpu-process privateMB=82 handles=609` against the target's `3325 / 18119`.
+> **`VMTHREAD` takes the GPU process of the target's own browser generation now** (#309). The
+> census list is `$tthreads` = `$targets` + that process; **the WALK deliberately keeps
+> `$targets`**, because a third `VirtualQueryEx` sweep costs csc.exe plus a full walk inside the
+> 90-second budget and the 09-08 dump already answered that question (2 MB across 25 mappings).
+> The census is the cheap half: **one `Start-Sleep` is shared by every subject.**
 >
-> A **stack of tid 7876** would name it outright and is the expensive route: it needs ETW with
-> symbols for `chrome.dll`, which the box does not have.
+> **PREDICTED READING, stated before it was written: BLOCKED, a busiest thread near 0 ms of the
+> 1200 ms window** — the known event has the GPU process at `privateMB=82 handles=609` against
+> the target's `3325 / 18119`. **That zero is the informative answer, not a blind one**, exactly
+> as the control renderer's 0 ms is what made the target's 1203 ms mean anything. A GPU process
+> also burning CPU is a different investigation. Both words are findings.
 >
-> **THE CANDIDATE IS SHARPER AND IS STILL A CANDIDATE — do not write it in.**
-> `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is 2,097,152 bytes against 32,778 MB /
-> 16,387 = **2.0000 MB**; one shared region per chunk, in the renderer, anonymous, READWRITE; JS
-> heap flat at 8-11 MB; RC runs a WebGL ArcGIS map whose command-buffer client lives on the main
-> thread; and `FreeUnused()` reclaims only blocks whose **tokens have passed**, which a thread
-> that never returns to its message loop cannot advance. It fits every reading and has been
-> tested by nothing. Three mechanisms have been guessed on this leak and each cost a session.
+> **HOW TO READ IT:** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` prints a
+> `GPU process (the service beside the ramping renderer)` block and then the pairing verdict.
+> - **IDLE beside a spinning renderer** is the client-allocates-service-never-drains shape and
+>   is what `MappedMemoryManager` predicts — and the verdict says **CONSISTENT WITH, NOT PROOF**
+>   in its own words, because an idle service is also what you see if nothing was ever sent to
+>   it. **Do not quote it as a confirmation.**
+> - **BUSY** is the branch that argues against the candidate. Take it as a new investigation.
+> - **`ABSENCE, not a reading`** is what renders until the box updates, and it is correct.
+>
+> **The hazard it is built around, and it is live on the very event this targets:** the 06:47
+> scan's own `CHROME` lines carry **two gpu-processes — `rc` at 82 MB and `recgov` at 23 MB**.
+> The match is on PARENT, never on size, and never on the target itself. A wrong parent
+> assumption yields `not found`, never a confident reading about another browser's process.
 >
 > ### TWO THINGS NOT TO MISREAD ON THE NEXT RAMP
 >
