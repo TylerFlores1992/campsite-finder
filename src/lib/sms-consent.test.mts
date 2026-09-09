@@ -17,13 +17,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { query, mutate } from './db/client';
 import { setUserPhone, clearUserPhone } from './sms-consent';
 
 // NOT a `user_` id. Every dashboard and the funnel readout scope real accounts with
 // `LIKE 'user\_%'`, so this fixture cannot reach a count, a rate or a revenue figure.
-const FIXTURE = '__smsconsent-test__';
+//
+// PER-RUN, NOT A FIXED SENTINEL, and that distinction is the one #203 left open. That PR gave
+// the hold suites a per-SUITE prefix plus a ten-minute age gate, which stops one suite wiping
+// another — and CLAUDE.md records in as many words that it does NOT cover "a suite with a
+// single FIXED sentinel deleted by exact id", which is "mutually destructive between two runs
+// of ITSELF". This repo runs two workflows per push (`push` and `pull_request`), so two runs
+// of this file against one production database is the ORDINARY case, not an edge: run B's
+// DELETE lands between run A's write and its read, and A fails asserting a consent date that
+// B removed. `email` is UNIQUE too, so the INSERT would collide outright.
+//
+// A per-run suffix removes the shared row entirely. The prefix stays so the sweep below can
+// find strays, and so nothing else can mistake these for real accounts.
+const PREFIX = '__smsconsent-';
+const FIXTURE = `${PREFIX}${randomUUID().slice(0, 8)}`;
 
 const read = () =>
   readFileSync(join(import.meta.dirname, '../app/api/user/phone/route.ts'), 'utf8');
@@ -31,10 +45,28 @@ const read = () =>
 const code = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
+/**
+ * Strays from a run that was killed before its `after()` — GitHub cancels the older run on a
+ * second push, and a cancelled run cleans up nothing.
+ *
+ * TEN MINUTES, matching #203, and the gate is the whole point: a CONCURRENT run's rows are
+ * seconds old and must survive, or this becomes the very cross-run destruction it exists to
+ * prevent. Only rows old enough that no live run could own them are swept.
+ */
+async function sweepStrays() {
+  await mutate(
+    `DELETE FROM users
+      WHERE id LIKE $1 AND created_at < NOW() - interval '10 minutes'`,
+    [`${PREFIX}%`]
+  );
+}
+
 async function reset() {
   await mutate('DELETE FROM users WHERE id = $1', [FIXTURE]);
   await mutate('INSERT INTO users (id, email) VALUES ($1, $2)', [FIXTURE, `${FIXTURE}@example.invalid`]);
 }
+
+test.before(sweepStrays);
 const consentOf = async () => {
   const r = await query<{ phone: string | null; sms_consent_at: string | null }>(
     'SELECT phone, sms_consent_at::text AS sms_consent_at FROM users WHERE id = $1',
