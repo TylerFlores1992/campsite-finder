@@ -5203,8 +5203,12 @@ the same night (below).
   **16,381 allocation bases**, 32,773 MB, 16,380 READWRITE, 64 sampled and all anonymous, with
   the control's file-backed positive control (`SortDefault.nls`) present as ever. **EXCESS
   37,054 MB against an OS commit gap of 36,730 MB** — the walk has named the 35 GB, again.
-- **AND THE REQUEST COUNTER WAS FLAT — 0 in 120s, 17,093 lifetime.** Fifth independent
-  confirmation that the RDR burst and the ramp are unrelated in both directions.
+- **AND THE REQUEST COUNTER CARRIED A LOAD BURST — 17,093 lifetime on a browser 3 MINUTES OLD,
+  with 0 in the last 120s.** "Flat" would be wrong: that lifetime count IS a burst, fired at page
+  load and over before the ramp peaked, exactly the recorded shape. Sixth sighting.
+  **It still says nothing about the leak**, and this event plus 09-07 20:42 are the pair that
+  show it: same 32 GB mapping, 17,093 lifetime requests here against **110** there. Independent
+  in both directions.
 - **SO THE FORK IS NARROWER AND IT IS NOT A FREE CHOICE.** Chromium's ownership graph is the
   only thing that can name the creator of an anonymous section, and reaching it requires the
   ramping renderer to answer. Firing the dump EARLIER is the obvious move and it costs the one

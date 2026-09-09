@@ -39,7 +39,9 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > **The walk is four for four** (16,385 regions / 16,381 allocation bases / 32,773 MB, all
 > anonymous, EXCESS 37,054 MB vs an OS gap of 36,730 MB) and **needs no repeating**. The
-> request counter was flat — the RDR burst and the ramp are unrelated, fifth confirmation. The
+> request counter carried a **load burst** (17,093 lifetime on a 3-minute-old browser, 0 in the
+> last 120s) — not "flat"; and against 09-07 20:42's **110** lifetime with the same 32 GB
+> mapping, the burst and the ramp stay independent in both directions. The
 > falsifiable candidate needs no instrument: `mapped_memory_chunk_size` is **2,097,152 bytes**,
 > which is 32,773 MB / 16,385 exactly.
 >
