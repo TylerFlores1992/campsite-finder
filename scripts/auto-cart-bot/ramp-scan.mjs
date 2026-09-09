@@ -490,6 +490,12 @@ export const RAMP_SCAN_PS = [
   // thread that is parked holding something would be a risk taken for no reading. 600 ms is
   // half a core over the 1200 ms window: the known event reads 1203 and a blocked thread
   // reads 0, so nothing has to be tuned for those two to separate.
+  // A NEGATIVE DELTA IS `WE COULD NOT MEASURE`, NOT `IT WAS NOT LOOPING`. The census writes -1
+  // when it could not read a thread's CPU time on both passes, and folding that into the
+  // BLOCKED branch would report an absent reading as a finding about the thread - the mistake
+  // this file has paid for more than any other. Both stand the sampler down; only one of them
+  // is a statement.
+  "  elseif ($spinDl -lt 0) { 'VMSTACK pid=' + $spinPid + ' tid=' + $spinTid + ' status=unmeasured deltaMs=' + [int]$spinDl + ' - the census could not compute a CPU delta, so whether it is looping is UNKNOWN' }",
   "  elseif ($spinDl -lt 600) { 'VMSTACK pid=' + $spinPid + ' tid=' + $spinTid + ' status=not-spinning deltaMs=' + [int]$spinDl + ' - a BLOCKED thread is parked in a wait and has no loop to name' }",
   '  else {',
   '    $rips = @([ChThr]::Sample([uint32]$spinTid, 48, 8));',

@@ -294,14 +294,17 @@ for (const s of scans) {
    * pairing on purpose: the pairing is about the candidate, and this is about the cause.
    */
   const stk = lines.find((l) => l.startsWith('VMSTACK pid='));
-  const stkSkip = lines.find((l) => l.startsWith('VMSTACK ') && / status=not-spinning/.test(l));
+  // Read the status VALUE rather than testing for one of them: `not-spinning` and `unmeasured`
+  // both stand the sampler down and only one is a statement about the thread.
+  const stkStatus = stk && / status=(\S+)/.exec(stk)?.[1];
   const stkNote = lines.find((l) => l.startsWith('VMSTACK unavailable') || l.startsWith('VMSTACK no '));
   const stkExec = lines.find((l) => l.startsWith('VMSTACKEXEC'));
+  const stkMod = lines.find((l) => l.startsWith('VMSTACKMOD'));
   const stkClass = lines.find((l) => l.startsWith('VMSTACKCLASS'));
   const stkSpread = lines.find((l) => l.startsWith('VMSTACKSPREAD'));
   const stkTops = lines.filter((l) => l.startsWith('VMSTACKTOP'));
   const stkBuild = lines.find((l) => l.startsWith('VMSTACKBUILD'));
-  if (stk || stkSkip || stkNote) {
+  if (stk || stkNote) {
     console.log('  >>> where the spinning thread is executing');
     if (stk) console.log(`      ${stk.replace('VMSTACK ', '')}`);
     // The per-address lines are the payload: on the module branch these ARE the offsets to
@@ -311,7 +314,7 @@ for (const s of scans) {
   }
   printVerdict('  ', spinSiteReading({
     present: Boolean(stk),
-    status: stkSkip ? 'not-spinning' : undefined,
+    status: stkStatus,
     read: stk && num(/ read=(\d+)/, stk),
     executable: stkExec && num(/ executable=(\d+)/, stkExec),
     notExecutable: stkExec && num(/ notExecutable=(\d+)/, stkExec),
@@ -321,7 +324,8 @@ for (const s of scans) {
     topAt: stkTops[0] && / at=(.+)$/.exec(stkTops[0])?.[1],
     topCount: stkTops[0] && num(/ count=(\d+)/, stkTops[0]),
     build: stkBuild && / chrome\.dll=(\S+)/.exec(stkBuild)?.[1],
-    note: (stkSkip ?? stkNote)?.replace('VMSTACK ', ''),
+    modules: stkMod && num(/ modules=(\d+)/, stkMod),
+    note: stkNote?.replace('VMSTACK ', ''),
   }).text);
 
   for (const l of lines) console.log(`    ${l}`);

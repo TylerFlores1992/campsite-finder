@@ -1,7 +1,68 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-09 (evening)** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-09 (evening, second pass)** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
+
+> ### THE GPU CENSUS ANSWERED — AND THE SPIN IS SAMPLED NOW (2026-09-09, evening)
+>
+> **STOP: the block below this one says the GPU reading is still outstanding. IT IS NOT.** A
+> ramp arrived at **10:19:40 PT, three minutes after the box took `2f006b7`**, and the census
+> fired on it. `#310` was committed at 10:47 PT still saying "only a ramp is outstanding" —
+> twenty-eight minutes after the ramp that answered it. **Read the corpus, not the state line:**
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`.
+>
+> ```
+> TARGET  pid=11588 renderer  SPINNING on the MAIN thread: tid=7128 deltaMs=1203 of 1200 (100%)
+> CONTROL pid=768   renderer  BLOCKED: busiest burned 0 ms of the same window (0%)
+> GPU     pid=7044  gpu-process  BLOCKED: busiest burned 0 ms across 21 threads (0%)
+> ```
+>
+> That is the **predicted BLOCKED branch** — the client-allocates-service-never-drains shape.
+> **Quote it as the verdict does: CONSISTENT WITH, NOT PROOF.** An idle service is also what you
+> see if nothing was ever sent to it; the branch that would have refuted the candidate did not
+> fire. Free corroboration in the same scan's baseline dump: a healthy browser's biggest
+> shared-memory owner is **`gpu/command_buffer_memory — 2 MB across 2 mappings`** — the same
+> allocator and the same 2 MB unit the ramping renderer holds 13,320 of.
+>
+> ### WHAT IS OUTSTANDING NOW: A BOX UPDATE, THEN ONE RAMP
+>
+> **`VMSTACK` samples the spinning thread's INSTRUCTION POINTER from outside the process.** The
+> census named the symptom; this names the cause, and its two answers are in opposite halves of
+> the system — **inside a loaded module** is a native loop (`chrome.dll+0xOFFSET`, symbolizable
+> offline against the build the scan reports beside it), **executable but in no loaded image** is
+> JIT, i.e. **RC's own page script**, and needs no Chromium change at all.
+>
+> **It REFUSES before it names either.** `Rip` is byte 248 of the x64 CONTEXT (six debug
+> registers, not eight); a wrong offset returns a stack pointer, which belongs to no module and
+> would render as JIT — a plausible answer for the wrong reason. Every address is asked whether
+> its page is executable, on an axis independent of the module check, and a non-executable
+> majority is refused. **If the readout prints `REFUSED`, fix the read before believing any
+> class.**
+>
+> **Bot-side, so it is inert until the mini-PC updates.** Confirm with
+> `npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`**. No live holds, so
+> the 6 h release gate is open.
+>
+> ### TWO THINGS NOT TO MISREAD
+>
+> **1. Ramps are every 2.3-4.2 h right now, not 5-28.** Five in 12.5 h off `bot_events`: 04:45,
+> 08:59, 11:30, 13:47, 17:19 UTC, with `bail:ramp` on all five 3-35 s after the scan. The next
+> reading is hours away.
+>
+> **2. "No ramp dump" on any of them is arithmetic.** The renewal trips read **46.7-59.1 s** in
+> `TAB CLOSES` against `MEM_DUMP_STALL_MS` of 90 s, so the trigger correctly never fired. Do not
+> lower it — a wedged renderer contributes zero allocator dumps anyway.
+>
+> ### WHEN A RAMP COULD BE FORCED: 22:33:36 PT TONIGHT — AND IT SHOULD NOT BE
+>
+> The recipe needs Okta GONE **and** the token dead. The token is dead; Okta binds, and its
+> ABSOLUTE cap is **FROZEN, measured rather than inferred**: across a real 20-minute probe the
+> CHECK advanced (18:55:27 -> 19:15:28 UTC) and `okta_expires_at` did not move from
+> `2026-09-10T05:33:36Z`. A rolling window prints exactly `+12.0000h` from the check; this read
+> `+10.64h` then `+10.30h`. So the window opens at **22:33:36 PT**, plus up to an hour for the
+> token behind it — and **four or five natural ramps land first.** Forcing is 3-in-6, spends the
+> warm-up's one turn per Okta lifetime, and costs a password submission from an address that has
+> eaten a twelve-hour block.
 
 > ### THE OUTSTANDING READING WAS TAKEN. HERE IS WHAT IT SAID.
 >

@@ -646,7 +646,75 @@ test('the readout RENDERS the verdict and the addresses, or both are inert', () 
   // nothing to act on.
   assert.match(readout, /spinSiteReading\(\{/, 'the verdict is computed');
   assert.match(readout, /printVerdict\('  ', spinSiteReading\(\{/, 'AND printed');
-  assert.match(readout, /VMSTACKTOP/, 'the sampled addresses are rendered');
+  // NOT a bare /VMSTACKTOP/: that string also appears on the line that FILTERS for it, so the
+  // assertion passed against a readout whose render had been replaced with `void stkTops`.
+  // Verified by mutation. Pin the console.log, which is the only part a reader ever sees.
+  assert.match(readout, /for \(const t of stkTops\.slice\(0, 6\)\) console\.log\(/,
+    'the sampled addresses must be PRINTED, not merely collected');
   assert.match(readout, /notExecutable: stkExec && num/, 'the refusal axis is passed, or it can never fire');
   assert.match(readout, /build: stkBuild/, 'and the build, or a native answer cannot be symbolized');
+});
+
+test('an empty module list REFUSES rather than reporting a unanimous JIT answer', () => {
+  // `anonExec` means "executable and in no loaded image". With zero modules enumerated that is
+  // true of every address by construction, so a failed Process.Modules read would manufacture
+  // a confident JIT verdict out of nothing — and send the next session hunting a script that
+  // is not there. Process.Modules can throw part-way against a process under pressure, which
+  // is exactly the process this runs against.
+  const r = spinSiteReading({
+    present: true, read: 40, executable: 40, notExecutable: 0, module: 0, anonExec: 40, modules: 0,
+  });
+  assert.equal(r.kind, 'no-modules');
+  assert.match(r.text, /REFUSED/);
+  assert.equal(/generated code/i.test(r.text), false, 'a refused reading must not also name a culprit');
+});
+
+test('a populated module list still lets the JIT branch fire', () => {
+  // The refusal must not swallow the real answer: this is the branch it exists to protect.
+  const r = spinSiteReading({
+    present: true, read: 40, executable: 40, notExecutable: 0, module: 1, anonExec: 39, modules: 118,
+  });
+  assert.equal(r.kind, 'jit');
+});
+
+test('a NULL module count is "not reported", never "zero modules found"', () => {
+  // Number(undefined) is NaN and never equals 0, so the undefined case guards itself — but
+  // Number(null) IS 0, and a check written without that in mind refuses every caller passing
+  // null. Verified by mutation: dropping the null handling makes this test, and only this
+  // test, fail. Same trap that made the ramp-dump grace inert on 2026-09-08.
+  const r = spinSiteReading({
+    present: true, read: 40, executable: 40, module: 0, anonExec: 40, modules: null,
+  });
+  assert.equal(r.kind, 'jit', 'null means the count was not reported, not that none were found');
+});
+
+test('a scan that reports no module count at all is not treated as zero', () => {
+  // An older box sends no VMSTACKMOD line. Absent and zero are different facts, and rounding
+  // the first to the second would refuse every reading from a box mid-update.
+  const r = spinSiteReading({ present: true, read: 40, executable: 40, module: 0, anonExec: 40 });
+  assert.equal(r.kind, 'jit', 'undefined means "not reported", not "none found"');
+});
+
+test('an UNMEASURED delta is a failed measurement, not a quiet thread', () => {
+  // The census writes -1 when it could not read a thread's CPU time on both passes. Folding
+  // that into BLOCKED would report an absent reading as a finding about the thread.
+  const r = spinSiteReading({ present: true, status: 'unmeasured' });
+  assert.equal(r.kind, 'unmeasured');
+  assert.match(r.text, /says nothing either way/);
+  assert.equal(/BLOCKED/.test(r.text), false, 'unmeasured must not borrow the blocked wording');
+});
+
+test('the script emits the two stand-downs as DIFFERENT statuses, and unmeasured is tested first', () => {
+  const c = code(scan);
+  assert.match(c, /elseif \(\$spinDl -lt 0\).*status=unmeasured/, 'a negative delta has its own status');
+  assert.match(c, /elseif \(\$spinDl -lt 600\).*status=not-spinning/);
+  assert.ok(c.indexOf('status=unmeasured') < c.indexOf('status=not-spinning'),
+    'the -lt 0 arm must come first, or a negative delta is swallowed by the -lt 600 arm');
+});
+
+test('the readout carries the status VALUE and the module count, or both guards are inert', () => {
+  assert.match(readout, /const stkStatus = stk && \/ status=\(\\S\+\)\/\.exec\(stk\)\?\.\[1\]/,
+    'the status is read as a value, not tested for one of them');
+  assert.match(readout, /status: stkStatus,/, 'and passed through');
+  assert.match(readout, /modules: stkMod && num/, 'the module count reaches the refusal, or it can never fire');
 });

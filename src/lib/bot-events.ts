@@ -640,7 +640,8 @@ export function mappedNameReading(
 }
 
 export type SpinSiteKind =
-  | 'unavailable' | 'not-sampled' | 'unread' | 'suspect-offset' | 'module' | 'jit' | 'mixed';
+  | 'unavailable' | 'not-sampled' | 'unmeasured' | 'unread' | 'no-modules'
+  | 'suspect-offset' | 'module' | 'jit' | 'mixed';
 
 /**
  * The leading class must carry this share of the samples that were read before it is named.
@@ -695,6 +696,14 @@ export function spinSiteReading(
     topCount?: unknown;
     /** chrome.dll's file version, without which an offset cannot be symbolized offline. */
     build?: string;
+    /**
+     * How many loaded images the scan could enumerate. LOAD-BEARING: classification is
+     * `inside one of these, or not`, so an enumeration that returned NOTHING makes every
+     * address fall outside every module and renders as JIT — a confident wrong answer built
+     * out of a failed read. `Process.Modules` can throw part-way for a process under
+     * pressure, which is exactly the process this runs against.
+     */
+    modules?: unknown;
     /** The script's own refusal, when it printed one. */
     note?: string;
   },
@@ -705,6 +714,13 @@ export function spinSiteReading(
       text: 'no VMSTACK reading in this scan'
         + (args.note ? ` — ${args.note}` : ' — the box predates the sampler, or it refused')
         + '. That is an ABSENCE, not a reading: it says nothing about what the thread was doing.',
+    };
+  }
+  if (args.status === 'unmeasured') {
+    return {
+      kind: 'unmeasured',
+      text: 'the census could not compute a CPU delta for that thread, so the sampler stood down. That is a '
+        + 'failed measurement and NOT a thread that was idle — it says nothing either way about a loop.',
     };
   }
   if (args.status === 'not-spinning') {
@@ -737,6 +753,25 @@ export function spinSiteReading(
   }
   const mod = Number(args.module) || 0;
   const jit = Number(args.anonExec) || 0;
+  // NO MODULE LIST, NO JIT VERDICT. `anonExec` means `executable and in no loaded image`, and
+  // with an empty enumeration that is true of EVERY address — so a failed `Process.Modules`
+  // read would manufacture a unanimous JIT answer out of nothing and send the next session
+  // hunting a script that is not there. The module branch is unaffected: it cannot fire.
+  // `== null` CATCHES BOTH, AND THE NULL HALF IS THE ONE THAT BITES. `Number(undefined)` is
+  // NaN, which never equals 0 — but `Number(null)` IS 0, so a caller passing null for "not
+  // reported" would be refused as "zero modules found". That exact trap made the ramp-dump
+  // grace inert on 2026-09-08 (`Number(null)` read as an expiry at the epoch), and it is
+  // cheap to close once rather than rediscover.
+  const modules = args.modules == null ? null : Number(args.modules);
+  if (modules === 0) {
+    return {
+      kind: 'no-modules',
+      text: `REFUSED: the scan enumerated ZERO loaded modules, so every one of the ${read} addresses falls `
+        + 'outside every image by construction and the JIT reading would be an artefact of a failed read, '
+        + 'not a finding. A renderer always has dozens of modules; this is Process.Modules failing, which it '
+        + 'can do against a process under pressure. Fix the enumeration before reading the classes.',
+    };
+  }
   const distinct = Number(args.distinct) || 0;
   const tight = distinct > 0
     ? ` ${distinct} distinct address(es) over ${read} samples`
