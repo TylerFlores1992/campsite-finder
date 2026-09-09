@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import {
   dumpJoinReading, mappedSwarmReading, mappedNameReading, NAME_CENSUS_ACCESS,
   busyThreadReading, mappedSpanReading, BUSY_THREAD_SHARE, servicePairReading,
+  spinSiteReading, SPIN_SITE_DOMINANCE,
 } from './bot-events';
 
 const scan = readFileSync('scripts/auto-cart-bot/ramp-scan.mjs', 'utf8');
@@ -449,4 +450,203 @@ test('the readout RENDERS the GPU census and the pairing, or both are inert', ()
   // are line-initial statements so `void 0 && ...` and `if (false) ...` cannot satisfy them.
   assert.match(c, /\n\s*const busy = busyThreadReading\(\{/, 'the renderer verdict is computed once');
   assert.match(c, /\n\s*printVerdict\('      ', busy\.text\)/, 'and rendered');
+});
+
+/**
+ * ── VMSTACK: WHAT IS THE SPINNING THREAD EXECUTING? (2026-09-09) ─────────────────────────
+ *
+ * The census answered SPINNING and stopped there. These cover the step past it — sampling the
+ * thread's instruction pointer from outside the process, which is the only route left once a
+ * renderer answers no CDP call — and above all the REFUSAL, because the failure mode here is
+ * not silence. `Rip` sits at byte 248 of the x64 CONTEXT (six debug registers, not eight); get
+ * that wrong and the read returns a stack pointer, which belongs to no module and renders as
+ * `JIT-compiled JavaScript`. A plausible answer for the wrong reason would send the next
+ * session to the wrong half of the system, so the executability check and its refusal are
+ * guarded harder than either verdict.
+ */
+test('a wrong CONTEXT offset is REFUSED rather than reported as JIT', () => {
+  // A spinning thread executes at every instant, so its instruction pointer is always on an
+  // executable page. Addresses that are not are not instruction pointers, whatever else the
+  // classes say — and the JIT branch is exactly what a stack pointer would masquerade as.
+  const r = spinSiteReading({ present: true, read: 40, executable: 6, notExecutable: 34, module: 0, anonExec: 6 });
+  assert.equal(r.kind, 'suspect-offset');
+  assert.match(r.text, /REFUSED/);
+  assert.equal(/JIT-compiled/.test(r.text), false, 'a refused reading must not also name a culprit');
+});
+
+test('the refusal outranks a class that would otherwise dominate', () => {
+  // The dangerous shape: a bad offset whose values happen to land inside a module's DATA. The
+  // module count would dominate and read as a clean native answer, so the executable axis has
+  // to be consulted FIRST and independently.
+  const r = spinSiteReading({ present: true, read: 40, executable: 1, notExecutable: 39, module: 38, anonExec: 0 });
+  assert.equal(r.kind, 'suspect-offset', 'a dominant module count must not outrank a non-executable majority');
+});
+
+test('samples inside a loaded module are a NATIVE loop, and carry the build that symbolizes it', () => {
+  const r = spinSiteReading({
+    present: true, read: 40, executable: 40, notExecutable: 0, module: 38, anonExec: 2,
+    distinct: 4, topAt: 'chrome.dll+0x9961707', topCount: 20, build: '141.0.7390.55',
+  });
+  assert.equal(r.kind, 'module');
+  assert.match(r.text, /141\.0\.7390\.55/, 'an offset with no build is a number nobody can symbolize');
+  assert.match(r.text, /chrome\.dll\+0x9961707/, 'the address to act on rides the verdict');
+  assert.match(r.text, /tight loop/);
+});
+
+test('a native reading with no build says the offset cannot be symbolized yet', () => {
+  const r = spinSiteReading({ present: true, read: 40, executable: 40, module: 40, anonExec: 0, distinct: 3 });
+  assert.equal(r.kind, 'module');
+  assert.match(r.text, /cannot be symbolized/);
+});
+
+test('executable pages in no loaded image are GENERATED CODE — the page, not Chromium', () => {
+  const r = spinSiteReading({
+    present: true, read: 40, executable: 40, notExecutable: 0, module: 1, anonExec: 39, distinct: 5,
+  });
+  assert.equal(r.kind, 'jit');
+  assert.match(r.text, /generated code/i);
+  assert.match(r.text, /no Chromium change/, 'the two branches must state their DIFFERENT fixes');
+  assert.match(r.text, /does NOT by itself name which script/, 'and must not overclaim which script');
+});
+
+test('neither class dominating is a real reading and refuses to choose', () => {
+  // The share gate, and the same reason the bucket verdict has one: a verdict that fires on
+  // every input fires on the inputs that mean nothing.
+  const r = spinSiteReading({ present: true, read: 40, executable: 40, module: 20, anonExec: 20, distinct: 30 });
+  assert.equal(r.kind, 'mixed');
+  assert.match(r.text, /NO CLASS DOMINATES/);
+  assert.equal(/generated code:|NATIVE CODE:/.test(r.text), false, 'a mixed reading names neither');
+});
+
+test('the dominance gate is bounded on both sides', () => {
+  assert.ok(SPIN_SITE_DOMINANCE > 0.5, 'at or below half, both classes could "dominate" at once');
+  assert.ok(SPIN_SITE_DOMINANCE <= 0.9, 'above this, a real answer with ordinary noise is reported as mixed');
+});
+
+test('no VMSTACK line is an ABSENCE, never "it was not looping"', () => {
+  const r = spinSiteReading({ present: false });
+  assert.equal(r.kind, 'unavailable');
+  assert.match(r.text, /ABSENCE, not a reading/);
+});
+
+test('a thread that read NOTHING is a failed measurement, not an answer', () => {
+  // read=0 means the thread could not be opened or every GetThreadContext failed. Rounding
+  // that to either class is the absent-reading-as-a-negative shape this file exists for.
+  const r = spinSiteReading({ present: true, read: 0, executable: 0, notExecutable: 0 });
+  assert.equal(r.kind, 'unread');
+  assert.match(r.text, /failed measurement/);
+});
+
+test('a BLOCKED thread is deliberately not sampled and says so', () => {
+  const r = spinSiteReading({ present: true, status: 'not-spinning' });
+  assert.equal(r.kind, 'not-sampled');
+  assert.match(r.text, /BLOCKED/);
+});
+
+test('the distinct count separates a tight loop from a wide one, and claims nothing more', () => {
+  const tight = spinSiteReading({ present: true, read: 40, executable: 40, module: 40, distinct: 3, build: 'x' });
+  const wide = spinSiteReading({ present: true, read: 40, executable: 40, module: 40, distinct: 37, build: 'x' });
+  assert.match(tight.text, /tight loop/);
+  assert.match(wide.text, /wide loop body/);
+  assert.equal(tight.kind, wide.kind, 'spread describes the loop, it does not change which class it is in');
+});
+
+test('the sampler NEVER touches the browser process, the GPU process or the control', () => {
+  // The one thread suspended is a renderer main thread the census has just found spinning —
+  // already doing nothing the product needs. The BROWSER process is not: it drives the profile
+  // lock, the supervisor channel and every other browser on the box.
+  const c = code(scan);
+  assert.match(c, /\$tp\.Pid -eq \$targets\[0\]\.Pid -and \$tp\.Ty -eq 'renderer'/,
+    'the spin carriers are set for the TARGET only, and only when it is a renderer');
+  assert.ok(!/\$spinPid = \$tthreads/.test(c), 'the GPU process is never a sample subject');
+});
+
+test('a blocked thread is never suspended — the gate is the census delta, not the verdict text', () => {
+  const c = code(scan);
+  assert.match(c, /elseif \(\$spinDl -lt 600\) \{ 'VMSTACK pid='/,
+    'below half a core over the 1200 ms window it stands down rather than suspending');
+  const gate = c.indexOf('$spinDl -lt 600');
+  const sample = c.indexOf('[ChThr]::Sample');
+  assert.ok(gate > -1 && sample > gate, 'and the stand-down is evaluated BEFORE the sampler runs');
+});
+
+test('every suspend is paired with its resume in a C# finally, not on the next line', () => {
+  // A throw between the suspend and the resume is the one failure mode that could leave a
+  // thread stopped. PowerShell cannot be interrupted inside the C# method, so the pairing has
+  // to live there rather than in the script around it.
+  assert.match(scan, /finally \{ ResumeThread\(h\); \}/,
+    'the resume must be in a finally — a resume on the line after the read is not paired');
+  const susp = scan.indexOf('SuspendThread(h) != uint.MaxValue');
+  const res = scan.indexOf('finally { ResumeThread(h); }');
+  assert.ok(susp > -1 && res > susp, 'and it must follow the suspend it pairs with');
+});
+
+test('the sampler compiles into its OWN class under its OWN flag, or a fault costs the walk', () => {
+  // VMTHREAD's header records the standing decision against P/Invoke here: PowerShell parses
+  // the whole script before running any of it and a fault costs the region walk, which is the
+  // one instrument that still works. A second Add-Type under a second flag is what answers it.
+  const c = code(scan);
+  assert.match(c, /public class ChThr/, 'a separate class, not more DllImports bolted onto ChMem');
+  assert.match(c, /catch \{ \$stkOk = \$false; 'VMSTACK unavailable: Add-Type '/,
+    'a failed compile must stand THIS instrument down and say so');
+  assert.ok(c.indexOf('$cs2 =') > c.indexOf('Add-Type -TypeDefinition $cs -ErrorAction Stop'),
+    'and it must compile AFTER ChMem, so a fault here cannot reach the walk');
+  assert.ok(c.indexOf("'VMWALK pid='") < c.indexOf("'VMSTACK pid='"), 'the walk is emitted first');
+});
+
+test('the thread handle asks for suspend and context ONLY — never to read the process', () => {
+  // 10 = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT. Same rule as the walk: query, never read.
+  //
+  // ASSERTED AGAINST THE EMITTED SCRIPT, NOT THE FILE. The comments above these lines NAME the
+  // forbidden calls in order to explain why they are not used, so a whole-file scan fails on
+  // its own explanation — and the fix a hurried reader reaches for is deleting the comment.
+  // What runs is the subject; a comment cannot copy anything.
+  const ps = /export const RAMP_SCAN_PS = \[([\s\S]*?)\n\]\.join/.exec(scan)?.[1] ?? '';
+  assert.ok(ps.length > 0, 'the PS block must be findable');
+  const emitted = ps.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.match(emitted, /OpenThread\(10, false, tid\)/, 'nothing wider than pause-and-read-a-register');
+  for (const forbidden of ['ReadProcessMemory', 'MiniDump', 'WriteProcessMemory']) {
+    assert.doesNotMatch(emitted, new RegExp(forbidden), `${forbidden} would copy the process's memory`);
+  }
+});
+
+test('the CONTEXT is aligned by hand, because a stack struct is only guaranteed 8', () => {
+  // x64 GetThreadContext requires 16-byte alignment. The offsets are asserted by value because
+  // they are the whole correctness of the read: 48 = ContextFlags, 1048577 = CONTEXT_CONTROL,
+  // 248 = Rip in a struct carrying SIX debug registers.
+  assert.match(scan, /Marshal\.AllocHGlobal\(1248\)/, '1232 for the CONTEXT plus 16 of slack');
+  assert.match(scan, /\(raw\.ToInt64\(\) \+ 15\) & ~15L/, 'rounded UP to the next 16-byte boundary');
+  assert.match(scan, /Marshal\.WriteInt32\(c, 48, 1048577\)/, 'ContextFlags = CONTEXT_CONTROL');
+  assert.match(scan, /Marshal\.ReadInt64\(c, 248\)/, 'Rip');
+});
+
+test('the two axes are counted independently, or a bad offset hides inside a module', () => {
+  // `is it in a loaded image` and `is its page executable` answer different questions.
+  // Collapsing them would let a wrong offset returning a pointer into chrome.dll's DATA count
+  // as a module hit and read as a clean answer.
+  const c = code(scan);
+  assert.match(c, /\$nExec = \$nExec \+ 1 \} else \{ \$ex = 0; \$nNon = \$nNon \+ 1 \}/);
+  assert.match(c, /if \(\$hit\) \{ \$nMod = \$nMod \+ 1 \} elseif \(\$ex -eq 1\) \{ \$nJit = \$nJit \+ 1 \}/);
+  assert.match(c, /'VMSTACKEXEC pid='/, 'the executable axis is emitted on its own line');
+  assert.match(c, /'VMSTACKCLASS pid='/, 'and the module axis on another');
+});
+
+test('a failed VirtualQueryEx never attributes the PREVIOUS address\'s protection', () => {
+  // $mbi2 is reused across iterations, so an unguarded read after a failed query reports the
+  // last address's page as this one's.
+  const c = code(scan);
+  assert.match(c, /\$ex = -1;/, 'the per-iteration reset');
+  assert.match(c, /if \(\$ex -eq 0\) \{ \$lab = 'NOT-EXECUTABLE protect=0x' \+ \$mbi2\.Protect/,
+    'and every use of $mbi2 is gated on this iteration having answered');
+});
+
+test('the readout RENDERS the verdict and the addresses, or both are inert', () => {
+  // The pure function can be perfect and unreachable. And on the module branch the per-address
+  // lines ARE the payload — a verdict with no offset leaves a reader with a conclusion and
+  // nothing to act on.
+  assert.match(readout, /spinSiteReading\(\{/, 'the verdict is computed');
+  assert.match(readout, /printVerdict\('  ', spinSiteReading\(\{/, 'AND printed');
+  assert.match(readout, /VMSTACKTOP/, 'the sampled addresses are rendered');
+  assert.match(readout, /notExecutable: stkExec && num/, 'the refusal axis is passed, or it can never fire');
+  assert.match(readout, /build: stkBuild/, 'and the build, or a native answer cannot be symbolized');
 });

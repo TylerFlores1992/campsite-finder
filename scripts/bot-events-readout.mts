@@ -48,7 +48,7 @@
  */
 import {
   recentBotEvents, requestCountReason, loopAnswerReading, dumpJoinReading, mappedSwarmReading,
-  mappedNameReading, busyThreadReading, mappedSpanReading, servicePairReading,
+  mappedNameReading, busyThreadReading, mappedSpanReading, servicePairReading, spinSiteReading,
   type BotEventRow, type RequestCountReason, type BusyThreadKind,
 } from '@/lib/bot-events';
 
@@ -284,6 +284,44 @@ for (const s of scans) {
     renderer: rendererBusy,
     gpu: gpuBusy?.kind,
     gpuNote: gpuMiss?.replace('VMTHREAD ', ''),
+  }).text);
+
+  /**
+   * WHERE THE SPINNING THREAD IS EXECUTING — the step past the census.
+   *
+   * The census says the main thread is in a loop; this says whether that loop is Chromium's
+   * code or the page's, which are different bugs with different fixes. It renders BELOW the
+   * pairing on purpose: the pairing is about the candidate, and this is about the cause.
+   */
+  const stk = lines.find((l) => l.startsWith('VMSTACK pid='));
+  const stkSkip = lines.find((l) => l.startsWith('VMSTACK ') && / status=not-spinning/.test(l));
+  const stkNote = lines.find((l) => l.startsWith('VMSTACK unavailable') || l.startsWith('VMSTACK no '));
+  const stkExec = lines.find((l) => l.startsWith('VMSTACKEXEC'));
+  const stkClass = lines.find((l) => l.startsWith('VMSTACKCLASS'));
+  const stkSpread = lines.find((l) => l.startsWith('VMSTACKSPREAD'));
+  const stkTops = lines.filter((l) => l.startsWith('VMSTACKTOP'));
+  const stkBuild = lines.find((l) => l.startsWith('VMSTACKBUILD'));
+  if (stk || stkSkip || stkNote) {
+    console.log('  >>> where the spinning thread is executing');
+    if (stk) console.log(`      ${stk.replace('VMSTACK ', '')}`);
+    // The per-address lines are the payload: on the module branch these ARE the offsets to
+    // symbolize, and printing only the verdict would leave a reader with a conclusion and
+    // nothing to act on.
+    for (const t of stkTops.slice(0, 6)) console.log(`          ${t.replace(/^VMSTACKTOP pid=\d+ /, '')}`);
+  }
+  printVerdict('  ', spinSiteReading({
+    present: Boolean(stk),
+    status: stkSkip ? 'not-spinning' : undefined,
+    read: stk && num(/ read=(\d+)/, stk),
+    executable: stkExec && num(/ executable=(\d+)/, stkExec),
+    notExecutable: stkExec && num(/ notExecutable=(\d+)/, stkExec),
+    module: stkClass && num(/ module=(\d+)/, stkClass),
+    anonExec: stkClass && num(/ anonExec=(\d+)/, stkClass),
+    distinct: stkSpread && num(/ distinct=(\d+)/, stkSpread),
+    topAt: stkTops[0] && / at=(.+)$/.exec(stkTops[0])?.[1],
+    topCount: stkTops[0] && num(/ count=(\d+)/, stkTops[0]),
+    build: stkBuild && / chrome\.dll=(\S+)/.exec(stkBuild)?.[1],
+    note: (stkSkip ?? stkNote)?.replace('VMSTACK ', ''),
   }).text);
 
   for (const l of lines) console.log(`    ${l}`);

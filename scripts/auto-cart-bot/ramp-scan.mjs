@@ -356,6 +356,10 @@ export const RAMP_SCAN_PS = [
   // - and PowerShell parses the WHOLE script before running any of it, so a syntax error here
   // costs the region walk too. `StartTime` identifies the main thread for free: the earliest
   // thread in a process is the one it started on.
+  // Carried OUT of the census so the sampler below can point at the thread it found. Declared
+  // here rather than inside the try, or a census that throws leaves them undefined and the
+  // sampler reads that as `no thread` instead of `the census failed` — two different faults.
+  '$spinPid = 0; $spinTid = 0; $spinDl = -1; $spinMain = $false;',
   '$busyMs = 0;',
   'try {',
   '  $t1 = @{};',
@@ -383,8 +387,178 @@ export const RAMP_SCAN_PS = [
   "    'VMTHREAD pid=' + $tp.Pid + ' type=' + $tp.Ty + ' status=ok threads=' + $rows.Count + ' windowMs=1200 busyMs=' + [int]$busyMs + ' mainTid=' + $mainId;",
   '    $rt = @($rows | Sort-Object -Property Dl -Descending | Select-Object -First 6);',
   "    foreach ($rw in $rt) { 'VMTHREADTOP pid=' + $tp.Pid + ' tid=' + $rw.Tid + ' main=' + ($rw.Tid -eq $mainId) + ' cpuMs=' + [int]$rw.Cpu + ' deltaMs=' + [int]$rw.Dl + ' state=' + $rw.St + ' wait=' + $rw.Wt };",
+  // THE TARGET ONLY, AND ONLY WHEN IT IS A RENDERER. $targets[0] is the largest by private
+  // bytes, which at the trigger IS the ramping renderer — but `largest` is not a type check,
+  // and the one thing the sampler below must never suspend is the BROWSER process's main
+  // thread, which is where the profile lock, the supervisor channel and every other browser
+  // this box runs are driven from. A wedged renderer is already doing nothing; the browser
+  // process is not. The control renderer and the GPU process are never sampled either: they
+  // are healthy by construction and there is nothing to name in a thread that is not looping.
+  "    if ($targets.Count -gt 0 -and $tp.Pid -eq $targets[0].Pid -and $tp.Ty -eq 'renderer' -and $rt.Count -gt 0) { $spinPid = $tp.Pid; $spinTid = $rt[0].Tid; $spinDl = $rt[0].Dl; $spinMain = ($rt[0].Tid -eq $mainId) };",
   '  };',
   "} catch { 'VMTHREAD unavailable: ' + $_.Exception.Message };",
+  // -- VMSTACK: WHERE IS THE SPINNING THREAD ACTUALLY EXECUTING? --------------------------
+  //
+  // The census above named the SYMPTOM and stopped one step short of the cause: the ramping
+  // renderer's MAIN thread burns 100% of a core (1203 ms of a 1200 ms window) against a
+  // control renderer at 0%. That one fact explains every instrument that has ever failed here
+  // at once - CDP is serviced on the main thread, so `newCDPSession`, `Performance.getMetrics`
+  // and `Tracing.requestMemoryDump` were never three problems, they were one. What it does NOT
+  // say is what the loop is, and the loop is the bug.
+  //
+  // NOTHING THAT ASKS THE RENDERER CAN ANSWER THIS. A wedged renderer contributes ZERO
+  // allocator dumps at every dump level (measured in `dump-wedge-probe.mjs`: Chromium's own
+  // coordinator gives up at ~15,050 ms and emits an EMPTY process dump), and the alloc trail
+  // read `EMPTY - that renderer answered no CDP call at all` across a whole 165 s browser
+  // life, so there is no `ask it before it goes quiet` window either. It is quiet from birth.
+  // This asks WINDOWS for the thread's instruction pointer, which needs nothing from the
+  // process and cannot be refused by a busy one.
+  //
+  // PREDICTED READING, stated before it was built (the 2026-09-08 rule), and it is NOT the ~0
+  // that rule forbids. A thread burning a full core is executing at every instant, so every
+  // sample lands somewhere, and the classification below has two interesting outcomes:
+  //
+  //   * most samples inside a LOADED MODULE -> `chrome.dll+0x...`. The offset is fixed for a
+  //     build, so it symbolizes offline against that Chromium version and names the function.
+  //     The fix is then a Chromium-level one: a flag, or not using the feature.
+  //   * most samples at an address with NO loaded image behind it -> JIT-compiled code, i.e.
+  //     RC's own page script is the loop. The fix is then on OUR side of the page and needs
+  //     no Chromium change at all.
+  //
+  // Those two need opposite fixes and nothing has ever separated them. A third outcome is
+  // also a reading: samples spread over hundreds of distinct addresses would mean this is not
+  // a tight loop at all, and the `MappedMemoryManager` story would need re-examining.
+  //
+  // WHY THIS IS NOT THE FORBIDDEN `ReadProcessMemory` OR MINIDUMP. Those are banned because
+  // they COPY the process's memory: a dump of a 40 GB process is the cure arriving as part of
+  // the disease, and a renderer's pages are RC session material. This collects a REGISTER -
+  // one 8-byte instruction pointer - plus the name of the module it falls inside. No page of
+  // the process is ever read, and neither a code address nor a DLL name can carry a token.
+  // Same rule the walk already follows: query, never read.
+  //
+  // WHY SUSPENDING IS ACCEPTABLE, AND IT IS AN ARGUMENT ABOUT THIS THREAD SPECIFICALLY.
+  // `GetThreadContext` needs the thread suspended to return a meaningful context. The thread
+  // suspended here is, by the census's own reading, in a loop that never returns to its
+  // message loop - it is already doing nothing the product needs, so pausing it for
+  // microseconds cannot make the page less responsive than the spin already has. Every
+  // suspend is paired with its resume in a C# `finally` inside ONE method, so PowerShell
+  // cannot be interrupted between them; and `bail:ramp` fired 3-35 s after every one of the
+  // five ramps on 2026-09-09, so even a leaked suspend is bounded by a browser that is being
+  // destroyed anyway. It never touches the browser process, the GPU process or the control.
+  //
+  // A SECOND Add-Type AND A SECOND CLASS, WHICH IS WHAT MAKES THIS SAFE TO ADD AT ALL.
+  // `VMTHREAD`'s header records the standing decision against P/Invoke here: a C# blob cannot
+  // be tested from the dev container, and PowerShell parses the WHOLE script before running
+  // any of it, so a fault costs the region walk too. Compiling into its own class under its
+  // own flag is the answer to that: a C# failure in `ChThr` sets `$stkOk` and costs THIS
+  // instrument only, leaving `ChMem` - and the walk, the one thing still working - untouched.
+  // And it goes LAST, after every reading that already answers.
+  '$q2 = [char]34;',
+  "$cs2 = 'using System; using System.Runtime.InteropServices; public class ChThr {' +",
+  "  ' [DllImport(' + $q2 + 'kernel32.dll' + $q2 + ', SetLastError=true)] public static extern IntPtr OpenThread(uint a, bool i, uint t);' +",
+  "  ' [DllImport(' + $q2 + 'kernel32.dll' + $q2 + ', SetLastError=true)] public static extern bool CloseHandle(IntPtr h);' +",
+  "  ' [DllImport(' + $q2 + 'kernel32.dll' + $q2 + ', SetLastError=true)] public static extern uint SuspendThread(IntPtr h);' +",
+  "  ' [DllImport(' + $q2 + 'kernel32.dll' + $q2 + ', SetLastError=true)] public static extern int ResumeThread(IntPtr h);' +",
+  "  ' [DllImport(' + $q2 + 'kernel32.dll' + $q2 + ', SetLastError=true)] public static extern bool GetThreadContext(IntPtr h, IntPtr c);' +",
+  // THREAD_SUSPEND_RESUME (0x0002) | THREAD_GET_CONTEXT (0x0008) = 10. Nothing wider: this
+  // handle must not be able to read or write the process, only to pause and read a register.
+  "  ' public static long[] Sample(uint tid, int n, int gapMs) {' +",
+  "  '   long[] o = new long[n]; IntPtr h = OpenThread(10, false, tid); if (h == IntPtr.Zero) return new long[0];' +",
+  // THE x64 CONTEXT MUST BE 16-BYTE ALIGNED and a C# struct on the stack is only guaranteed 8.
+  // So it is raw memory, aligned by hand and read with Marshal at fixed offsets, rather than a
+  // LayoutKind.Explicit struct that would be one wrong FieldOffset away from returning a
+  // plausible number for the wrong register. 1232 = sizeof(CONTEXT) and +16 is the alignment
+  // slack; 48 = ContextFlags, 1048577 = CONTEXT_CONTROL (0x00100001), 248 = Rip.
+  "  '   IntPtr raw = Marshal.AllocHGlobal(1248);' +",
+  "  '   try { long al = (raw.ToInt64() + 15) & ~15L; IntPtr c = new IntPtr(al);' +",
+  "  '     for (int i = 0; i < n; i++) { long rip = 0;' +",
+  "  '       if (SuspendThread(h) != uint.MaxValue) {' +",
+  "  '         try { Marshal.WriteInt32(c, 48, 1048577); if (GetThreadContext(h, c)) rip = Marshal.ReadInt64(c, 248); }' +",
+  // THE RESUME IS IN A `finally`, NOT ON THE LINE AFTER THE READ. A throw between the suspend
+  // and the resume is the one failure mode that could leave a thread stopped, and it is the
+  // only one worth engineering against here.
+  "  '         finally { ResumeThread(h); } }' +",
+  "  '       o[i] = rip; System.Threading.Thread.Sleep(gapMs); } }' +",
+  "  '   finally { Marshal.FreeHGlobal(raw); CloseHandle(h); } return o; } }';",
+  '$stkOk = $vmOk;',
+  "if ($stkOk) { try { Add-Type -TypeDefinition $cs2 -ErrorAction Stop } catch { $stkOk = $false; 'VMSTACK unavailable: Add-Type ' + $_.Exception.Message } };",
+  'try {',
+  "  if (-not $stkOk) { 'VMSTACK unavailable: the walk stood down, so nothing compiled to sample with' }",
+  "  elseif ($spinTid -eq 0) { 'VMSTACK no renderer target in the thread census, so there is no thread to sample' }",
+  // A BLOCKED THREAD IS NOT THE SUBJECT and is not sampled. Its instruction pointer would sit
+  // in a wait inside ntdll, which the census already reports as `wait=`, so suspending a
+  // thread that is parked holding something would be a risk taken for no reading. 600 ms is
+  // half a core over the 1200 ms window: the known event reads 1203 and a blocked thread
+  // reads 0, so nothing has to be tuned for those two to separate.
+  "  elseif ($spinDl -lt 600) { 'VMSTACK pid=' + $spinPid + ' tid=' + $spinTid + ' status=not-spinning deltaMs=' + [int]$spinDl + ' - a BLOCKED thread is parked in a wait and has no loop to name' }",
+  '  else {',
+  '    $rips = @([ChThr]::Sample([uint32]$spinTid, 48, 8));',
+  '    $good = @($rips | Where-Object { $_ -ne 0 });',
+  // `samples` and `read` are printed apart on purpose: a run where the thread could not be
+  // opened, or where every GetThreadContext failed, returns zeros - and `read=0` says THAT
+  // rather than looking like a thread with nowhere to be. An absent reading is never a
+  // negative, which is the mistake this file has paid for more than any other.
+  "    'VMSTACK pid=' + $spinPid + ' tid=' + $spinTid + ' main=' + $spinMain + ' deltaMs=' + [int]$spinDl + ' samples=' + $rips.Count + ' read=' + $good.Count;",
+  '    $pr2 = $null; try { $pr2 = Get-Process -Id $spinPid -ErrorAction Stop } catch { };',
+  // CLASSIFICATION IS PURE POWERSHELL AND ADDS NO FURTHER P/INVOKE. `Process.Modules` already
+  // carries every loaded image with its base and size, so an address either falls inside one
+  // or it does not - and `it does not` IS the JIT answer. Doing this through
+  // GetMappedFileNameW would have meant more DllImports in a blob nothing can test, for the
+  // same reading.
+  '    $mods = @(); if ($pr2 -ne $null) { try { foreach ($m in $pr2.Modules) {',
+  "      $vv = ''; try { $vv = [string]$m.FileVersionInfo.FileVersion } catch { };",
+  '      $mods += New-Object PSObject -Property @{ B = $m.BaseAddress.ToInt64(); E = $m.BaseAddress.ToInt64() + $m.ModuleMemorySize; N = $m.ModuleName; V = $vv } } } catch { } };',
+  "    'VMSTACKMOD pid=' + $spinPid + ' modules=' + $mods.Count;",
+  // The build is what makes an offset symbolizable offline, and it is a field we already hold.
+  // Without it a `chrome.dll+0x...` is a number nobody can turn into a function name.
+  "    foreach ($m in $mods) { if ($m.N -eq 'chrome.dll' -and $m.V -ne '') { 'VMSTACKBUILD pid=' + $spinPid + ' chrome.dll=' + $m.V } };",
+  // IS THE SAMPLED VALUE EVEN CODE? THE ONE CHECK THAT STOPS A WRONG OFFSET READING AS AN
+  // ANSWER. `Rip` sits at byte 248 of the x64 CONTEXT because that struct carries SIX debug
+  // registers and not eight - and if that were misremembered, the read would return `Rbp` or
+  // `R15` instead: a stack or data pointer, which falls inside NO loaded module and would be
+  // labelled `anon-exec`, i.e. reported as JIT-compiled JavaScript. A plausible answer for the
+  // wrong reason is the single most expensive thing this instrument could produce, so every
+  // address is asked whether its page is EXECUTABLE (protect 0x10/0x20/0x40/0x80, mask 240).
+  // Code is; a stack is not. If the non-executable count dominates, the offset or the sample
+  // is wrong and the readout refuses rather than naming a culprit.
+  //
+  // PROCESS_QUERY_INFORMATION only - narrower than the walk's 0x410, because VirtualQueryEx
+  // needs no VM_READ and this handle has no reason to be able to read the process.
+  '    $agg = @{}; $nExec = 0; $nNon = 0; $nUnk = 0; $nMod = 0; $nJit = 0;',
+  '    $hs = [ChMem]::OpenProcess(1024, $false, $spinPid); if ($hs -eq [IntPtr]::Zero) { $hs = [ChMem]::OpenProcess(4096, $false, $spinPid) };',
+  "    $mbi2 = New-Object 'ChMem+MBI'; $sz2 = [IntPtr][Runtime.InteropServices.Marshal]::SizeOf($mbi2);",
+  '    foreach ($rip in $good) {',
+  // $ex is per-iteration and gates every use of $mbi2 below it: a failed VirtualQueryEx leaves
+  // the struct holding the PREVIOUS address's protection, and reading that would attribute one
+  // sample's page to another.
+  '      $ex = -1;',
+  '      if ($hs -ne [IntPtr]::Zero) { $rq = [ChMem]::VirtualQueryEx($hs, [IntPtr]$rip, [ref]$mbi2, $sz2);',
+  '        if ($rq -ne [IntPtr]::Zero) { if (($mbi2.Protect -band 240) -ne 0) { $ex = 1; $nExec = $nExec + 1 } else { $ex = 0; $nNon = $nNon + 1 } } };',
+  '      if ($ex -eq -1) { $nUnk = $nUnk + 1 };',
+  // THE TWO AXES ARE COUNTED INDEPENDENTLY, and that is the point. `is it inside a loaded
+  // image` and `is its page executable` answer different questions, and collapsing them would
+  // hide the failure this guard exists for: a wrong CONTEXT offset that happened to return a
+  // pointer into chrome.dll's DATA would be counted as a module hit and read as an answer.
+  // Kept apart, it still shows up as notExecutable.
+  '      $hit = $false;',
+  "      foreach ($m in $mods) { if ($rip -ge $m.B -and $rip -lt $m.E) { $hit = $true; $lab = $m.N + '+0x' + ($rip - $m.B).ToString('x'); break } };",
+  '      if ($hit) { $nMod = $nMod + 1 } elseif ($ex -eq 1) { $nJit = $nJit + 1 };',
+  // The LABEL order is not the counting order: a non-executable address is the alarm, so it
+  // wins the line a human reads even when it falls inside a module.
+  "      if (-not $hit) { $lab = 'anon-exec: no loaded image at this address, so JIT-compiled JavaScript or other generated code' };",
+  "      if (-not $hit -and $ex -eq -1) { $lab = 'unclassified: VirtualQueryEx could not answer for this address' };",
+  "      if ($ex -eq 0) { $lab = 'NOT-EXECUTABLE protect=0x' + $mbi2.Protect.ToString('x') + ' - this address is not code' };",
+  '      if ($agg.ContainsKey($lab)) { $agg[$lab] = $agg[$lab] + 1 } else { $agg[$lab] = 1 } };',
+  '    if ($hs -ne [IntPtr]::Zero) { [void][ChMem]::CloseHandle($hs) };',
+  "    'VMSTACKEXEC pid=' + $spinPid + ' executable=' + $nExec + ' notExecutable=' + $nNon + ' unknown=' + $nUnk;",
+  "    'VMSTACKCLASS pid=' + $spinPid + ' module=' + $nMod + ' anonExec=' + $nJit;",
+  // The DISTINCT count is the third reading: a handful of addresses is a tight loop, hundreds
+  // is not one, and a top-6 alone cannot tell those two apart.
+  "    'VMSTACKSPREAD pid=' + $spinPid + ' distinct=' + $agg.Keys.Count + ' of=' + $good.Count;",
+  '    $ag = @($agg.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 6);',
+  "    foreach ($a in $ag) { 'VMSTACKTOP pid=' + $spinPid + ' count=' + $a.Value + ' at=' + $a.Key };",
+  '  };',
+  "} catch { 'VMSTACK unavailable: ' + $_.Exception.Message };",
   "'END';",
 ].join(' ');
 
