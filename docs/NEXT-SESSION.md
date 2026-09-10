@@ -37,8 +37,8 @@ Three things that will bite in the first ten minutes:
 
 | | |
 |---|---|
-| master | `52d6e74` (#319) — **verify against `origin/master`, this line ages** |
-| mini-PC | `52d6e74`, i.e. box and web agree (read from `git-status`) |
+| master | `3d92065` — **verify against `origin/master`, this line ages** |
+| mini-PC | `52d6e74`; the gap to master contains **zero bot-side files** (`git diff <boxSha>..origin/master -- scripts/auto-cart-bot/ mini-pc/` is empty), so no update is needed. Confirm by DIFF, not by the warn |
 | health | **18 of 19 ok**, one documented-benign warn |
 | fleet | 3/3 shards held, heartbeat 1s, 12 watches, capacity 8/12 |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
@@ -58,10 +58,32 @@ exact reading has sent people to the box twice over sessions that repaired thems
 **ESTABLISHED, and none of it needs re-deriving:**
 
 - The ramping renderer maps **~16,384 regions of 2 MiB = 32 GiB exactly**, one allocation base
-  each, all anonymous, all READWRITE, pagefile-backed and largely untouched. Nine walks: the top
-  cluster lands within **0.02% of 16,384** and the three lower readings are consistent with
-  catching a fill in progress. So it is a **ceiling**, not a runaway — "what has a 32 GiB budget?"
-  is a sharper question than "what leaks?".
+  each, all anonymous, all READWRITE, pagefile-backed and largely untouched.
+- **THE 2^14 CAP IS REAL AND SEPARABLE FROM THE COMMIT LIMIT** (settled 2026-09-10). Against the
+  headroom each burst actually had, **9 of 12 walks had room for 1,091-2,808 MORE sections and
+  stopped at 16,384 ± 3 anyway**; the 3 that fell short are exactly the 3 lowest commit limits.
+  That closes the live doubt that the count was an artifact of when the scan fired.
+  **"The three lower readings are consistent with catching a fill in progress" is WITHDRAWN** —
+  they are the commit-limited three, which makes such a count a FLOOR on what the allocator
+  wanted rather than a sample of its progress.
+- **THE WALK-TIME "a few hundred MB from the commit limit" IS THE AFTERMATH, NOT THE STOP.** The
+  walk fires ~77 s late and the private-byte climb eats the headroom in between. The sequence is
+  three acts: a <=34 s burst of 16,384 sections, then ~2 minutes of private climb at
+  450-900 MB/min that walks the box to the edge, then the bail.
+- **DO NOT enlarge the pagefile.** On this evidence that buys a bigger burst up to 32 GiB and
+  nothing else. And note the real danger is not the peak: it is that the box is walked to within
+  a few hundred MB of its commit limit, which is how `supervise.ps1` could not spawn on 08-12.
+- **THE 32 GiB ARRIVES IN A BURST OF <=34 SECONDS** (2026-09-10), measured twice at sub-minute
+  resolution off the `bot-keepalive` forced samples: commit goes +34,766 MB in 33 s and +29,001 MB
+  in 34 s, while `rc_mb` is still at 1,688-1,924 MB. **The mapping and the private-byte climb are
+  two different curves and every instrument so far has watched the second one.** At 2 MiB a section
+  that is ~450-500 sections/second — not one-per-request, not one-per-frame. **So the question is
+  "what tries to allocate 32 GiB of shared memory in a burst, in 2 MiB units, stopping at exactly
+  16,384", not "what leaks 2 MiB at a time".**
+- **The mapping is essentially UNTOUCHED** — working set 2,965 MB against private 2,979 MB, so
+  26.7 GB of `commit/mapped` is barely resident. It also carries **~1 retained handle** and
+  **~4.0 KB of paged pool** per section (deltas against the same scan's own control), so the owner
+  holds the region object, not just the view, and these are ~16k distinct kernel section objects.
 - Its **main thread spins at 100% of a core** while a control renderer in the same scan burns 0 ms
   — which is why three instruments on three different CDP calls all got silence. CDP is serviced
   on that thread.
@@ -104,10 +126,10 @@ matches the disassembly with nothing left over. Full entry in `CLAUDE.md`; do no
   `BindState` per match. The 32 GiB still has no mechanism.
 - **So the question is now: what accumulates as 2 MiB pagefile-backed shared sections while a main
   thread that never yields fails to drain it?** That is sharper than "what leaks?".
-- **The 2 MiB data pipe (`kLargerDataPipeAllocationSize`, every response body) is a candidate and
-  is NOT promoted** — the 09-07 ramp carried the same 32 GiB with 110 lifetime requests, and "an
-  exact match on a round power of two is not a fingerprint" is how the last candidate was
-  over-credited.
+- **The 2 MiB data pipe is DROPPED (2026-09-10), not merely unpromoted.** Pairing every walk with
+  its own request counter gives requests spanning **717x** (109 -> 78,188) against sections spanning
+  **1.23x**, with the two *smallest* request counts producing two of the *largest* section counts.
+  Full table in `CLAUDE.md`. Do not re-promote it on the strength of the 2 MiB match.
 - **One recorded conclusion is weakened:** "RC's own JavaScript is not the loop and there is no fix
   on our side of the page". The loop is native, but it is *driven* by JS promise rejection.
 
@@ -126,22 +148,26 @@ Look for something that satisfies **all four**, and treat any candidate meeting 
 3. is **released on the main thread or from a posted task** — that is what makes a wedged event
    loop retain them,
 4. plausibly **caps near 16,384**, since the count lands within 0.02% of 2^14 on the top cluster.
-**The standing candidate is the 2 MiB mojo data pipe** (`kLargerDataPipeAllocationSize`,
-`services/network/public/cpp/loading_params.cc`, used for every response body in
-`services/network/url_loader.cc`). It satisfies 1-3. **It is NOT promoted**, because the 09-07
-20:42 ramp carried the same 32 GiB with **110 lifetime requests**, and 110 requests cannot be
-16,384 pipes. **Explain that reading or drop the candidate** — and remember that "an exact match on
-a round power of two is not a fingerprint" is exactly how `MappedMemoryManager` was over-credited.
+**There is no standing candidate — the data pipe was dropped on 2026-09-10.** Two limits on the
+method, both measured: every real code-search host is **000 at the proxy**, and
+`mcp__github__search_code` over `repo:chromium/chromium` works **only for unique identifiers** (a
+control on `kLargerDataPipeAllocationSize` returned it; `"2 * 1024 * 1024"` returned 3 files). **So
+Route A is reason-then-fetch-by-path and cannot enumerate.** The burst reframing below is what makes
+a fresh hunt worth anything: look for something that **chunks a large size into 2 MiB shared
+segments and caps at 16,384**, not for something that leaks one at a time.
 
 **ROUTE B — stop the spin instead of the allocator.** The only route that could fix this without
 naming what allocates, and the only one plausibly on our side. If the main thread yields, posted
 tasks run and anything waiting on one drains. The driver is RC's SPA settling promises at enormous
 rate; the long-standing candidate is a retry loop against a 401'd session, which the RDR burst
 (**69,060 asks, zero answers of any kind**) is the shape of.
-- **The cheap first reading:** does a ramp ever coincide with a *healthy* resident RC session?
-  `chromium_memory_samples` has the ramps. **First check whether session verdicts are stored as a
-  TIME SERIES at all** — migration 047 reads like it records only *when the verdict last changed*,
-  which would not support the test. **Confirm that before promising it.**
+- **THE CHEAP FIRST READING IS NOT AVAILABLE — checked 2026-09-10, and the suspicion was right.**
+  `rc_runner_heartbeat` is a **single row**; 047's `session_since`/`session_live_since` are two
+  columns updated in place, and 047's own header says the transition "is overwritten by the next
+  confirmation of it". `BOT_EVENT_KINDS` is only `ramp-scan`, `tab-close`, `request-counts`,
+  `mem-dump` — nothing carries a session verdict. **So there is no time series and the ramp/session
+  coincidence cannot be asked retrospectively.** Taking it means recording session state alongside
+  ramps first, i.e. building a fifth instrument.
 - **Parking the resident page is still refused**, and for a reason unrelated to memory:
   `checkAndReport`'s localStorage rule would make the session verdict permanently inconclusive and
   silence `autocart.rc_session` and the phone alarm.

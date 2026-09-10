@@ -6439,6 +6439,181 @@ outside:
   them from a task — and that is answered by reading source, not by another counter on a page whose
   event loop is wedged.
 
+#### THE 32 GiB ARRIVES IN A 33-SECOND BURST, AND THE DATA PIPE IS DEAD (2026-09-10, Route A)
+Asked to name the allocator from source. It is **not named**, and saying so is the honest headline.
+What the session did produce is a decisive refutation of the standing candidate, a **reframing of
+the question**, and four constraints nobody had extracted from walks already in the database.
+
+**THE COMMIT STEP IS ≤34 SECONDS, MEASURED TWICE AT SUB-MINUTE RESOLUTION.** The `bot-keepalive`
+forced samples (2026-08-15) bracket a ramp far more finely than the 2-minute series, and nobody had
+read them for this:
+```
+09-09 13:45:30  rc_mb   306  commit  7,101      quiet, pid 4384
+09-09 13:45:54  rc_mb   410  commit 10,081   +2,980   <- new renderer pid 10604
+09-09 13:46:27  rc_mb 1,924  commit 44,847  +34,766   <- THIRTY-THREE SECONDS
+09-09 13:47:10  rc_mb 2,958  commit 45,934   +1,087
+09-09 13:48:18  rc_mb 4,040  commit 47,080     +407
+09-09 17:17:29  rc_mb    45  commit  6,793            <- browser replaced
+09-09 17:18:03  rc_mb 1,688  commit 35,794  +29,001   <- THIRTY-FOUR SECONDS
+```
+- **THE MAPPING AND THE PRIVATE-BYTE CLIMB ARE TWO DIFFERENT CURVES, AND EVERY INSTRUMENT SO FAR
+  HAS WATCHED THE SECOND ONE.** ~30-35 GB of commit lands in one ~33 s window while `rc_mb` is
+  still at 1,688-1,924 MB; the private bytes then climb for another two minutes at ~450-900 MB/min.
+  The memory series, the RAM arm and every "ramp rate" figure in this file describe the *touching*,
+  not the *allocation*.
+- **SO IT IS A BULK ALLOCATION, NOT A PER-EVENT LEAK.** At 2 MiB a section, ~30 GB in ≤34 s is
+  **~450-500 sections per second** (an inference from the commit step, not a direct count — the
+  walk fires later). That is not one-per-request, not one-per-frame (60/s), not one-per-anything a
+  user does. **The question is no longer "what leaks 2 MiB at a time" but "what tries to allocate
+  32 GiB of shared memory in a burst, in 2 MiB units, and stops at exactly 16,384".**
+- **AND IT SHARPENS THE CEILING RATHER THAN WEAKENING IT.** Across 13 walks the 2-4M count is
+  never above **16,387** and shows **no relation to `privateMB`** (2,981-4,587 MB) — so it is not
+  "how far the ramp got". A cap of 2^14 reached in half a minute reads like a loop bounded by a
+  count, or an allocator that gives up, rather than a slow accumulation.
+
+**THE 2 MiB MOJO DATA PIPE IS DROPPED.** The brief required the 110-request counterexample to be
+explained or the candidate abandoned. Pairing **every** walk with **its own** `request-counts`
+event settles it far more strongly than one counterexample:
+
+| requests (lifetime) | 2 MiB sections |
+|---:|---:|
+| **109** | **16,387** |
+| **110** | **15,499** |
+| 17,036 | 16,386 |
+| 18,970 | 16,387 |
+| 69,077 | 16,219 |
+| **78,188** | **14,326** |
+
+Requests span **717x**; sections span **1.23x**; and the two *smallest* request counts produced two
+of the *largest* section counts. **Within the busy population alone there is already no
+correlation** — 78,188 requests yields FEWER sections than 17,036 does. `kLargerDataPipeAllocationSize`
+is confirmed to be exactly `2 * 1024 * 1024` (`services/network/public/cpp/loading_params.cc`), and
+that remains the coincidence this file warns about: **an exact match on a round power of two is not
+a fingerprint.**
+
+**AND THE COUNTER HAS A BLIND SPOT THAT HAD TO BE RULED OUT FIRST — IT IS UNRECORDED AND IT
+QUALIFIES EVERY READING THAT USES IT.** `rc-request-count.mjs` attaches with `page.on('request')`
+**per PAGE**, and the keep-warm attaches it to the RESIDENT page only. Every renewal, auto-login and
+warm-up runs in a **throwaway TAB** — and `signin.reservecalifornia.com` and
+`www.reservecalifornia.com` share an eTLD+1, so by this file's own site-isolation finding they are
+the **same renderer process**. **So the tab's requests happen in the ramping renderer and are not
+counted.** It does not rescue the data pipe (a full Okta trace is 112-239 responses, two orders of
+magnitude short of 16,384, and the counted-only population already shows no correlation) — but
+**the recorded burst/leak decoupling rests on this instrument, and "109 lifetime requests" means
+"109 on the resident page", never "109 in that renderer".**
+
+**FOUR CONSTRAINTS EXTRACTED FROM THE EXISTING WALKS, ALL AGAINST THE SAME SCAN'S OWN CONTROL.**
+Deltas against the healthy renderer in the same scan, which is the only rigorous comparison:
+- **~1 retained HANDLE per section.** pid 11588: +13,380 handles against +13,451 mapped regions
+  (0.99); three other walks give 1.0-1.14. So the owner keeps the **region object** alive, not just
+  the view — a mapped view whose handle was closed would not show this.
+- **~4.0 KB of paged pool per section, constant.** +53,479 KB / 13,451 regions = 3.98; another walk
+  gives 3.99. That is ordinary Windows section-object overhead, and it confirms ~16k **distinct
+  kernel section objects** rather than one carved-up mapping.
+- **THE 32 GiB IS ESSENTIALLY UNTOUCHED.** Working set 2,965 MB against private 2,979 MB — so the
+  26.7 GB of `commit/mapped` contributes almost nothing resident. Something allocates and maps
+  2 MiB regions and **never writes to them**. That is the shape of a pre-allocated pool or a
+  transfer that never happens, and it is why free RAM never moves (the RAM arm's blindness,
+  explained from the allocation side rather than the symptom side).
+- **One allocation base per region and SCATTERED** (span/packed ~5000x) — already recorded; it is
+  what rules out a cage/pool/sandbox reservation carved into views.
+
+**THE METHOD LIMIT, so the next session does not rediscover it.** Every real code-search host is
+**000 at the proxy** — `source.chromium.org`, `chromium.googlesource.com`, `searchfox.org`,
+`grep.app`, `codesearch.chromium.org`. `raw.githubusercontent.com` serves Chromium **by path**, and
+`mcp__github__search_code` on `repo:chromium/chromium` works **only for unique identifiers**: a
+control on `kLargerDataPipeAllocationSize` returned it exactly, while `"2 * 1024 * 1024"` returned
+**3 files** for a pattern that occurs everywhere. **So Route A is reason-then-fetch-by-path; it
+cannot enumerate.** That is why the spin was nameable (a `FROM_HERE` string gave the path) and the
+allocator is not.
+
+**A LOCAL HARNESS EXISTS NOW, AND IT MEASURES WHAT CDP CANNOT.** On Linux, Chromium's shared
+regions are `/tmp/.org.chromium.Chromium.* (deleted)` mappings visible in `/proc/<pid>/maps`, so
+counting 2 MiB `rw-s` regions **asks the renderer nothing** — the one property every CDP instrument
+lacks, and the reason three of them got silence. A healthy renderer holds **zero**.
+- **THE WEDGE WAS CONTROLLED, WHICH IS THE ONLY REASON THE FLAT RESULT MEANS ANYTHING.** An
+  infinite microtask chain rejecting and handling a promise each turn (the exact described
+  condition: the microtask queue never empties, and it drives `HandlerAdded`) was verified to
+  wedge the main thread — `page.evaluate('1+1')` **answers before and is silent after**. Without
+  that control this would have been three arms that never reached the question.
+- **FLAT on all three arms** — microtask wedge, wedge + compositor animation, wedge + 300 in-flight
+  fetches. **So the spin alone is NOT sufficient to reproduce the mapping.** Per this file's own
+  rule, flat is much weaker than a refutation: Linux memfd/tmpfs is not a Windows section object,
+  the container has no GPU and no ArcGIS (`js.arcgis.com` is 000), and 25 s is not 34.
+- **THE ONE ARM THAT WOULD HAVE MATTERED NEVER RAN.** Loading RC's real page locally failed with
+  `ERR_CONNECTION_RESET` — the documented agent-proxy reset of headless-Chromium TLS, with `curl`
+  reaching the same host fine. **`requests=1` is the tell**; it is reported as "the question was
+  never reached", not as a flat result.
+
+**WHAT WOULD ANSWER IT NEXT, and neither is a fifth instrument.** The burst reframing makes two
+things worth trying that were not before: a source hunt for something that **chunks a large size
+into 2 MiB shared segments with a 16,384 cap** (fetch-by-path, since search cannot enumerate), and
+the local harness pointed at a page that actually reproduces — which needs RC reachable from a
+browser, i.e. an allowlist entry, not a new probe.
+
+
+##### THE BURST RUNS UNTIL THE BOX SAYS NO — AND "CAUGHT MID-FILL" WAS WRONG (2026-09-10)
+The reading above says the count pins at 2^14 and calls the lower walks a fill in progress.
+**Half of that is right and the other half is not, and the correction is the sharper finding.**
+Every walk on file, with the OS line beside the count:
+```
+ commitLimit  spare(limit-used)  sections
+   38,784          1,078          13,325   <- NOT mid-fill: commit-limited
+   40,840            625          14,326   <- NOT mid-fill: commit-limited
+   43,935          1,127          15,663
+   44,960          1,176          15,499
+   44,960          1,177          16,219
+   45,513          1,526          16,385
+   45,995          1,014          16,386
+   47,024            291          16,386
+   47,030            457          16,387
+   49,082          1,124          16,387
+   50,119            425          16,387
+```
+- **THE CAP AND THE COMMIT LIMIT ARE SEPARABLE, AND THE CAP WINS 9 TIMES IN 12.** Computing the
+  headroom the burst actually had — `(commitLimit - the box's own pre-ramp baseline - the
+  renderer's private bytes) / 2 MiB` — against what it took:
+```
+   limit  baseline  private   could have taken   took     binding
+  50,119     7,348    4,587             19,092  16,387   CAP (2,705 spare)
+  49,082     7,163    3,528             19,195  16,387   CAP (2,808 spare)
+  47,030     7,101    3,328             18,300  16,387   CAP (1,913 spare)
+  45,513     7,050    3,289             17,587  16,385   CAP (1,202 spare)
+  44,960     7,054    4,219             16,843  15,499   CAP (1,344 spare)
+  43,935     8,675    3,050             16,105  15,663   COMMIT
+  40,840     7,108    3,021             15,355  14,326   COMMIT
+  38,784     6,793    2,981             14,505  13,325   COMMIT
+```
+  **On nine events there was room for 1,091-2,808 MORE sections and it stopped at 16,384 ± 3
+  anyway.** That is the doubt closed: 2^14 is a real cap and not an artifact of when the scan
+  fired or of how much commit the box happened to have. The three that fell short are exactly
+  the three lowest commit limits, and on those the burst simply ran out.
+- **"THE THREE LOWER READINGS ARE CONSISTENT WITH CATCHING A FILL IN PROGRESS" IS WITHDRAWN.**
+  They are the commit-limited three. That is a different fact with a different consequence: a
+  count from a commit-limited box is a FLOOR on what the allocator wanted, not a sample of its
+  progress.
+- **THE WALK-TIME `spare` IS 291-1,526 MB AND THAT IS THE *AFTERMATH*, NOT THE STOP.** Every
+  walk finds the box a few hundred MB from its limit — but the walk fires ~77 s after the burst,
+  and the private-byte climb in between is what eats the headroom. Reading the walk-time figure
+  as the reason the burst stopped is the mistake this table exists to prevent: at the moment it
+  stopped there was room for ~1,100-2,800 more sections in three quarters of the events.
+- **SO THE SEQUENCE IS THREE ACTS, NOT ONE RAMP.** A burst of <=34 s takes 16,384 sections (or
+  whatever commit allows); the private bytes then climb ~450-900 MB/min for ~2 minutes and walk
+  the box to the edge of its commit limit; then the bail fires.
+- **AND IT IS THE ACTUAL DANGER, stated plainly.** This is not "a leak that happens to be
+  large" — it is something that allocates until Windows will not commit another 2 MiB. Getting
+  to 291 MB of the commit limit is how `supervise.ps1` could not spawn a shell on 2026-08-12
+  and how both Scheduled Tasks went silent on 08-17. **The containment caps the ramp; it does
+  not stop the box being walked to the edge of its commit limit first.**
+- **DO NOT "FIX" THIS BY ENLARGING THE PAGEFILE.** On the evidence a bigger pagefile buys a
+  bigger burst up to 32 GiB and no further, which is more commit taken and nothing gained.
+  `fix-pagefile.ps1` exists and this is not a reason to run it.
+
+**ONE CANDIDATE ELIMINATED FROM SOURCE while checking the above.** `base::UnsafeSharedMemoryPool`
+is a pool of retained `UnsafeSharedMemoryRegion`s — one held handle each, mapped, reusable, which
+matches the shape — and its own header says **"Up-to 32 regions would be pooled"**. Thirty-two,
+not sixteen thousand. Ruled out.
+
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
 - **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall

@@ -95,7 +95,22 @@ if (scans.length === 0) {
 }
 for (const s of scans) {
   const x = d(s);
-  console.log(`\n  ${pt(s.at)} PT  trigger rc ${x.rcMb} MB (threshold ${x.thresholdMb})  commit ${x.commitUsedMb}/${x.commitLimitMb} MB  free RAM ${x.ramFreeMb} MB  max pid ${x.maxPid} ${x.maxType ?? ''}${x.complete === false ? '  ⚠ scan INCOMPLETE (no END line)' : ''}`);
+  // WHICH TRIGGER FIRED DECIDES HOW TO READ THE WHOLE SCAN, so it leads the line. The 32 GiB
+  // arrives in a burst of <=34 s while private bytes are still ~1.9 GB, so a scan that fired
+  // on `rcMb` (3 GB of PRIVATE bytes) is describing the finished state — that is every walk
+  // on file before 2026-09-10, and why they all agree and none names an allocator. A scan
+  // that fired on `commitUsedMb` landed while the mapping was still being made, and its
+  // thread census is the one that can say WHICH thread was doing it.
+  // A row written before the second trigger existed carries no `trigger` at all: that is an
+  // absence and says so, rather than being folded into `rcMb` and quietly claiming a reading.
+  const trig = x.trigger == null
+    ? 'trigger not reported (a box older than the commit trigger)'
+    : x.trigger === 'commitUsedMb'
+      ? `trigger COMMIT ${x.commitUsedMb} MB — fired DURING the burst, private bytes only ${x.rcMb ?? '?'} MB`
+      : x.trigger === 'both'
+        ? `trigger both (rc ${x.rcMb} MB and commit ${x.commitUsedMb} MB in one sample)`
+        : `trigger rc ${x.rcMb} MB — AFTER the burst; the mapping was already complete`;
+  console.log(`\n  ${pt(s.at)} PT  ${trig}  commit ${x.commitUsedMb}/${x.commitLimitMb} MB  free RAM ${x.ramFreeMb} MB  max pid ${x.maxPid} ${x.maxType ?? ''}${x.complete === false ? '  ⚠ scan INCOMPLETE (no END line)' : ''}`);
   const lines = (s.text ?? '').split('\n');
   // The discriminator first, then everything.
   const os = lines.find((l) => l.startsWith('OS '));
