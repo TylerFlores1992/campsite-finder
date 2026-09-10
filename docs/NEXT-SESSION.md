@@ -1,7 +1,54 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-09 (evening, second pass)** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-10** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
+
+> ### TWO PHONE-REPORTED DEFECTS, BOTH FIXED — AND ONE SCREENSHOT IS OUTSTANDING (2026-09-10)
+>
+> **Neither was reachable by reasoning; both came from the owner using the app on a new Pixel.**
+> Both fixes are **web-side — they reach already-installed apps on a push, no rebuild, no store
+> review.** Full mechanisms in `CLAUDE.md`; do not re-derive them.
+>
+> **1. ANDROID 16 IGNORES `overlaysWebView: false`, AND EIGHTEEN SCREENS DREW UNDER THE STATUS
+> BAR.** Controls at the top of every route outside the `(app)` group were visible and took no
+> taps — including **`/claim`, the 08:00 hand-off**. The app targets SDK 36, Android 15+ enforces
+> edge-to-edge, Android 16 ignores the opt-out entirely, and `@capacitor/status-bar`'s own
+> `shouldSetStatusBarColor()` says so in a comment. Fixed with `env(safe-area-inset-top)` — the
+> pattern `V2Nav`, `/admin` and `/auto-cart` have used since August and which was never
+> generalised, which is exactly why the symptom was "some pages".
+> - **DO NOT reach for `capacitor.config.ts` or `NativeBridge.tsx`.** Both already set
+>   `overlaysWebView: false`. There is no config that turns edge-to-edge off; the CSS is the
+>   only remedy. They stay because they still work on Android ≤14 and on iOS.
+> - **THE OUTSTANDING ITEM IS A SCREENSHOT.** `env()` is 0 in headless Chromium and this
+>   container cannot reach the live site, so **nothing has SEEN this on a phone.** Open
+>   `/claim` or `/privacy` on the Pixel after the deploy; the CampHawk mark should clear the
+>   clock. That is the confirming reading and it takes ten seconds.
+>
+> **2. "FAVORITES IS SPELT WRONG" — IT WAS, AND FIVE MORE WERE.** The admin user page rendered
+> `label="Favourites"`; a sweep found `honour`, `authorise`/`authorised`, `organised`,
+> `normalised` and `enrolment` in copy a person reads. All six fixed.
+> `src/lib/us-spelling.test.mts` is the gate, because **every one was invisible to `tsc`, to
+> `next build` and to the whole suite** — the `jsx-spacing` blind spot again.
+> - **DO NOT add `cancelled` to that word list.** A test asserts it stays out: it is an accepted
+>   American variant, it is used across ~15 user-visible strings, and **the alert bodies feed
+>   the A2P 10DLC registered samples**. That is the reason, not taste.
+> - **DO NOT americanise `'centre'` in `geocode.ts`.** It is DATA — a token matching real
+>   published place names ("Visitor Centre") — and americanising it breaks the name geocoder.
+>   It is allow-listed saying so, and the allow-list is bidirectional: a **stale** entry fails.
+> - **DO NOT "tidy" the comments to match.** They are British on purpose; the guard strips them,
+>   which is the only reason it produces one finding instead of four hundred.
+> - The store listings were checked and are clean (`play-full-description.txt`,
+>   `appstore-description.txt`). `CampingandHiking` in `reddit.ts` is the real subreddit, not a
+>   missing space.
+>
+> **Verified: `npm run verify` exit 0** — typecheck (both configs), jsx-spacing, full suite,
+> build. Eight mutations on the spelling guard and eight on the safe-area guard, each verified
+> to APPLY and each caught.
+>
+> **These touch side-lane files** (`src/app/camping/`, `src/components/v2/ClaimFlow.tsx`)
+> because the bugs do. Fixing only the main-lane half would have left `/claim` tappable and
+> every SEO landing page not.
+
 
 > ### THE GPU CENSUS ANSWERED — AND THE SPIN IS SAMPLED NOW (2026-09-09, evening)
 >

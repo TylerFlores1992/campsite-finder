@@ -8535,9 +8535,54 @@ region"* — and the setting it describes has stopped working.
   web, exactly the reserved band in the app) plus the three surfaces already doing it. **The
   confirming reading is one screenshot of `/claim` or `/privacy` on the Pixel after the deploy.**
 
+### "FAVORITES IS SPELT WRONG" — IT WAS, AND FIVE MORE WERE (2026-09-10)
+Reported by the owner from a phone. `src/app/admin/users/[id]/page.tsx` rendered
+`<Row label="Favourites">` — the British form, in a product whose every other favorites
+label is American and which ships to the **United States storefront only**.
+- **A SWEEP FOUND FIVE MORE, ALL IN COPY A PERSON READS:** `honour` and
+  `authorise`/`authorised` on `/auto-cart`, `organised` on the hardest-to-book landing
+  page, `normalised monthly` on the admin MRR tile, and `a developer enrolment` in the
+  Costs panel. **Every one was invisible to `tsc`, to `next build` and to the whole
+  suite** — the same blind spot the `jsx-spacing` gate exists for, which is why this
+  shipped as a gate (`src/lib/us-spelling.test.mts`) rather than six edits.
+- **COMMENTS ARE STRIPPED, AND THAT IS THE LOAD-BEARING DECISION.** This repo writes its
+  comments in British English on purpose — `colour`, `behaviour`, `favourite`,
+  `serialised` and `recognise` appear in hundreds of lines no customer will ever see. A
+  guard that flagged those would produce four hundred hits, **bury the one label that is
+  genuinely wrong, and be deleted by the next person it inconvenienced** — taking the
+  real finding with it. That reasoning already rejected a whole-file scan in
+  `hold-fixture-safety.test.mts`; this is the second time it has decided a guard's scope.
+- **`cancelled` IS DELIBERATELY NOT IN THE WORD LIST, AND A TEST ASSERTS IT STAYS OUT.**
+  It is the single most tempting addition and it would be a mistake three ways: it is an
+  **accepted American variant** (Merriam-Webster; `canceled` is merely commoner), it is
+  used **consistently across ~15 user-visible strings**, and **the alert bodies feed the
+  A2P 10DLC registered samples** — `docs/a2p-campaign.md` exists because drift between
+  live SMS copy and those samples cost a week of filtered alerts. Rewording alerts for a
+  spelling preference spends that risk for nothing.
+- **`'centre'` IN `geocode.ts` IS DATA, NOT COPY, AND AMERICANISING IT WOULD BREAK
+  GEOCODING.** It is a token in `GENERIC_NAME_WORDS` matching real published place names
+  ("Visitor Centre"). It is allow-listed with that reason — as are two identifiers on
+  paths where a cosmetic rename buys nothing a user can see (`authorise()` on the
+  release-critical claim route, `summarise()` in `AdminTabs`).
+- **THE ALLOW-LIST IS BIDIRECTIONAL.** An entry needs a reason **and a STALE entry fails
+  too**, so it cannot rot into a blanket permission nobody re-reads — the next British
+  word to land in that file would otherwise inherit a reason written about something else.
+- **THE STORE LISTINGS ARE CLEAN**, checked rather than assumed:
+  `docs/play-full-description.txt` and `docs/appstore-description.txt` produce three
+  unknown words between them and all three are real proper nouns (RIDB, MDWFP, Smokies).
+- **AND `CampingandHiking` IS NOT A TYPO** — it is r/CampingandHiking, the real subreddit
+  name, in `src/lib/mentions/sources/reddit.ts`. It reads exactly like a missing space.
+- **THE TOOL IS IN THE SCRATCHPAD, NOT THE REPO.** `cspell` was installed under the
+  session scratchpad and run against comment-stripped source and the two store listings;
+  nothing was added to `package.json`. The durable half is the test.
+- Eight mutations, each verified to APPLY and each caught — including the reported label
+  restored, the geocode entry deleted, a stale entry added, `cancelled` added to the list,
+  comment stripping removed (the guard then fails on its own prose) and `copyOnly`
+  returning nothing (the guard blind while reading green).
+
 ## Open / next session
 
-> ### 2026-09-10 — THE PIXEL BUG IS A REAL ONE AND IT IS FIXED; THE RDR BURST IS STILL OPEN
+> ### 2026-09-10 — TWO PHONE-REPORTED DEFECTS, BOTH FIXED; THE RDR BURST IS STILL OPEN
 >
 > **Read "ANDROID 16 IGNORES `overlaysWebView: false`" directly above before touching anything
 > native.** Eighteen screens outside the `(app)` route group drew under the status bar on a
@@ -8551,6 +8596,17 @@ region"* — and the setting it describes has stopped working.
 > **DO NOT reach for `capacitor.config.ts` or `NativeBridge.tsx` for this.** Both already set
 > `overlaysWebView: false`; Android 16 ignores it, the plugin's own source says so, and there is
 > no config that turns edge-to-edge off. They stay because they still work on Android ≤14 and iOS.
+>
+> **AND "FAVORITES IS SPELT WRONG" WAS ALSO RIGHT — see the entry of that name above.** The
+> admin user page rendered `label="Favourites"`, and a sweep found **five more British
+> spellings in copy a person reads** (`honour`, `authorise`/`authorised`, `organised`,
+> `normalised`, `enrolment`). All six fixed, and `src/lib/us-spelling.test.mts` is the gate,
+> because every one of them was invisible to `tsc`, to `next build` and to the whole suite.
+> **DO NOT add `cancelled` to that word list** — a test asserts it stays out, and the reason is
+> the A2P registered samples, not taste. **DO NOT americanise `'centre'` in `geocode.ts`** —
+> it is DATA that matches real place names, and it is allow-listed saying so. **And do not
+> "tidy" the comments**: they are British on purpose and the guard strips them, which is the
+> only reason it produces one finding rather than four hundred.
 >
 > **THE RDR REQUEST BURST HAS NOT BEEN FIXED, and that was confirmed by grep rather than
 > memory: `futurebookingstartsendsdates` appears NOWHERE in this repo.** Nothing throttles it,
