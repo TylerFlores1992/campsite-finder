@@ -122,9 +122,13 @@ starting it.**
 - **Apple IAP was decided on 2026-08-24 and is not built.** RevenueCat is already compiled into
   the iOS binary; what remains is console work plus one env var. `docs/STOREKIT-PLAN.md` is the
   authority — **not** `docs/APP-STORE.md` §2c, which still frames it as an open question.
-- **Play production release 25 is in review.** Nothing to do but wait; the first REAL purchase is
-  what exercises webhook → row → entitlement for the first time, carrying two known gaps (HMAC is
-  reported not enforced; out-of-order delivery unhandled).
+- **Play production release 25 was IN REVIEW as of 2026-09-01 — nine days ago, and nobody in a
+  session can read the Play console, so treat that as a date and not as current state.** Ask the
+  owner before acting on it. Whenever it lands, the first REAL purchase is what exercises
+  webhook → row → entitlement for the first time, carrying two known gaps (HMAC is reported, not
+  enforced; out-of-order delivery unhandled). A licence-tester purchase does NOT exercise it —
+  `ignoreReason` correctly drops every non-PRODUCTION event, so an absent `subscriptions` row is
+  the guard working, not a broken webhook.
 - **The release-window Routine self-disables 2026-09-12**, ~2 firings left.
 - **Recorded, not fixed — do not drive-by any of these:** neither containment arm can fire during
   a ramp; the RDR request burst (69,060 asks, zero answers of any kind); the fixed-sentinel test
