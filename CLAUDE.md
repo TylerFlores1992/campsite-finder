@@ -6246,9 +6246,15 @@ from a lockfile.
   and on a match it **ERASES**: `mov QWORD PTR [rdi],0` (clear the slot), a call to release the
   old value, `mov r8d,[rsi+0x14] / shl r8,3 / add r8,[rsi+0x8] / sub r8,rdx` then a call — a
   memmove of the tail — and `dec DWORD PTR [rsi+0x14]`. **A vector erase, open-coded.**
-- **`rsi` CARRIES TWO CONTAINERS**: the scan reads its bound from `[rsi+0x24]` and its data from
+- ~~**`rsi` CARRIES TWO CONTAINERS**: the scan reads its bound from `[rsi+0x24]` and its data from
   `[rsi+0x18]`, while the erase decrements `[rsi+0x14]` and reads `[rsi+0x8]`. So it searches one
-  list and removes from another — bookkeeping, not a single collection.
+  list and removes from another — bookkeeping, not a single collection.~~ **FALSE, AND THE ERROR
+  WAS IN THE TRANSCRIPTION RATHER THAN THE READING — see the section below.** The hand-copied
+  excerpt above merged TWO loops into one: the first scans `+0x08`/`+0x14` and erases from
+  `+0x08`/`+0x14`, and a SECOND loop further down scans `+0x18`/`+0x24`. Each is an ordinary
+  find-and-erase over its own vector, and "searches one list and removes from another" was an
+  artifact of splicing them. Struck rather than deleted because it was about to become the premise
+  of a search for a bookkeeping structure that does not exist.
 - **THE SAMPLES ARE IN THE PEELED FIRST ITERATION, NOT THE LOOP BODY, AND THAT IS THE READING
   THAT CHANGES THE STORY.** The compiler peeled iteration one; the hot offsets `+0x05`, `+0x0e`
   and `+0x40` are all in the peel, and **zero of the 48 samples fall in the loop body at
@@ -6272,6 +6278,92 @@ from a lockfile.
   session with egress would use anyway. Recorded rather than fixed: loosening `scrub` on the path
   that carries RC session material to retrieve a diagnostic is the wrong trade, and this file has
   published a credential twice by collecting a field it then had to filter.
+
+#### IT IS `blink::RejectedPromises::HandlerAdded` — NAMED FROM THE BINARY, CONFIRMED IN SOURCE (2026-09-10)
+The entry above ends *"Not established: which function this is … do not name one."* **It is named
+now, and not by guessing: the binary states its own source file, function name and line number, and
+the source then matches the disassembly instruction for instruction.**
+`third_party/blink/renderer/bindings/core/v8/rejected_promises.cc`, `HandlerAdded`, **line 222**.
+
+**HOW — the method is reusable and cost five `code-bytes` calls.**
+- **A 15-BYTE `0xCC` RUN AT `0x1809631` GIVES THE FUNCTION'S START FOR FREE.** MSVC pads between
+  functions with `int3`, so the next 16-byte boundary — **`0x1809640`** — is the entry point.
+  **That retires the alignment guessing `disasm-code-bytes.mts` exists to manage**: disassembly
+  from a true function start is unambiguous, and the prologue that appears there
+  (`push r15/r14/r13/r12/rsi/rdi/rbx`, `sub rsp,0x60`, stack cookie) confirms it landed right
+  rather than merely looking plausible. **Look for the padding before sweeping alignments.**
+- **`code-bytes` TAKES AN RVA, SO A WIDER REGION IS ONLY MORE CALLS.** `readCodeWindow` returns 320
+  bytes from `rva-64` and the handler passes no options, so the arg is the only lever: three
+  windows tiled `0x1809546`-`0x1809906` and two more reached `0x1809b7f`. **Merge by ADDRESS MAP,
+  never by requiring exact tiling** — the windows overlap, and a contiguity check rejects them and
+  reports a "gap" that is not one.
+- **THE NAME CAME OUT OF `FROM_HERE`.** At `0x1809873`: `lea rdx,[0xff64201]`, `lea r8,[0xff641ba]`,
+  `mov r9d,0xde`. That is `base::Location::Current()` — function name, file name, **line 222** —
+  and `code-bytes` reads a data RVA as happily as a code one. **Chromium embeds `__FILE__` and
+  `__FUNCTION__` at every `PostTask`, so any function that posts a task can be made to name
+  itself.** No symbols, no PDB, no ramp, no box update.
+- **THREE OTHER `lea` TARGETS WERE CODE, NOT STRINGS** (`0x7334560`, `0xc5ca9d0`, `0xc5ca700`):
+  `base::BindOnce` internals — `operator new(0x38)` for the `BindState`, two function pointers, an
+  invoke thunk at `+0x20`, `this` at `+0x28`. **Read a `lea` target before assuming it is a
+  string**; two of the three that looked most promising were destructors.
+
+**FOUR INDEPENDENT CONFIRMATIONS, which is what separates this from the three mechanisms this file
+records as guessed at a session's cost each.** The file string, the function string, the line
+number (`0xde` = 222, and `FROM_HERE` is on line 222 of that file), and a complete structural match
+with nothing left over:
+```
+RefCounted<RejectedPromises>       -> +0x00 (8 bytes)
+MessageQueue queue_                -> +0x08 buffer, +0x10 capacity, +0x14 size
+Vector<..> reported_as_errors_     -> +0x18 buffer, +0x20 capacity, +0x24 size
+bool collected_                    -> cmp BYTE [elem+0x5c],0
+script_state_->ContextIsValid()    -> [r11+0x10]!=0 and [r11+0x1c]!=0   (IsCollected, inlined)
+promise_ == data.GetPromise()      -> cmp *(elem+0x20) , *(*rdx)        (two v8::Local slots)
+queue_.erase(it); return;          -> slot=0, ~Message, memmove tail, --[rsi+0x14], RET
+MakePromiseStrong/GetTaskRunner/
+  PostTask(FROM_HERE, BindOnce)    -> the second loop's match arm
+reported_as_errors_.EraseAt(i)     -> the same erase against +0x18/+0x24
+```
+The `rdx` in the compare is the **second argument** (`v8::PromiseRejectMessage data`), not a member
+— which is why the earlier transcription could not make sense of it. And the odd null-null match
+path at `0x1809750` is just `v8::Local` comparison where both handles are empty.
+
+**WHAT THIS ESTABLISHES.** The spinning main thread is Blink's unhandled-promise-rejection
+bookkeeping. `HandlerAdded` runs once per promise that gets a rejection handler attached after
+having been rejected without one, and it linearly scans `queue_` then `reported_as_errors_`.
+**With the samples in the peeled first iteration and none in the loop body, the cost is the CALL
+RATE and not the scan length** — so the page is attaching handlers to already-rejected promises
+often enough to saturate a core.
+
+**WHAT IT DOES NOT ESTABLISH, AND THIS IS THE HALF THAT WILL GET QUOTED WRONG: it is not where the
+32 GiB comes from.** `HandlerAdded` scans and erases; it allocates nothing but one `BindState` per
+second-loop match. `Message` holds v8 handles and a `SourceLocation` — V8 and Oilpan memory, and
+the heap trail reads 8-11 MB flat. **The spin now has a mechanism; the mapping still does not.**
+
+**IT DOES WEAKEN A CONCLUSION RECORDED AS SETTLED.** This file says *"VMSTACK put the loop in
+native code, so RC's own JavaScript is not the loop and there is no fix on our side of the page."*
+The first clause stands — the loop is native Blink code. **The inference does not.** The loop is
+*driven* by JavaScript promise rejection, so RC's SPA is the workload after all; VMSTACK
+distinguished native code from JIT code, which is not the same question as what drives it.
+- **It also promotes a candidate this file has carried since 2026-08-17 without mechanism** — *"a
+  retry loop in RC's SPA against a token that expired"*. A retry loop of failing `fetch`es is
+  exactly a promise-rejection storm, and the RDR burst (**69,060 asks, zero answers of any kind**)
+  is the shape that produces one. **Not a finding: nobody has paired the burst against the SPIN.**
+  The recorded burst/leak decoupling is about the burst versus the 32 GiB MAPPING, which is a
+  different pairing and is untouched by this.
+
+**THE NEXT QUESTION IS SHARPER THAN "WHAT LEAKS?"** A Blink main thread that never returns to its
+message loop cannot drain anything whose release runs as a posted task — and `HandlerAdded` itself
+posts `RevokeNow` tasks that can then never run. **So ask what accumulates as 2 MiB pagefile-backed
+shared sections while the main thread does not yield.**
+- **A CANDIDATE, WITH ITS OWN COUNTER-EVIDENCE STATED.** `kLargerDataPipeAllocationSize` in
+  `services/network/public/cpp/loading_params.cc` is **exactly `2 * 1024 * 1024`**, and
+  `services/network/url_loader.cc` uses it for **every response body**; a mojo data pipe's ring
+  buffer is one pagefile-backed anonymous shared section mapped in the renderer, which matches the
+  walk on size, count-of-one-allocation-base, anonymity, protection and process. **Against it: the
+  09-07 20:42 ramp carried the same 32 GiB with 110 lifetime requests**, and 110 requests cannot be
+  16,384 pipes. **And the house rule bites hardest here — "an exact match on a round power of two
+  is not a fingerprint" is exactly how `MappedMemoryManager` was over-credited.** Do not promote
+  this without a reading that is not the number 2 MiB.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.

@@ -65,8 +65,9 @@ exact reading has sent people to the box twice over sessions that repaired thems
 - Its **main thread spins at 100% of a core** while a control renderer in the same scan burns 0 ms
   — which is why three instruments on three different CDP calls all got silence. CDP is serviced
   on that thread.
-- **VMSTACK put the loop in native code**, 42 of 48 samples inside `chrome.dll`, so RC's own
-  JavaScript is not the loop and there is no fix on our side of the page.
+- **VMSTACK put the loop in native code**, 42 of 48 samples inside `chrome.dll` — which
+  distinguishes native from JIT code, and **not** what drives it. It is `HandlerAdded`, driven by
+  the page's promise rejections (below).
 - The **RAM arm has not fired since August** — 15+ consecutive ramps, because untouched commit
   never lowers free RAM, so it watches the one resource that is not running out. (It *did* fire,
   three times on 08-18/19, with its own `RUNAWAY` line; "never fired" is wrong and gets quoted.)
@@ -83,17 +84,21 @@ exact reading has sent people to the box twice over sessions that repaired thems
   near-neighbours share our TimeDateStamp with a different `SizeOfImage`, so borrowing one would
   name the wrong function confidently.
 
-**THE ONE OPEN LEAD:** match the disassembled fingerprint against Chromium source.
-`raw.githubusercontent.com` is reachable (200, controlled), so this needs **no ramp, no box update
-and no symbols**. The shape, stated precisely because the shorthand is ambiguous: a linear
-search-and-erase over an array of 8-byte pointers; flag byte on the **element** (`elem+0x5c`);
-non-zero checks on its **pointee** (`(*elem)+0x10`, `(*elem)+0x1c`); sampled comparison
-`**(elem+0x20)` against `*(*elem)`; `rsi` carries two containers (scan reads `+0x24`/`+0x18`, erase
-touches `+0x14`/`+0x8`).
+**THE SPINNING FUNCTION IS NAMED (2026-09-10):** `blink::RejectedPromises::HandlerAdded`,
+`third_party/blink/renderer/bindings/core/v8/rejected_promises.cc`, line 222. Confirmed four ways —
+the `FROM_HERE` file and function strings and the line number are **in the binary**, and the source
+matches the disassembly with nothing left over. Full entry in `CLAUDE.md`; do not re-derive it.
 
-**It is deliberately not taken.** It reads a repository outside the session's scope, and this
-project's record is three mechanisms guessed with each one costing a session. **Ask before
-starting it.**
+- **It is the SPIN, not the mapping.** `HandlerAdded` scans and erases; it allocates nothing but one
+  `BindState` per match. The 32 GiB still has no mechanism.
+- **So the question is now: what accumulates as 2 MiB pagefile-backed shared sections while a main
+  thread that never yields fails to drain it?** That is sharper than "what leaks?".
+- **The 2 MiB data pipe (`kLargerDataPipeAllocationSize`, every response body) is a candidate and
+  is NOT promoted** — the 09-07 ramp carried the same 32 GiB with 110 lifetime requests, and "an
+  exact match on a round power of two is not a fingerprint" is how the last candidate was
+  over-credited.
+- **One recorded conclusion is weakened:** "RC's own JavaScript is not the loop and there is no fix
+  on our side of the page". The loop is native, but it is *driven* by JS promise rejection.
 
 ### Do not do these, each for a recorded reason
 
