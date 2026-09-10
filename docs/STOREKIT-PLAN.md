@@ -4,6 +4,30 @@
 to absorb Apple's commission. This is the design and the arithmetic; it is **not** an
 implementation. Read "What only a human can do" before planning a session around it.*
 
+> ### PICKING THIS UP? READ IN THIS ORDER (2026-09-10)
+> **The app/store surface is the SIDE LANE's as of 2026-09-10** (`docs/LANES.md`) — these three
+> docs, both store consoles and RevenueCat's console. **`src/lib/**` stays MAIN**, including
+> `native/purchases.ts`, `store-plans.ts` and the webhook, because a change under
+> `src/lib/auth.ts`/`limits.ts` restarts all three pollers.
+>
+> 1. **"STATE AS OF 2026-08-30 — read this first"** (below) — what is on, what is off, and who can
+>    actually buy. Corrected 2026-09-10.
+> 2. **§6.1** — Apple's gates. Paid Applications, bank and W-9 are **ACTIVE**; the only Apple gate
+>    left is the **Small Business Program**, submitted 2026-08-30 and pending.
+> 3. **§4e** — the iOS console sequence, in order, already staged.
+> 4. **§8** — the four products, ready to paste.
+>
+> **Three traps, each already paid for:**
+> - **A green console is not a working purchase flow.** Three separate things made the Play paywall
+>   unusable with every console field correct — no route to `/pricing`, unreadable copy, and **no
+>   OFFERING in RevenueCat** (which appears nowhere in §4d's checklist). Only opening the app and
+>   trying to buy found any of them.
+> - **`is_beta` returns true before `hasActiveSubscription` reads the table**, so **no beta tester
+>   can ever see a paywall.** Test with a non-beta non-subscriber.
+> - **A claim about another file, a console or a date needs re-checking at the moment you act on
+>   it.** Three stale claims were found in these docs on 2026-09-10, and one of them told a reader
+>   to go and edit a Data safety form that was already correct.
+
 ---
 
 ## THE PLAY CHAIN IS PROVEN AS FAR AS SANDBOX GOES (2026-08-30 evening)
@@ -152,8 +176,12 @@ and it reaches installed apps immediately.
 - **NOT iOS.** `NEXT_PUBLIC_REVENUECAT_IOS_KEY` is unset — verified in the deployed bundle,
   not assumed — and Apple's four products do not exist yet (§8). A missing key is
   `unavailable`, so iOS keeps the §2c link-out untouched.
-- **NOT Play production.** Release 25 is created, has passed quick checks, and is STAGED in
-  Publishing overview awaiting `Submit` (§0d). The closed test is still the audience today.
+- **NOT Play production — AS OF 2026-09-01, AND THAT IS A DATE RATHER THAN CURRENT STATE.**
+  Release 25 was **submitted and went IN REVIEW on 2026-09-01** (`docs/PLAY-STORE.md` §0d, which
+  is the authority; this line said "STAGED awaiting `Submit`" until 2026-09-10 and was stale by
+  nine days). **Nobody in a session can read the Play console, so ask the owner rather than
+  inferring.** `Managed publishing` is OFF, so approval publishes immediately at 100% to the US —
+  there is no hold-and-release step and nobody is asked a second time.
 
 **AND THE SWITCH WAS HALF-OFF UNTIL THE SAME CHANGE FIXED IT.** `useStorePurchases()` is
 called above `StorePaywall`'s early return — React forbids a conditional hook — so while the
@@ -181,8 +209,10 @@ field: it proves the value reached the build users are actually running.
 HMAC is **reported, not enforced** (`verifyHmac` returns `null` for "cannot judge"; promote
 it to a rejection once a live event logs clean), and **out-of-order delivery is unhandled** —
 RevenueCat retries, so an older event can land after a newer one and regress a status. That
-one needs the event timestamp stored, i.e. another migration, and **the main lane's 060-069
-block is full** (§ `docs/LANES.md`), so it needs a new block claimed out loud.
+one needs the event timestamp stored, i.e. another migration. **Blocks move — read
+`docs/LANES.md` rather than this line.** As of 2026-09-10 they are **main `077-079`, side `080+`**
+(highest applied is `076`); this sentence said "the main lane's 060-069 block is full" until then,
+which is exactly the stale-number shape that has already produced two near-miss collisions.
 
 ---
 

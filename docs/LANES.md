@@ -85,7 +85,24 @@ Bugs, the poller, alerting, the RC auto-cart flow, and major changes.
 - `src/app/(app)/` marketing + SEO
 - `src/components/v2/`
 - Store listing text: `docs/play-full-description.txt`, `docs/appstore-description.txt`
+- **The whole APP/STORE surface (assigned 2026-09-10, owner's call):** `docs/APP-STORE.md`,
+  `docs/PLAY-STORE.md`, `docs/STOREKIT-PLAN.md`, both store consoles, RevenueCat's console, and
+  the Apple IAP sequence in `STOREKIT-PLAN.md` §4e.
 - Any new doc it creates, including `docs/NOTES-<its-branch>.md`
+
+**THE APP/STORE LINE IS CONSOLE-AND-DOCS TO THE SIDE, SERVER-AND-`src/lib` TO MAIN**, and it is
+drawn there because that is where the risk changes rather than to split the topic tidily:
+- **Side:** the three store docs above, everything done in a vendor console, and
+  `src/components/v2/StorePaywall.tsx` (already theirs).
+- **Main keeps `src/lib/**` regardless of topic** — including `src/lib/native/purchases.ts`,
+  `src/lib/store-plans.ts` and the RevenueCat webhook — because those are release-critical server
+  code, and **because `src/lib/auth.ts` and `src/lib/limits.ts` are in `worker-deploy.yml`'s
+  `paths:`, so a change there restarts all three pollers.** A lane that does not own the poller
+  must not be the one to bounce it.
+- **The two open server items stay MAIN:** HMAC is reported-not-enforced, and out-of-order
+  webhook delivery is unhandled (needs a migration, i.e. main's block).
+- **`CLAUDE.md` is unchanged — still main's sole write.** The side lane records app/store findings
+  in its own notes file and main folds them in, exactly as for everything else.
 
 **`docs/` is NOT assigned wholesale.** `docs/CONTEXT.md`, `docs/SETUP.md` and
 `docs/NEXT-SESSION.md` are the main lane's, for the same reason `CLAUDE.md` is: they are the

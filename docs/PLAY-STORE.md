@@ -81,12 +81,16 @@ rollout**, United States only.
   until approval. That is the lever if something needs to go in ahead of it.
 - **`Managed publishing` is OFF, so approval publishes immediately** at 100% to the US — there is
   no hold-and-release step, and nobody is asked a second time.
-- **THE DATA SAFETY QUESTION WENT UNANSWERED INTO THIS SUBMISSION.** §4's open item — whether
-  RevenueCat receiving the Clerk user id counts as *Shared* — was not resolved before Submit. It
-  is **editable independently of the binary and needs no new release**, so it can be corrected
-  after the fact; what it costs is that the app publishes with a declaration that does not
-  mention RevenueCat while Play's four products are already taking money. **Close it rather than
-  letting approval close it by default.**
+- ~~**THE DATA SAFETY QUESTION WENT UNANSWERED INTO THIS SUBMISSION.** … **Close it rather than
+  letting approval close it by default.**~~ **ANSWERED 2026-09-01, THE SAME DAY, AND THE FORM
+  NEEDED NO CHANGE — struck 2026-09-10.** §4 settles it: RevenueCat is a **service provider** under
+  Google's own exemption list, so the *User IDs* and *Purchase history* rows stay **collected, not
+  shared**, and §4 names RevenueCat in both. **"Nothing changed" is the correct outcome, not an
+  omission**, and the declaration does mention it.
+  - **Struck rather than deleted because it reads as a live to-do**, and a reader acting on it
+    would go and edit a Data safety form that is already right. That very near-miss happened one
+    file over on 2026-09-10, from `CLAUDE.md`'s matching stale claim — see its "THE REMAINING iOS
+    GAP IS A DISCLOSURE ONE" entry, now struck for the same reason.
 
 ### The staging history, and the reading rule it produced
 
