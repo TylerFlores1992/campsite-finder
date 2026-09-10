@@ -65,6 +65,10 @@ exact reading has sent people to the box twice over sessions that repaired thems
 - Its **main thread spins at 100% of a core** while a control renderer in the same scan burns 0 ms
   — which is why three instruments on three different CDP calls all got silence. CDP is serviced
   on that thread.
+- **"Spinning" is precisely "the microtask queue never empties"** (2026-09-10). `HandlerAdded` *is*
+  being called, so promises are settling and microtasks are draining — while **posted tasks never
+  run**. The event loop never advances to the next task. That is the mechanism behind every silent
+  instrument, and behind anything whose release path is a posted task.
 - **VMSTACK put the loop in native code**, 42 of 48 samples inside `chrome.dll` — which
   distinguishes native from JIT code, and **not** what drives it. It is `HandlerAdded`, driven by
   the page's promise rejections (below).
@@ -83,6 +87,13 @@ exact reading has sent people to the box twice over sessions that repaired thems
 - **Symbols.** The one reachable symbol server 404s our exact key, controlled three ways. Its
   near-neighbours share our TimeDateStamp with a different `SizeOfImage`, so borrowing one would
   name the wrong function confidently.
+- **A rejection counter on the resident page** (2026-09-10, refuted *before* building it). The DOM
+  `unhandledrejection` event is dispatched from `ProcessQueueNow`, which `ProcessQueue()` **posts
+  as a task** — so it, and `page.on('pageerror')`, go silent during exactly the event they would be
+  built for. Predicted reading ~0.
+- **`RejectedPromises` as the memory.** `reported_as_errors_` is capped at 1,000
+  (`kMaxReportedHandlersPendingResolution`), so it cannot grow without limit — consistent with the
+  heap trail at 8-11 MB flat.
 
 **THE SPINNING FUNCTION IS NAMED (2026-09-10):** `blink::RejectedPromises::HandlerAdded`,
 `third_party/blink/renderer/bindings/core/v8/rejected_promises.cc`, line 222. Confirmed four ways —
@@ -99,6 +110,47 @@ matches the disassembly with nothing left over. Full entry in `CLAUDE.md`; do no
   over-credited.
 - **One recorded conclusion is weakened:** "RC's own JavaScript is not the loop and there is no fix
   on our side of the page". The loop is native, but it is *driven* by JS promise rejection.
+
+### THE BRIEF FOR A SESSION THAT WANTS TO FIX IT
+
+**There is exactly one unanswered question: what maps the 2 MiB sections, and why are they never
+released.** Everything else above is settled. Two routes, and **both need the owner's word before
+starting** — this project's record is three mechanisms guessed at a session's cost each.
+
+**ROUTE A — name the allocator from source.** This is the method that named the spin on 2026-09-10,
+and it needs **no ramp, no box update and no symbols**. `raw.githubusercontent.com` serves Chromium
+by path (200, controlled) and `mcp__github__search_code` with `repo:chromium/chromium` indexes it.
+Look for something that satisfies **all four**, and treat any candidate meeting fewer as unproven:
+1. maps **exactly 2 MiB** pagefile-backed anonymous shared sections,
+2. **one section per object** (the walk sees one allocation base per region),
+3. is **released on the main thread or from a posted task** — that is what makes a wedged event
+   loop retain them,
+4. plausibly **caps near 16,384**, since the count lands within 0.02% of 2^14 on the top cluster.
+**The standing candidate is the 2 MiB mojo data pipe** (`kLargerDataPipeAllocationSize`,
+`services/network/public/cpp/loading_params.cc`, used for every response body in
+`services/network/url_loader.cc`). It satisfies 1-3. **It is NOT promoted**, because the 09-07
+20:42 ramp carried the same 32 GiB with **110 lifetime requests**, and 110 requests cannot be
+16,384 pipes. **Explain that reading or drop the candidate** — and remember that "an exact match on
+a round power of two is not a fingerprint" is exactly how `MappedMemoryManager` was over-credited.
+
+**ROUTE B — stop the spin instead of the allocator.** The only route that could fix this without
+naming what allocates, and the only one plausibly on our side. If the main thread yields, posted
+tasks run and anything waiting on one drains. The driver is RC's SPA settling promises at enormous
+rate; the long-standing candidate is a retry loop against a 401'd session, which the RDR burst
+(**69,060 asks, zero answers of any kind**) is the shape of.
+- **The cheap first reading:** does a ramp ever coincide with a *healthy* resident RC session?
+  `chromium_memory_samples` has the ramps. **First check whether session verdicts are stored as a
+  TIME SERIES at all** — migration 047 reads like it records only *when the verdict last changed*,
+  which would not support the test. **Confirm that before promising it.**
+- **Parking the resident page is still refused**, and for a reason unrelated to memory:
+  `checkAndReport`'s localStorage rule would make the session verdict permanently inconclusive and
+  silence `autocart.rc_session` and the phone alarm.
+
+**AND AN HONEST THIRD ANSWER: there may be no fix we own.** If the driver is RC's own SPA, the
+options are "don't leave its page resident" (refused above) or "keep the session healthy so it does
+not loop" — both product decisions rather than bug fixes. **Containment already works**: `bail:ramp`
+caps ramps at 3.4-4.6 GB against 8-9 GB untreated and the box never goes dark. Saying so is a
+legitimate outcome; quietly building a fifth instrument is not.
 
 ### Do not do these, each for a recorded reason
 
