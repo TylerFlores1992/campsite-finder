@@ -5694,8 +5694,17 @@ when (UTC)         pid    VMHIST d   VMMAP2M   bases    diff   vs 2^14
   private or image — a **near-constant 4-6 on the target and 3 on the CONTROL**, i.e. a baseline
   property of any renderer rather than part of the ramp.
 - **SO THE MAPPED POPULATION — THE LEAK'S ACTUAL POPULATION — IS 16,381-16,383, NEVER 16,384 AND
-  NEVER ABOVE IT.** Six commit-unconstrained walks, all 1 to 3 SHORT. The four lower rows
-  (13,320 / 14,321 / 15,494 / 16,213) are the commit-limited ones already accounted for.
+  NEVER ABOVE IT.** Six walks, all 1 to 3 SHORT, on the six events that reached the cluster.
+- **AND THE FOUR LOWER ROWS ARE *NOT* ALL COMMIT-LIMITED — I NEARLY WROTE THAT THEY WERE.**
+  Mapped counts 13,320 / 14,321 / **15,494** / **16,213**. "THE BURST RUNS UNTIL THE BOX SAYS NO"
+  attributes the two lowest to commit exhaustion and I carried that across to all four without
+  checking. **Its own table refutes it for the third:** it marks the 15,499 event
+  `CAP (1,344 spare)` — i.e. NOT commit-limited — while that event stopped **885 short** of the
+  cap, and 16,213 stopped **171 short** with headroom too. So that table's summary line, *"it
+  stopped at 16,384 ± 3"*, is true of nine rows and false of the one it labels `CAP` at 15,499.
+  **A middle population exists that neither constraint explains, and this reading does not settle
+  it** — the walk fires ~77 s after the burst, so "caught mid-fill" is available but not
+  established. Recorded as an open wrinkle, which is what it is.
 - **THAT REVERSES THE SENTENCE ABOVE, and the direction is the whole value.** "The totals sit
   just above it (32,773-32,779 MB)" is an artifact of counting those 4-6 non-mapped regions:
   16,381 x 2 MiB is 32,762 MB, and the extra ~12 MB is four regions of ~3 MB. **A count that
