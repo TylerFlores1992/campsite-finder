@@ -132,6 +132,34 @@ export const BOT_COMMAND_KINDS = {
     label: 'Restart the RC keep-warm + hold runner',
     argPattern: null, argOptions: null, argHint: '',
   },
+  /**
+   * READ THE LEAK'S HOT INSTRUCTIONS OUT OF `chrome.dll` ON DISK (2026-09-10).
+   *
+   * With the command-buffer candidate refuted, VMSTACK's native offsets are the only lead
+   * left, and symbolizing them is blocked from this environment: all four Playwright CDN
+   * hosts are 000 at the agent proxy, and the container's own Chromium is both the wrong
+   * revision and the wrong platform — the second reason survives a version match, which is
+   * the trap that burned the native sampler. **The box has the exact binary.**
+   *
+   * ── THE ARGUMENT IS AN RVA AND CAN NEVER BE A PATH ───────────────────────────────────────
+   *
+   * `argPattern` is hex digits ONLY. The box derives `chrome.dll` from Playwright's own
+   * resolved browser directory, so no caller names a file — because a path parameter here
+   * would be an arbitrary file read on the machine holding the live RC session, the DPAPI
+   * credential store and a residential IP both providers have blocked. That is the free-form
+   * channel this table's header exists to refuse, and widening this pattern fails
+   * `worker/bot-commands.test.mts`.
+   *
+   * READ-ONLY, and it reads the SHIPPED FILE rather than a process — so it touches neither
+   * the standing `ReadProcessMemory` ban nor anything a renderer holds in memory. A code
+   * address and a section name cannot carry a credential.
+   */
+  'code-bytes': {
+    label: "Bytes at an RVA in the browser's chrome.dll (leak symbolization)",
+    argPattern: /^(0x)?[0-9a-fA-F]{1,8}$/,
+    argOptions: null,
+    argHint: 'an RVA in hex, e.g. 18096c6',
+  },
 } as const;
 
 /**

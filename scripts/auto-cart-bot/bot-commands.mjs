@@ -24,6 +24,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 
+import { readCodeWindow, formatCodeWindow } from './pe-rva.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** Hard ceiling on what any diagnostic may return. */
@@ -578,6 +580,62 @@ export const COMMANDS = {
       // It is absent on some SKUs, hence the fallback rather than a hard failure.
       "'=== sessions ==='; " +
       "$q = (quser 2>$null); if ($q) { $q } else { 'quser unavailable - Active session state unknown' }"]),
+
+  /**
+   * READ THE LEAK'S HOT INSTRUCTIONS OUT OF `chrome.dll` ON DISK (2026-09-10).
+   *
+   * VMSTACK has the spinning main thread in native code at fixed offsets in a known build, and
+   * a module-relative address symbolizes offline — but every Playwright CDN host is 000 at the
+   * agent proxy, so the matching binary cannot be fetched, and this container's own Chromium is
+   * the wrong revision AND the wrong platform. **The box already has the exact file.**
+   *
+   * Returns the BYTES around the address (to disassemble, which names what the loop does) and
+   * the PDB GUID/age (the symbol-server key for this build, which is what a later session with
+   * egress needs). Both come from one open of the file.
+   *
+   * ── WHY THIS IS SAFE TO ADD AS A LEVER ────────────────────────────────────────────────────
+   *
+   * THE PATH IS DERIVED HERE AND CANNOT BE PASSED IN. The argument is an RVA and nothing else.
+   * A path parameter would make this an arbitrary file read on the machine holding the RC
+   * session, the DPAPI credential store and a residential IP both providers have blocked — the
+   * exact thing this file's header refuses to build. `bot-commands.test.mts` pins the argument
+   * pattern to hex digits, so widening it to accept a path fails the build.
+   *
+   * IT READS THE SHIPPED BINARY, NEVER A PROCESS. No `ReadProcessMemory`, no minidump — the
+   * standing ban is about a renderer's pages being RC session material, and none of that is in
+   * a file on disk. A code address and a section name cannot carry a credential.
+   *
+   * READ-ONLY, and positioned reads rather than loading the file: `chrome.dll` is ~200 MB and
+   * this runs on the process that carts campsites.
+   */
+  'code-bytes': async (arg) => {
+    const hex = String(arg ?? '').trim().toLowerCase().replace(/^0x/, '');
+    if (!/^[0-9a-f]{1,8}$/.test(hex)) throw new Error(`expected an RVA in hex, got '${arg}'`);
+    const rva = parseInt(hex, 16);
+
+    // DERIVED HERE, NEVER PASSED IN — this is the safety property. Playwright resolves its own
+    // browser directory, so this is the binary the keep-warm actually launches rather than one
+    // somebody names. Dynamic import so a missing playwright cannot break the whole channel.
+    //
+    // `playwright`, NOT `playwright-core`, and that is load-bearing rather than style. This is
+    // only useful if it names the binary `rc-keepwarm.mjs` LAUNCHES, and that file imports
+    // `playwright` — the bot's declared dependency. The probes in this directory import
+    // `playwright-core` deliberately so they run in the dev sandbox, and copying that habit here
+    // would mean disassembling bytes from a build we may not be running: plausible, silent and
+    // wrong, which is the whole class of error this instrument exists to end.
+    let dll;
+    try {
+      const { chromium } = await import('playwright');
+      dll = path.join(path.dirname(chromium.executablePath()), 'chrome.dll');
+    } catch (e) {
+      throw new Error(`could not resolve Playwright's Chromium: ${e?.message ?? e}`);
+    }
+    // AN ABSENCE IS AN ANSWER. "the file is not there" and "the bytes are wrong" need different
+    // responses, and a thrown ENOENT reads as neither.
+    if (!fs.existsSync(dll)) return `(${dll} does not exist - is this a Windows box with chrome.dll?)`;
+
+    return formatCodeWindow(dll, rva, readCodeWindow(dll, rva));
+  },
 };
 
 export const KINDS = Object.keys(COMMANDS);

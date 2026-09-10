@@ -6007,6 +6007,68 @@ there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
   page — which is the shape the 02:0x cluster turned out to be. So a forced restart plausibly
   ramps far more often than the pooled figure, and **the ~20 bar is probably too conservative for
   forced trials specifically**. n=2; do not quote it as a rate.
+#### THE BOX HAS THE BINARY — `code-bytes` READS THE HOT INSTRUCTIONS OFF DISK (2026-09-10)
+With the command-buffer candidate refuted, VMSTACK's native offsets are the only lead left, and
+symbolizing them is blocked from a web session: **all four Playwright CDN hosts are 000 at the
+agent proxy**, and this container's own Chromium is the wrong revision AND a Linux build — two
+independent reasons, the second of which survives a version match, which is the "validated on the
+wrong platform" trap that burned the native sampler. **The mini-PC has the exact file.**
+- **IT READS THE SHIPPED BINARY, NEVER A PROCESS.** The standing ban on `ReadProcessMemory` and
+  minidumps is about a renderer's pages being RC session material; a file on disk carries none of
+  it, and a code address plus a section name cannot carry a credential. Pinned: neither the
+  handler nor the parser may contain `ReadProcessMemory`, `MiniDumpWriteDump` or `OpenProcess`.
+- **THE ARGUMENT IS AN RVA AND CAN NEVER BECOME A PATH.** That is the whole reason this is safe
+  to add as a lever to a box holding the live RC session, the DPAPI credential store and a
+  residential IP both providers have blocked. `chrome.dll` is **DERIVED** on the box from
+  Playwright's own `chromium.executablePath()`; the arg reaches a hex regex and `parseInt` and
+  nothing else. **It imports `playwright`, NOT `playwright-core`, and that is load-bearing** —
+  the command is only useful if it names the binary `rc-keepwarm.mjs` LAUNCHES, and that file
+  imports `playwright`. The probes in that directory use `playwright-core` deliberately so they
+  run in the dev sandbox; copying that habit here would mean disassembling bytes from a build the
+  box may not be running, which is plausible, silent and wrong. A guard reads the keep-warm's own
+  import and requires this to match, so the day that launch import moves, this fails rather than
+  drifting. **There is no fallback**: a `playwright-core` fallback is precisely what would turn a
+  clear "could not resolve Playwright's Chromium" into a wrong answer. A guard asserts that no line constructing the path mentions `arg` or `hex`, and
+  the widened-pattern mutation (`/^\S{1,260}$/`) is caught — verified by applying it.
+- **BOTH ALLOWLISTS RE-VALIDATE, and the box's is the load-bearing one.** A leaked
+  `AUTOCART_TOKEN` reaches the feed, not this repo — the same split as `restart-rc`'s rate limit
+  living on the box rather than only on the server.
+- **IT ANSWERS TWO WAYS FROM ONE OPEN, and the second is the one that survives this session.**
+  The BYTES (to disassemble — `objdump -D -b binary -m i386:x86-64 -M intel`, verified working in
+  the container) name what the loop DOES, which is arguably better than a function name. And the
+  **PDB GUID + age** is the symbol-server key for this exact build, which is what a later session
+  WITH egress needs; deriving it now means the answer does not wait on the proxy twice. The
+  binary's own key (`TimeDateStamp` + `SizeOfImage`) rides along, because they are DIFFERENT keys
+  and whichever is published is the one that works.
+- **THE WINDOW STARTS 64 BYTES BEFORE THE ADDRESS.** x86 is variable-length, so disassembling
+  from exactly the reported address begins mid-instruction and produces confident nonsense; the
+  caller needs room to find a boundary.
+- **`parsePeHeaders` REFUSES PE32 RATHER THAN ASSUMING PE32+.** Data directories sit at optional
+  header offset 112 for 64-bit and 96 for 32-bit, so guessing reads a different structure and
+  returns something shaped like an answer. Same rule as `unknown` never rounding to a verdict.
+- **AN RVA PAST A SECTION'S RAW DATA REFUSES**, rather than returning the next section's bytes —
+  a section can be larger in memory than on disk, and neighbouring bytes disassemble into
+  plausible garbage, which is the worst output this command could produce.
+- **THE PDB GUID IS MIXED-ENDIAN AND THAT IS NOT A DETAIL.** The first three fields are
+  little-endian integers and the last eight bytes are raw, so a straight hex dump of the sixteen
+  bytes yields a key that looks right and matches nothing — and the resulting 404 reads as
+  "symbols are not published" rather than "we computed the key wrong". The age is appended in hex
+  **unpadded**. A non-RSDS record reports NOTHING rather than a fabricated key.
+- **THE READING HALF TAKES A PATH; THE COMMAND DOES NOT.** `readCodeWindow(dllPath, rva)` is
+  split out so the arithmetic can be tested against a real file on disk **without the command
+  growing a path parameter to make it testable** — which would have traded the safety property
+  for the test. Positioned reads throughout: `chrome.dll` is ~200 MB and this runs on the process
+  that carts campsites, so a `readFileSync` here is the cure-arriving-as-the-disease mistake.
+- `src/lib/pe-rva.test.mts` (15) + `src/lib/code-bytes-safety.test.mts` (7), **nine mutations,
+  each verified to APPLY and each caught** — the arg widened to a path, the box dropping its own
+  check, the arg reaching the path, a whole-file read, the absence throwing instead of answering,
+  the CodeView pointer mapped through `rvaToFileOffset` a second time, the RVA ignoring the
+  section table, the GUID dumped straight, and the import switched to `playwright-core`.
+- **GUARDS UNDER `src/`, NOT `worker/`** — read out of `worker-deploy.yml`'s `paths:`, not
+  remembered — so this fires **no worker deploy**. **BOT-SIDE, so it is inert until the box
+  updates**; confirm with `bot-ask git-status`, never `autocart.bot_version`.
+- **HOW TO USE IT:** `npx tsx scripts/bot-ask.mts code-bytes 18096c6`, then disassemble the hex
+  locally. The two addresses to ask for are `18096c6` (11 of 48 samples) and `180968b` (9 of 48).
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
@@ -8810,11 +8872,24 @@ label is American and which ships to the **United States storefront only**.
 > 2 MiB unit is now MORE interesting: something maps 16k two-megabyte shared sections in a
 > renderer with no GPU context.**
 >
-> **THE NEXT READING IS SYMBOLIZATION, AND IT IS THE ONLY LEAD LEFT.** VMSTACK has the loop in
-> native code at fixed offsets in a known build; naming the function is what turns "something maps
-> 32 GiB" into a mechanism. It is blocked on egress — see directly below — and the two routes are
-> the allowlist and a NAMED read-only bot command. Everything else this investigation could
-> measure from outside the process has been measured.
+> **THE NEXT READING IS SYMBOLIZATION, AND IT IS THE ONLY LEAD LEFT** — VMSTACK has the loop in
+> native code at fixed offsets in a known build, and naming what it DOES is what turns "something
+> maps 32 GiB" into a mechanism. Everything else this investigation could measure from outside the
+> process has been measured.
+>
+> **AND THE ROUTE IS BUILT: `code-bytes`.** The proxy blocks every Playwright CDN host, so the
+> binary cannot be fetched — but **the box has the exact file**, and the command reads it FROM
+> DISK (never a process, so the `ReadProcessMemory` ban is untouched). Its argument is an RVA and
+> can never become a path; `chrome.dll` is derived on the box from Playwright's own
+> `executablePath()`. See "THE BOX HAS THE BINARY" above.
+> - **BOT-SIDE, so it needs a box update first**, then two calls:
+>   `npx tsx scripts/bot-ask.mts code-bytes 18096c6` and `... 180968b`.
+> - **Disassemble the hex HERE** — `objdump -D -b binary -m i386:x86-64 -M intel` is in the
+>   container and verified working. The window starts 64 bytes early on purpose: x86 is
+>   variable-length, so try alignments until the instruction stream is sane.
+> - It also returns the **PDB GUID + age**, which is the symbol-server key for this exact build —
+>   the thing a later session WITH egress needs, obtained now so the answer does not wait on the
+>   proxy twice.
 >
 > **`restart-rc` IS 2 FOR 2 AS A FORCING LEVER** (09-09 21:26 and this one), against a pooled 10%
 > base rate. n=2, so not a rate — but a forced restart makes a COLD browser loading RC's home
