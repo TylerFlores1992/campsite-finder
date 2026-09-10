@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createRampScan, RAMP_SCAN_MB, RAMP_SCAN_COOLDOWN_MS, RAMP_SCAN_PS } from '../scripts/auto-cart-bot/ramp-scan.mjs';
+import { createRampScan, RAMP_SCAN_MB, RAMP_SCAN_COOLDOWN_MS, RAMP_SCAN_COMMIT_MB, RAMP_SCAN_PS } from '../scripts/auto-cart-bot/ramp-scan.mjs';
 
 const BOT = readFileSync(new URL('../scripts/auto-cart-bot/bot.mjs', import.meta.url), 'utf8');
 const SCAN = readFileSync(new URL('../scripts/auto-cart-bot/ramp-scan.mjs', import.meta.url), 'utf8');
@@ -62,6 +62,68 @@ test('at the threshold it scans once and posts a ramp-scan event with the trigge
   assert.equal(d.maxType, 'renderer');
   assert.equal(d.complete, true, 'the END line proves the scan ran to the end');
   assert.match(String(e.text), /ALLPROC count=200 privateSumMB=12000/);
+});
+
+test('THE BURST FIRES IT: commit past its threshold scans even though private bytes are far below rcMb', async () => {
+  // The measured shape, verbatim from 2026-09-09 13:45:54 — commit 10,081 MB while `rc_mb`
+  // is 410. Under the rcMb trigger alone this sample does nothing and the scan lands 110 s
+  // later, after the mapping is complete. Not a round fixture: a threshold sized wrong is
+  // only visible against the real numbers.
+  const h = harness();
+  assert.equal(await h.scan({ rcMb: 410, commitUsedMb: 10_081 }), true);
+  assert.equal(h.posted.length, 1);
+  const dd = h.posted[0].detail as Record<string, unknown>;
+  assert.equal(dd.trigger, 'commitUsedMb', 'an in-burst scan and an after-the-fact scan must not arrive looking identical');
+  assert.equal(dd.rcMb, 410);
+});
+
+test('THE COMMIT TRIGGER IS A SECOND ONE, NOT A REPLACEMENT — rcMb still fires with no commit figure at all', async () => {
+  // Commit is a WHOLE-BOX number and the owner's desktop shares it. If `rcMb` ever stopped
+  // firing on its own, a box that could not report commit would go unscanned for ever.
+  const h = harness();
+  assert.equal(await h.scan({ rcMb: RAMP_SCAN_MB }), true);
+  assert.equal((h.posted[0].detail as Record<string, unknown>).trigger, 'rcMb');
+});
+
+test('BOTH in one sample is reported as both, because it is neither of the other two readings', async () => {
+  const h = harness();
+  assert.equal(await h.scan({ rcMb: 3500, commitUsedMb: 44_847 }), true);
+  assert.equal((h.posted[0].detail as Record<string, unknown>).trigger, 'both');
+});
+
+test('AN ABSENT COMMIT FIGURE NEVER FIRES — a null is not a zero and not a reason to scan', async () => {
+  // `parseSample` returns nulls rather than zeros for a reading it could not take. What this
+  // pins is the BEHAVIOUR — an unreadable figure does not scan — and the mutation it catches
+  // is a NaN-tolerant comparison (`!(commitMb < threshold)`), which fires on every tick of a
+  // box that reports no commit at all. It deliberately does NOT claim to pin `isFinite`:
+  // verified 2026-09-10 that removing it changes nothing, because NaN >= n and 0 >= n are
+  // both already false. A guard is worth only the mutation it actually catches.
+  const h = harness();
+  assert.equal(await h.scan({ rcMb: 300, commitUsedMb: null }), false);
+  assert.equal(await h.scan({ rcMb: 300, commitUsedMb: undefined }), false);
+  assert.equal(await h.scan({ rcMb: 300, commitUsedMb: 'n/a' }), false);
+  assert.equal(await h.scan({ rcMb: 300 }), false);
+  assert.equal(h.posted.length, 0, 'an unreadable figure is an absence, never a trigger');
+});
+
+test('THE COMMIT THRESHOLD IS BOUNDED FROM BOTH SIDES BY THE MEASUREMENT THAT CHOSE IT', () => {
+  // 6,266 samples over 7 days: median commit 7,213 MB, and only three samples between 9,000
+  // and 12,000. Below ~8,000 this starts firing on the box's ordinary state; above ~20,000 it
+  // gives back the head start it exists to buy, because the burst is already complete by then
+  // (13:46:27 read 44,847). Bounding it from both sides is what stops it being "tuned" in
+  // either direction by somebody who has not re-taken the measurement.
+  assert.ok(RAMP_SCAN_COMMIT_MB >= 8_000, 'below the box\'s ordinary commit it fires on nothing happening');
+  assert.ok(RAMP_SCAN_COMMIT_MB <= 20_000, 'above this the burst is over and the head start is gone');
+});
+
+test('THE READOUT SAYS WHICH TRIGGER FIRED — a commit scan must not render as an rcMb one', () => {
+  // The line hardcoded `trigger rc ${x.rcMb} MB` until 2026-09-10, so a commit-triggered scan
+  // would have printed `trigger rc null MB` — an absent reading wearing a finding's clothes,
+  // on the one line that says how to read the whole scan.
+  assert.match(READOUT, /x\.trigger === 'commitUsedMb'/, 'the readout must branch on the trigger');
+  assert.match(READOUT, /DURING the burst/, 'and say that an in-burst scan is the one that can name a thread');
+  assert.match(READOUT, /trigger not reported/, 'a pre-trigger row is an absence, not an rcMb scan');
+  assert.doesNotMatch(READOUT, /trigger rc \$\{x\.rcMb\} MB \(threshold/, 'the unconditional rc label is what this replaces');
 });
 
 test('ONE SCAN PER RAMP — the cooldown outlasts a ramp, so ticks inside it do not re-scan', async () => {

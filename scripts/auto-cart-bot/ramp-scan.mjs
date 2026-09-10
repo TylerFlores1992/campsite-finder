@@ -79,6 +79,38 @@
 export const RAMP_SCAN_MB = Number(process.env.RAMP_SCAN_MB || 3000);
 
 /**
+ * THE SECOND TRIGGER, AND IT EXISTS BECAUSE THE FIRST ONE FIRES AFTER THE EVENT (2026-09-10).
+ *
+ * The 32 GiB does not accumulate — it arrives in a BURST of <=34 seconds, measured twice at
+ * sub-minute resolution off the `bot-keepalive` forced samples:
+ *
+ *     13:45:54  rc_mb   410  commit 10,081
+ *     13:46:27  rc_mb 1,924  commit 44,847   <- +34,766 MB in THIRTY-THREE SECONDS
+ *     13:47:44  rc_mb 3,565                  <- only now does RAMP_SCAN_MB fire
+ *
+ * `rc_mb` is PRIVATE bytes, i.e. the pages actually touched, and it is still under 2 GB when
+ * the mapping is already complete — so a trigger on `rcMb` cannot fire until ~77 s after the
+ * thing it exists to catch is over. Every one of the 13 walks on file describes the finished
+ * state, which is why they all agree and why none of them names an allocator. Commit carries
+ * the mapping; private bytes carry the aftermath.
+ *
+ * 9000 IS BACKTESTED AGAINST EVERY RECORDED EVENT, NOT CHOSEN. Over 6,266 samples in 7 days
+ * the median commit is 7,213 MB and only THREE samples fall between 9,000 and 12,000 — the
+ * box's ordinary commit and a ramp are cleanly separated, so this is not a threshold that has
+ * to be tuned. Replayed over the 19 commit excursions in that week it fires EARLIER on 11 of
+ * them by 60-162 s, NEVER later than `rcMb` on any of them, and fires on one event `rcMb`
+ * never reaches at all. On the two ramps with sub-minute resolution it lands at commit 10,081
+ * with `rc_mb` at 410 — inside the burst. Cost is ~2-3 extra scans a week, cooldown-bounded.
+ *
+ * IT IS A SECOND TRIGGER AND NOT A REPLACEMENT. `rcMb` still fires on its own: commit is a
+ * WHOLE-BOX figure and the owner's own desktop shares it, so a reading that only ever came
+ * from commit could be about something that is not Chromium at all. Which one fired is
+ * recorded in `detail.trigger`, because an in-burst scan and an after-the-fact scan are
+ * different readings and must not arrive looking identical.
+ */
+export const RAMP_SCAN_COMMIT_MB = Number(process.env.RAMP_SCAN_COMMIT_MB || 9000);
+
+/**
  * Longer than a ramp (10-12 minutes onset to browser replacement) so one ramp yields one
  * scan, and shorter than the gap between ramps (5-6 hours) so the next one is not missed.
  */
@@ -584,12 +616,23 @@ export const RAMP_SCAN_PS = [
 export function createRampScan({
   post, log = () => {}, exec = null, platform = process.platform, now = () => Date.now(),
   thresholdMb = RAMP_SCAN_MB, cooldownMs = RAMP_SCAN_COOLDOWN_MS,
+  commitThresholdMb = RAMP_SCAN_COMMIT_MB,
 } = {}) {
   let lastAt = Number.NEGATIVE_INFINITY;
   let inFlight = false;
   return async function maybeScan(sample) {
     const rcMb = Number(sample?.rcMb);
-    if (!Number.isFinite(rcMb) || rcMb < thresholdMb) return false;
+    const commitMb = Number(sample?.commitUsedMb);
+    // AN ABSENT FIGURE NEVER FIRES. `parseSample` returns nulls rather than zeros for a
+    // reading it could not take, so a box that cannot report commit must simply not trigger
+    // on it. `isFinite` is belt to `>=`'s braces here and is NOT what enforces that — with a
+    // `>=` both NaN and 0 already fail. It is kept for symmetry with the `rcMb` guard above,
+    // which DOES need it, and because the hazard is one comparison away: a NaN-TOLERANT test
+    // such as `!(commitMb < threshold)` fires on every tick of a box that reports nothing.
+    // That is the mutation the guard pins; do not read this as `isFinite` being load-bearing.
+    const byRc = Number.isFinite(rcMb) && rcMb >= thresholdMb;
+    const byCommit = Number.isFinite(commitMb) && commitMb >= commitThresholdMb;
+    if (!byRc && !byCommit) return false;
     if (inFlight) return false;
     if (now() - lastAt < cooldownMs) return false;
     if (platform !== 'win32') return false;
@@ -614,7 +657,11 @@ export function createRampScan({
       await post({
         kind: 'ramp-scan',
         detail: {
-          trigger: 'rcMb', rcMb: Math.round(rcMb), thresholdMb,
+          // WHICH trigger fired is the reading, not bookkeeping: `commitUsedMb` alone means the
+          // scan landed while the mapping was still being made, and `rcMb` alone means it
+          // landed after. A single label would make those two indistinguishable.
+          trigger: byRc && byCommit ? 'both' : byRc ? 'rcMb' : 'commitUsedMb',
+          rcMb: Number.isFinite(rcMb) ? Math.round(rcMb) : null, thresholdMb, commitThresholdMb,
           commitUsedMb: sample?.commitUsedMb ?? null,
           commitLimitMb: sample?.commitLimitMb ?? null,
           ramFreeMb: sample?.ramFreeMb ?? null,
