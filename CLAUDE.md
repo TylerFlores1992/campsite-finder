@@ -8494,7 +8494,8 @@ region"* — and the setting it describes has stopped working.
   2026-08-08). **So this was diagnosed and fixed three times and never generalised**, which is
   exactly why the symptom was "some pages": everything inside the `(app)` route group is covered
   by V2Nav's sticky band, and everything outside it was covered by nobody.
-- **EIGHTEEN SURFACES, TWENTY-FOUR ROUTES.** Six `/camping` accommodation routes are two shared
+- **EIGHTEEN FILES, TWENTY-TWO ROUTES** (of twenty-four standalone routes; `/admin` and
+  `/auto-cart` were the two already done). Six `/camping` accommodation routes are two shared
   renderers and `/claim` is `ClaimFlow`'s `Shell` — **the 08:00 hand-off screen, whose CampHawk
   link sat 24px from the top of the highest-stakes screen in the product.**
 - **IT IS WEB-SIDE, SO IT REACHES ALREADY-INSTALLED APPS ON A PUSH** — no rebuild, no review.
