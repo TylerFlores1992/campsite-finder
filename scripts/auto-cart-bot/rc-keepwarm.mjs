@@ -71,6 +71,7 @@ import {
 } from './profile-lock.mjs';
 import { sweepOrphanChromium } from './orphan-sweep.mjs';
 import { withForcedLoginPrompt } from './force-login-prompt.mjs';
+import { keepwarmLaunchArgs } from './keepwarm-launch.mjs';
 import { withNetworkTrace, describeTrace } from './okta-net-trace.mjs';
 import {
   startNativeSampling, readNativeProfile, diffProfiles, renderProfile, LONG_LIVED_INTERVAL,
@@ -724,10 +725,10 @@ async function withProfile(fn, { headless = HEADLESS, waitMs = 15_000 } = {}) {
     // navigator.webdriver is set by --enable-automation and reCAPTCHA reads it. The
     // rec.gov bot strips it for exactly this reason; RC gates on the same signal.
     ignoreDefaultArgs: ['--enable-automation'],
-    // The profile is routinely closed by a force-kill (update.bat, rc-login.bat), so
-    // Chromium offers to restore pages on every launch. Harmless, but it covers the top
-    // of the very window a human is being asked to look at.
-    args: ['--hide-crash-restore-bubble'],
+    // ONE definition, shared with the resident launch below — see keepwarm-launch.mjs for
+    // every flag and for the GPU experiment's gate, hazard and reading rule. The two launches
+    // must not drift: they would then differ in the variable under test.
+    args: keepwarmLaunchArgs(),
   }).catch((err) => {
     clearInterval(renew);
     releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
@@ -3100,7 +3101,7 @@ async function warmResident() {
          * stop short of taking the box down, the containment is what worked and this was not
          * it. Crediting a repair to the wrong mechanism has cost this file three times.
          */
-        args: ['--hide-crash-restore-bubble'],
+        args: keepwarmLaunchArgs(),
       });
       await installTokenCapture(ctx);
       const page = ctx.pages()[0] ?? (await ctx.newPage());
