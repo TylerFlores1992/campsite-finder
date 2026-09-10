@@ -6036,6 +6036,58 @@ only:
   time. That is the argument for the forcing recipe existing at all — and not for using it, which
   costs a password submission from an address that has eaten a twelve-hour block.
 
+###### AND `bot_events` GOES SILENT FOR HOURS WHEN THE SESSION IS HEALTHY (2026-09-10 21:53 UTC)
+Checked for a new ramp and found something better: **the whole event stream had stopped, and that
+is the good regime.** Last event of ANY kind **19:31:28**, against a `tab-close` every ~31 minutes
+for the six hours before it — **two hours and twenty-two minutes of complete silence.**
+```
+14:08 · 14:39 · 15:11 · 15:42 · 16:14 · 16:45 · 16:57   tab-close label=renewal  tripMs ~68-69s
+17:53 ramp-scan · 17:55 tab-close · 18:06 tab-close
+19:17 ramp-scan · 19:18 mem-dump · 19:19 request-counts · 19:20 tab-close · 19:31 tab-close
+   [ nothing, for 2h22m ]
+21:51:31  session_ok · token exp in 39m · renewed=no · src=live · okta=ALIVE   (beat 2s ago)
+```
+- **`session_live_since` IS THE PROOF, AND IT IS A TIMESTAMPED TRANSITION RATHER THAN A LOG
+  READING.** It reads **20:32:09** — migration 047's column, which moves only when the verdict
+  CHANGES — against a last renewal trip ending **19:31:28**, exactly one token lifetime earlier.
+  So the session went dead when that token lapsed and **came back an hour later with no renewal
+  in between.** RC's SPA re-minted it silently. That is the 2026-08-18 self-renewal finding
+  reproduced with better evidence than the original, which rested on reading `♻` lines.
+- **AND IT HAS RE-MINTED AT LEAST TWICE.** A 60-minute token with 39m left at 21:51:31 was issued
+  ~21:30 — after the 20:32 one had lapsed — while `session_live_since` did NOT move again, because
+  the verdict never changed. Two silent mints, zero renewals.
+- **THE MECHANISM IS THE STAND-DOWN FEEDING ITSELF.** `planRenewal` stands down while the token is
+  alive AT ALL, so one silent re-mint removes the reason for our next renewal, which removes the
+  next Okta trip, and the loop sustains. **Every renewal runs in a throwaway tab and every
+  throwaway tab close emits `tab-close`** — read in source, not assumed: three call sites
+  (`renewal`, `auto-login`, `warmup`), each passing `report: reportBotEvent`, and the close sits
+  in a **`finally`**, so a thrown renewal still reports. So no `tab-close` is not merely "no
+  event", it is positive evidence that no trip ran.
+  - **THE ONE EXCEPTION, so this is not quoted as absolute: a process KILLED mid-trip runs no
+    `finally` and emits nothing.** That is the bail path — and it is separable, because a bail
+    emits its own `request-counts` and (past the threshold) a `ramp-scan`. Silence with no bail
+    event either is a trip that never started; silence WITH one is a trip that never finished.
+- **AND THAT IS THE TRAP: AN EMPTY `bot-events-readout` READS AS A DEAD BOX.** Every kind in that
+  table is emitted by a keep-warm that is DOING something — a trip, a bail, a scan — so a keep-warm
+  with nothing to do is indistinguishable from one that is wedged, from the readout alone. **The
+  discriminator is one health read**: `autocart.rc_session` carries `checked Ns ago`, and
+  `autocart.bot` carries the sampler's own beat. Both were seconds old here.
+  **`chromium_memory_samples` keeps arriving either way** and cannot settle it — that series is
+  posted by `bot.mjs`, a different process from `rc-keepwarm.mjs`, so it stays healthy through a
+  dead keep-warm. It is what made the silence look alarming rather than reassuring.
+- **THE NATURAL FLOOR IS ~1.4h, NOT 2.3h — WITH ONE CAVEAT THAT MATTERS.** The two onsets today
+  are **17:52:52 and 19:16:56, 1h24m apart**, and the 16:58 forced warm-up between them produced
+  no ramp. But **CLAUDE.md now records the 17:53 ramp's `auto-login` step entry as caused by a
+  test fixture** (`npm test`'s phantom release), and whether that step NAVIGATED is not
+  established — so one of the pair is of uncertain provenance. **Quote it as a floor candidate,
+  not a measurement.** Third window, third number; the standing instruction to quote the range
+  rather than a headline is what this reinforces.
+- **NO RAMP IN THE 2.6h OF SILENCE, WHICH IS CONSISTENT AND IS NOT EVIDENCE.** No renewal means no
+  Okta navigation means no trigger, which fits the ESTABLISHED finding — but 2.6h sits inside the
+  ordinary range, so it discriminates nothing on its own. **The reading that would matter is the
+  same pattern holding across an overnight**, which is what the 08-18 entry asked for and still
+  nobody has.
+
 #### WHEN A RAMP CAN BE FORCED, MEASURED RATHER THAN ESTIMATED (2026-09-09)
 The recipe needs **Okta GONE *and* the RC token dead**, and the binding half is Okta's ABSOLUTE
 cap, which our own probing cannot bring forward (measured not to reset across a password sign-in
