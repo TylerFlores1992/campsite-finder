@@ -33,7 +33,7 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — 2026-09-10 17:10 UTC
+## 1. State — 2026-09-10 21:55 UTC
 
 | | |
 |---|---|
@@ -49,7 +49,8 @@ numeric `carted` fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT` and
 the keep-warm. Read live at 19:35:40; see CLAUDE.md → "A NUMERIC TEST FIXTURE PUTS A PHANTOM
 RELEASE IN FRONT OF THE KEEP-WARM". **It explains the STEP, not the stall.** On the next ramp,
 read `tail-log rc-keepwarm` BEFORE anything else. |
-| health | **18 of 19 ok**, one documented-benign warn |
+| **quiet since** | **`bot_events` has had NOTHING since 19:31:28** — 2h22m against a `tab-close` every ~31 min before it. **That is the HEALTHY regime, not a dead box.** `session_live_since` reads **20:32:09**, an hour after the last renewal trip and with no renewal in between, so RC's SPA re-minted silently; `planRenewal` then stands down while the token is alive, which removes the reason for the next trip and sustains itself. **Every renewal runs in a throwaway tab and every tab close emits `tab-close`, so no event is positive evidence no trip ran.** An empty `bot-events-readout` therefore reads exactly like a wedge — **the discriminator is one health read** (`autocart.rc_session` carries `checked Ns ago`). `chromium_memory_samples` keeps arriving either way and settles nothing: it is posted by `bot.mjs`, not the keep-warm. See CLAUDE.md → "AND `bot_events` GOES SILENT FOR HOURS WHEN THE SESSION IS HEALTHY". |
+| health | **18 of 19 ok** at 21:53 (`rc_session` live, token 39m, `okta=ALIVE`); the one warn is `bot_version`, the ordinary web-ahead-of-box gap, and its own detail says *"No bot-side code in the gap"* |
 | fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
 | migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
