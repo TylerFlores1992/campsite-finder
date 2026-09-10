@@ -9,60 +9,69 @@
  * keep-warm loop, so anything that wants a test has to live outside it; same reason as
  * `renewal-schedule.mjs`, `ramp-bail.mjs` and `session-coverage.mjs`.
  *
- * ── THE GPU FLAGS (2026-09-09) — A HYPOTHESIS, GATED, NOT A PROVEN FIX ──────────────────────
+ * ── THE GPU FLAGS — RUN, ANSWERED, AND TURNED BACK OFF (2026-09-10) ────────────────────────
  *
- * VMSTACK read a real ramp on 2026-09-09 21:26 and put the spinning main thread in NATIVE code:
- * 42 of 48 samples inside `chrome.dll`, the hot addresses spanning 59 bytes. That closed the JIT
- * branch — RC's own page script is not the loop — and left the leading candidate untouched:
- * `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is 2,097,152 bytes, exactly the walk's
- * 2.0000 MB unit; `MappedMemoryManager` holds one shared region per chunk, in the renderer,
- * anonymous and READWRITE; and `FreeUnused()` reclaims only blocks whose command-buffer tokens
- * have passed, which a main thread that never returns to its message loop cannot advance.
+ * **THE COMMAND-BUFFER CANDIDATE IS REFUTED. These flags are OFF by default and the module is
+ * kept for the evidence, not for the behaviour.**
  *
- * The keep-warm's browser exists to HOLD A SESSION. It does not need to render RC's WebGL ArcGIS
- * map. So the cheapest test of that candidate is to take the command buffer away.
+ * The hypothesis was `MappedMemoryManager` serving RC's WebGL ArcGIS map:
+ * `gpu::SharedMemoryLimits::mapped_memory_chunk_size` is 2,097,152 bytes, exactly the region
+ * walk's 2.0000 MB unit; one shared region per chunk, in the renderer, anonymous and READWRITE;
+ * and `FreeUnused()` reclaims only blocks whose command-buffer tokens have passed, which a main
+ * thread that never returns to its message loop cannot advance. It fit every reading taken.
  *
- *   --disable-3d-apis   the TARGETED one: no WebGL/WebGPU context, so no command-buffer client
- *                       for the map at all.
- *   --disable-gpu       the belt: compositing moves in-process too, in case the buffer that
- *                       matters is the compositor's rather than WebGL's. We do not know which,
- *                       and the reading cannot tell them apart, so both go on together.
+ * So the test was to take the command buffer away — `--disable-3d-apis` (no WebGL context at
+ * all, so no command-buffer client for the map) plus `--disable-gpu` (the belt, in case the
+ * buffer that mattered was the compositor's). Both shipped together on 2026-09-10 and the flags
+ * were confirmed live on the running browser by an INDEPENDENT reading rather than by "the code
+ * is on disk": `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed there.
  *
- * ── THE HAZARD, STATED BECAUSE IT IS REAL AND IT IS NOT THE MEMORY ─────────────────────────
+ * **THE FIRST TRIAL RAMPED.** A browser launched at 05:49:51Z under both flags, and two minutes
+ * later:
  *
- * RC and Okta FINGERPRINT this browser. That is why it is headful (`HEADLESS` is false by
- * design) and why `--enable-automation` is stripped — `navigator.webdriver` is read by reCAPTCHA.
- * A browser with no WebGL, or one reporting SwiftShader, is itself a bot signal. The recorded
- * cost of getting anti-bot posture wrong on this address is TWELVE HOURS of IP block
- * (2026-08-06), and an unattended login path that stops working takes the 08:00 cart with it.
+ *     05:49:53  rc   209 MB  pid  1692  commit  7050/29035  gpu-process 20 MB
+ *     05:51:53  rc  3452 MB  pid 13332  commit 44336/45513  gpu-process 20 MB
  *
- * So this is **gated and reversible without a deploy**: `RC_KEEPWARM_DISABLE_GPU=0` in the box's
- * `.env` plus a restart puts it back. The canaries that would catch a broken sign-in already
- * exist and are watched — the nightly login rehearsal (`autocart.rc_login`), `rc-test-login` on
- * demand, and `autocart.rc_session`. **If the rehearsal starts failing or a CAPTCHA appears,
- * turn this off first and ask questions second.**
+ * with the region walk on that renderer reading **32,774 MB across 16,385 regions in the 2-4M
+ * bucket, one allocation base each, all anonymous, all READWRITE** — 16,384 x 2 MiB = 32 GiB
+ * exactly, the identical signature, and the same native spin at the same `chrome.dll` offsets.
+ * The GPU process did not move at any point.
  *
- * ── HOW TO READ THE RESULT, AND THE BAR IT HAS TO CLEAR ────────────────────────────────────
+ * A refutation needs ONE counterexample and this one arrived with the whole walk attached, so
+ * accumulating the twenty quiet trials the bar called for would have proven nothing further —
+ * that bar was for crediting a CURE, and there is no cure here to credit.
  *
- * `restart-rc` replaces the browser on demand and a replacement ramps about **10% of the time**
- * (11 of 110, measured over ten days). So a handful of quiet restarts proves NOTHING: three in a
- * row is what you would expect roughly three quarters of the time from a change that does
- * nothing at all. **Roughly twenty clean restarts is the bar**, and natural ramps count toward
- * it too. Crediting a repair to the wrong mechanism has cost this file three separate times —
- * the age recycle, the throttling flags and the containment arm — so the number is written down
- * here BEFORE the experiment rather than argued about after it.
+ * **STATED PRECISELY, BECAUSE THE OVER-CLAIM IS TEMPTING.** What is established is that removing
+ * the WebGL context does not stop the leak. `--disable-gpu` leaves a GPU process running (at
+ * 20 MB, evidently idle), so a *different* command-buffer client is not excluded by arithmetic
+ * alone — but the mechanism as proposed, the map's own `MappedMemoryManager`, cannot be it. The
+ * 2 MiB unit is now MORE interesting, not less: something allocates 2 MiB shared sections in a
+ * renderer with no WebGL context at all.
  *
- * A ramp that still arrives with these flags on refutes the command-buffer candidate outright,
- * which is worth as much as a cure and arrives faster.
+ * ── WHY THEY ARE OFF RATHER THAN DELETED ───────────────────────────────────────────────────
+ *
+ * OFF because the justification is gone and the hazard is not. RC and Okta FINGERPRINT this
+ * browser — that is why it is headful and why `--enable-automation` is stripped — and a browser
+ * reporting no WebGL is itself a bot signal. The recorded cost of getting anti-bot posture wrong
+ * on this address is TWELVE HOURS of IP block (2026-08-06), which takes the 08:00 cart with it.
+ * A change that does not work and carries that is uncompensated risk.
+ *
+ * KEPT rather than deleted because the module now carries a MEASURED refutation, and deleting it
+ * takes the evidence with it — the same reason a guard that pinned a bug gets inverted rather
+ * than removed. Anyone who reaches for these flags again should meet this entry first.
+ *
+ * `RC_KEEPWARM_DISABLE_GPU=1` in the box's `.env` plus a restart re-runs the experiment with no
+ * deploy, if a reason ever appears.
  */
 
 /** `--hide-crash-restore-bubble`: the profile is routinely force-killed (update.bat,
  * rc-login.bat), so Chromium offers to restore pages on every launch — harmless, but it covers
  * the top of the very window a human is being asked to look at. Unconditional, unrelated to the
- * experiment above, and it must stay whichever way the gate goes. */
+ * experiment above, and it stays whichever way the gate goes. */
 const ALWAYS = ['--hide-crash-restore-bubble'];
 
-/** Targeted first, belt second — the order the comment above explains them in. */
+/** Targeted first, belt second — the order the comment above explains them in. Off by default
+ *  since the trial of 2026-09-10 answered the question they were added to ask. */
 export const GPU_OFF_ARGS = ['--disable-3d-apis', '--disable-gpu'];
 
 /**
@@ -71,10 +80,10 @@ export const GPU_OFF_ARGS = ['--disable-3d-apis', '--disable-gpu'];
  * @returns {string[]} the launch args for BOTH keep-warm Chromium launches.
  */
 export function keepwarmLaunchArgs(env = process.env) {
-  // DEFAULT ON, because the experiment is the point of shipping it — but read as a STRING and
-  // compared explicitly, so the only way to get the old behaviour is to ask for it. An unset
-  // variable is the experiment, not a silent revert.
-  const off = String(env.RC_KEEPWARM_DISABLE_GPU ?? '1').trim().toLowerCase();
-  const disabled = off === '0' || off === 'false' || off === 'no';
-  return disabled ? [...ALWAYS] : [...ALWAYS, ...GPU_OFF_ARGS];
+  // DEFAULT OFF. The experiment is over and its answer was negative, so an unset variable is
+  // now the SAFE configuration rather than the experimental one — and re-running it has to be
+  // asked for explicitly, since what it costs is a fingerprint change on the login path.
+  const on = String(env.RC_KEEPWARM_DISABLE_GPU ?? '0').trim().toLowerCase();
+  const enabled = on === '1' || on === 'true' || on === 'yes';
+  return enabled ? [...ALWAYS, ...GPU_OFF_ARGS] : [...ALWAYS];
 }

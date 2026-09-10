@@ -5928,7 +5928,7 @@ pid=15284 tid=6460 main=True deltaMs=1234 samples=48
   is weak evidence and ~20 would be needed to speak. Do not credit a repair to it on three quiet
   restarts; that is the mistake this file has made three times.
 
-#### THE COMMAND BUFFER IS OFF NOW, GATED, AND THE BAR WAS SET BEFORE THE TRIAL (2026-09-10)
+#### ~~THE COMMAND BUFFER IS OFF NOW, GATED~~ — IT RAN, IT RAMPED, AND THE CANDIDATE IS REFUTED (2026-09-10)
 `keepwarmLaunchArgs()` (`scripts/auto-cart-bot/keepwarm-launch.mjs`) adds `--disable-3d-apis`
 (the targeted flag — no WebGL context, so no command buffer, so no `MappedMemoryManager`) and
 `--disable-gpu` (the belt). **ONE definition, BOTH launch sites** — `withProfile` and the
@@ -5939,13 +5939,14 @@ browser being measured in the variable under test.
   no WebGL is itself a bot signal** — the recorded cost of getting anti-bot posture wrong on
   this address is twelve hours of IP block. **If the login rehearsal starts failing or a CAPTCHA
   appears, turn it off first and ask questions second.**
-- **THE BAR IS WRITTEN INTO THE MODULE BEFORE THE EXPERIMENT, NOT AFTER IT.** A browser
-  replacement ramps ~**10%** of the time (11 of 110 over ten days), so **three quiet restarts is
-  what a change doing NOTHING produces three quarters of the time.** Roughly **twenty** clean
-  restarts is the bar, and natural ramps count toward it. Crediting a repair to the wrong
-  mechanism is the mistake this file has recorded three times.
+- **THE BAR WAS WRITTEN INTO THE MODULE BEFORE THE EXPERIMENT, AND IT WAS NEVER NEEDED.** A
+  browser replacement ramps ~**10%** of the time (11 of 110 over ten days), so three quiet
+  restarts is what a change doing NOTHING produces three quarters of the time, and ~**twenty**
+  clean trials was the bar for crediting a CURE. **The first trial ramped**, so there was no
+  cure to credit and no quiet run to interpret — see directly below. The bar stays written down
+  because it is the right bar for the next candidate, not because this one reached it.
 - **A RAMP THAT STILL ARRIVES WITH THE FLAGS ON IS WORTH AS MUCH AS A CURE, AND ARRIVES
-  SOONER** — it refutes the command-buffer candidate outright.
+  SOONER** — it refutes the command-buffer candidate outright. **It did, in under half an hour.**
 - **AND CI CAUGHT A REAL REGRESSION FROM THE EXTRACTION — the ~28th instance of the shape.**
   `keepwarm-recycle.test.mts` pinned `'--hide-crash-restore-bubble'` in `rc-keepwarm.mjs`'s OWN
   source, and moving the args took the literal with them. Behaviour was unchanged. **Re-anchored
@@ -5955,6 +5956,57 @@ browser being measured in the variable under test.
   Three mutations, each verified to apply and to fail; **the one that matters is a throttling
   flag added to the NEW module**, which a naive re-point would have sailed past.
 
+
+#### AND IT RAMPED ON TRIAL ONE — THE COMMAND-BUFFER CANDIDATE IS REFUTED (2026-09-10 05:51 PT-UTC)
+The flags reached the box at 05:21:50Z and were confirmed live by an INDEPENDENT reading rather
+than by "the code is on disk" — `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed
+there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
+```
+05:49:53  rc   209 MB  pid  1692  renderer  101 MB  commit  7050/29035  gpu-process 20 MB
+05:51:53  rc  3452 MB  pid 13332  renderer 3234 MB  commit 44336/45513  gpu-process 20 MB
+05:52:22  rc  3889 MB  pid 13332  renderer 3670 MB  commit 44606/45513  gpu-process 22 MB
+05:52:53  rc   166 MB  pid  3292  (replaced by the RAMP arm)  commit  7230/29035
+```
+- **EVERY ELEMENT OF THE SIGNATURE, ON A BROWSER LAUNCHED UNDER BOTH FLAGS.** The ~35 GB commit
+  step inside one two-minute tick; the commit LIMIT chasing it (29,035 -> 45,513 -> back); a
+  renderer pid that did not exist a minute earlier, immediately the largest; and the walk on that
+  renderer reading **32,774 MB across 16,385 regions in the 2-4M bucket, one allocation base
+  each, 16,379 READWRITE, 64 sampled and all anonymous.** `16,384 x 2 MiB = 32 GiB` exactly — the
+  ceiling holds for the ninth walk — with **EXCESS 35,982 MB against an OS commit gap of
+  35,899 MB**, so the walk named the 35 GB again.
+- **AND THE SAME NATIVE SPIN AT THE SAME OFFSETS.** `SPINNING on the MAIN thread`, 1234 ms of a
+  1200 ms window, `chrome.dll+0x18096c6` (11 of 48) and `chrome.dll+0x180968b` (9 of 48) — the
+  addresses VMSTACK named on 2026-09-09, on a build with no WebGL context at all.
+- **THE GPU PROCESS DID NOT MOVE AT ANY POINT: 20 MB before, 20 MB during, 22 MB after.** It is
+  not merely uninvolved, it is at the reduced post-flag value throughout, which is the same
+  reading that proves the flags applied.
+- **STATED PRECISELY, BECAUSE THE OVER-CLAIM IS THE FAILURE MODE OF A GOOD FINDING.** What is
+  established is that **removing the WebGL context does not stop the leak**, so
+  `MappedMemoryManager` serving RC's ArcGIS map — the mechanism as proposed, and the one the
+  2 MiB unit was matched against — cannot be it. `--disable-gpu` leaves a GPU process running,
+  so a *different* command-buffer client is not excluded by arithmetic alone. **The 2 MiB unit is
+  now MORE interesting, not less: something maps 16k two-megabyte shared sections in a renderer
+  that has no GPU context.**
+- **ONE COUNTEREXAMPLE IS WHAT A REFUTATION NEEDS, AND THIS ONE CAME WITH THE WHOLE WALK
+  ATTACHED.** Accumulating the twenty quiet trials would have added nothing — that bar exists to
+  stop a CURE being credited on silence, and silence is not what arrived. **Do not re-run this
+  trial to "confirm" the refutation**; the confirming evidence is in the walk above.
+- **THE FLAGS ARE OFF AGAIN (default flipped), AND THE MODULE IS KEPT FOR THE EVIDENCE.** Their
+  entire justification was the candidate; what is left without it is the fingerprint hazard — RC
+  and Okta fingerprint this browser and a browser reporting no WebGL is itself a bot signal, with
+  a recorded cost of twelve hours of IP block. A change that does not work and carries that is
+  uncompensated risk. **Deleting the module would take the refutation with it**, which is the
+  Feature E fold-in failure, so it stays and `RC_KEEPWARM_DISABLE_GPU=1` re-runs it with no
+  deploy. `src/lib/keepwarm-launch.test.mts` had **three guards INVERTED, not relaxed** — they
+  pinned the flags ON, which is the `held-offer-scope` shape (a test requiring the change that
+  was measured not to work). Six mutations, each verified to APPLY and to fail.
+- **A METHODOLOGICAL OBSERVATION, NOT A FINDING: `restart-rc` IS 2 FOR 2.** The 2026-09-09 21:26
+  forced restart ramped first try and so did this one, against a pooled base rate of 10% (p~0.01
+  for two). That rate was computed over ALL 110 replacements, most of them natural (post-Okta
+  recycle, profile yield, bail), while `restart-rc` produces a COLD browser loading RC's home
+  page — which is the shape the 02:0x cluster turned out to be. So a forced restart plausibly
+  ramps far more often than the pooled figure, and **the ~20 bar is probably too conservative for
+  forced trials specifically**. n=2; do not quote it as a rate.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
@@ -8724,47 +8776,51 @@ label is American and which ships to the **United States storefront only**.
 
 ## Open / next session
 
-> ### 2026-09-10 — THE COMMAND BUFFER IS OFF, AND THE FLAGS ARE MEASURED LIVE
+> ### 2026-09-10 — THE TRIAL RAN AND THE COMMAND-BUFFER CANDIDATE IS REFUTED
 >
-> **#312 merged as `6f7cc57`; the mini-PC is on it, confirmed by its own `git rev-parse HEAD`
-> through `bot-ask git-status` — NEVER `autocart.bot_version`, which COALESCEs and can show a
-> stale sha beside a live heartbeat.** Worker deploy green, fleet **19 of 19 ok**, 0 live holds.
+> **Read `CLAUDE.md` → "AND IT RAMPED ON TRIAL ONE" before touching anything GPU-related. The
+> experiment is FINISHED and its answer was negative — do not re-run it to "confirm".**
 >
-> **THE FLAGS ARE ON THE RUNNING BROWSER, AND THAT IS MEASURED RATHER THAN INFERRED.** "The code
-> is on disk" is the fix-present-and-inert shape this file has paid for eight times, and neither
-> diagnostic can settle it — `list-processes` cannot see Chromium by construction, and `memory`
-> deliberately collects the profile directory and never argv (Chromium argv carries URLs). The
-> independent reading is the per-type breakdown: **`gpu-process` is 20-22 MB across seven
-> settled samples against 80-126 MB for the entire pre-update history**, with the rc family
-> total falling ~310 -> ~222 MB. A sustained 5x drop, not a restart artifact.
+> **State: master `43c1d67` (#312 + #313 merged); the mini-PC is on `6f7cc57`, confirmed by its
+> own `git rev-parse HEAD` through `bot-ask git-status` — NEVER `autocart.bot_version`, which
+> COALESCEs and can show a stale sha beside a live heartbeat.** 3/3 shards, 0 live holds.
 >
-> **TRIAL CLOCK STARTS 2026-09-10T05:21:50Z** — the first sample carrying the reduced GPU
-> process. A replacement before that instant is a CONTROL, not a trial, and folding the two
-> together is how a repair gets credited to the wrong mechanism.
+> **WHAT HAPPENED.** The flags went live at 05:21:50Z (confirmed independently: `gpu-process` fell
+> 80-126 MB -> 20-22 MB and stayed). `restart-rc` replaced the browser at 05:49:51Z. **It ramped
+> at 05:51:53Z** — ~35 GB of commit inside one two-minute tick, a renderer that did not exist a
+> minute earlier, and the walk on it reading **32,774 MB across 16,385 regions of 2 MiB, one
+> allocation base each, all anonymous, all READWRITE**, with the same native spin at
+> `chrome.dll+0x18096c6` / `+0x180968b`. **The GPU process never moved: 20 MB throughout.**
 >
-> **THE BAR, STATED BEFORE THE EXPERIMENT AND WRITTEN INTO `keepwarm-launch.mjs` ITSELF:** a
-> browser replacement ramps ~**10%** of the time (11 of 110 over ten days), so **three quiet
-> restarts is what a change doing NOTHING produces about three quarters of the time.** Roughly
-> **twenty** clean trials is the bar. **Natural ramps count toward it** — the browser does not
-> know which lever started it. Tally with `scratchpad/tally.mts <since>`; the arithmetic is in
-> the module header.
+> **SO THE ~20-TRIAL BAR WAS NEVER REACHED AND DID NOT NEED TO BE.** That bar exists to stop a
+> CURE being credited on silence; silence is not what arrived. One counterexample refutes, and
+> this one came with the whole walk attached.
 >
-> **PRE-TRIAL BASELINE, so the trial has something to be compared against: 13 ramps in the five
-> days to 2026-09-10**, peaks 3,357-9,294 MB, most recent 04:25Z — a cadence of roughly 2.5-8
-> hours. At that rate the bar is hours of wall clock, not days.
+> **THE FLAGS ARE OFF AGAIN — default flipped, module KEPT for the evidence.** Their justification
+> was the candidate; without it only the fingerprint hazard is left (a browser reporting no WebGL
+> is itself a bot signal, and the recorded cost of getting that wrong on this address is twelve
+> hours of IP block). `RC_KEEPWARM_DISABLE_GPU=1` re-runs it with no deploy if a reason appears.
+> **This needs a box update to take effect** — until then the box is still running with the flags
+> on, which is measured-useless rather than measured-harmful, and no canary has failed.
 >
-> **A RAMP THAT STILL ARRIVES WITH THE FLAGS ON REFUTES THE COMMAND-BUFFER CANDIDATE OUTRIGHT**,
-> which is worth as much as a cure and arrives sooner. Read its VMSTACK and region-walk rows.
+> **WHAT THE REFUTATION DOES *NOT* SAY, because the over-claim is the failure mode here.**
+> `--disable-gpu` leaves a GPU process running, so a *different* command-buffer client is not
+> excluded by arithmetic alone. What is established is that **removing the WebGL context does not
+> stop the leak**, so `MappedMemoryManager` serving RC's ArcGIS map cannot be the mechanism. **The
+> 2 MiB unit is now MORE interesting: something maps 16k two-megabyte shared sections in a
+> renderer with no GPU context.**
 >
-> **WATCH THE LOGIN CANARIES, AND THE HAZARD IS NOT THE MEMORY.** RC and Okta fingerprint this
-> browser, and a browser with no WebGL is itself a bot signal; the recorded cost of getting
-> anti-bot posture wrong on this address is **twelve hours of IP block**. `autocart.rc_login`
-> (the nightly rehearsal), `rc-test-login` on demand and `autocart.rc_session` are the three that
-> would catch it. **If the rehearsal starts failing or a CAPTCHA appears, set
-> `RC_KEEPWARM_DISABLE_GPU=0` and restart — no deploy needed — then ask questions.**
+> **THE NEXT READING IS SYMBOLIZATION, AND IT IS THE ONLY LEAD LEFT.** VMSTACK has the loop in
+> native code at fixed offsets in a known build; naming the function is what turns "something maps
+> 32 GiB" into a mechanism. It is blocked on egress — see directly below — and the two routes are
+> the allowlist and a NAMED read-only bot command. Everything else this investigation could
+> measure from outside the process has been measured.
 >
-> **PACE RESTARTS AT ~15 MINUTES.** `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and
-> leaves the RC pair dead, so a tighter loop ends the experiment by killing the thing under test.
+> **`restart-rc` IS 2 FOR 2 AS A FORCING LEVER** (09-09 21:26 and this one), against a pooled 10%
+> base rate. n=2, so not a rate — but a forced restart makes a COLD browser loading RC's home
+> page, which is the shape the 02:0x cluster turned out to be, so it is plausibly much higher than
+> the pooled figure. **Pace forced restarts at ~15 minutes**: `supervise.ps1` stops LOUDLY after
+> 5 exits in 10 minutes and leaves the RC pair dead.
 >
 > #### SYMBOLIZATION IS STILL BLOCKED, AND THE LOCAL COPY IS A TRAP FOR TWO REASONS
 >
