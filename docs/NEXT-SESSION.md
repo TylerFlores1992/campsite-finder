@@ -99,8 +99,11 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > - **Disassemble the hex HERE**: `objdump -D -b binary -m i386:x86-64 -M intel`, verified working
 >   in the container. The window starts 64 bytes early on purpose — x86 is variable-length, so try
 >   alignments until the stream is sane.
-> - It also returns the **PDB GUID + age**, the symbol-server key for this exact build — what a
->   later session WITH egress needs, obtained now so the answer does not wait on the proxy twice.
+> - ~~It also returns the **PDB GUID + age**, the symbol-server key for this exact build — what a
+>   later session WITH egress needs, obtained now so the answer does not wait on the proxy twice.~~
+>   **EGRESS WAS NEVER THE BLOCKER (measured 2026-09-10).** The symbol server IS reachable and
+>   **does not hold this build** — see below. A session with egress and the GUID both in hand
+>   still gets `NoSuchKey`.
 >
 > ### AND IT ANSWERED: THE LOOP IS A SEARCH-AND-ERASE OVER A POINTER ARRAY
 >
@@ -124,10 +127,31 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > holding TWO containers (`+0x18`/`+0x24` scanned, `+0x8`/`+0x14` erased from). **That is a
 > source-reading job, not another measurement** — and it is the next step.
 >
+> **STATE THOSE OFFSETS PRECISELY OR THE SEARCH IS FOR THE WRONG STRUCT.** The shorthand above
+> puts them all on one object and they are not: the flag byte is on the ELEMENT (`elem+0x5c`),
+> the two non-zero checks are on its POINTEE (`(*elem)+0x10` and `(*elem)+0x1c`), and the sampled
+> comparison is `**(elem+0x20)` against `*(*elem)`. (CLAUDE.md's own summary writes `[[rdx]]`
+> where the disassembly listing shows `[r8]`, which is `*elem`.)
+>
 > **The PDB key came back `[hex]`: `scrub()` redacted it**, since a 32-char hex GUID is
 > indistinguishable from a token. The BINARY key survived (`6A18CF41112d9000`). Recorded, not
 > fixed — loosening the scrubber on the path carrying RC session material to retrieve a
 > diagnostic is the wrong trade.
+>
+> **AND THE REDACTION COST NOTHING, BECAUSE THE SYMBOL SERVER DOES NOT HAVE THIS BUILD.**
+> `chromium-browser-symsrv.commondatastorage.googleapis.com` is **200** at the proxy (unlike
+> `msdl.microsoft.com`, `chromium.googlesource.com` and `source.chromium.org`, all 000), and our
+> binary key **404s `NoSuchKey`** — controlled: a key the listing says exists range-fetches 206,
+> and the bucket is still fed. **The trap is that our exact TimeDateStamp IS present**, with
+> three Chrome variants (`0x11110000`, `0x0e7e4000`, `0x0fedf000`) and none of them our
+> `0x112d9000`. **A different `SizeOfImage` is a different binary**, so a neighbour's PDB names
+> the wrong function at `+0x18096c6` — confidently. Full account in `CLAUDE.md` → "THE SYMBOL
+> SERVER ANSWERS, AND IT DOES NOT HAVE THIS BUILD".
+>
+> **WHAT IS OPEN INSTEAD: `raw.githubusercontent.com` is 200**, so Chromium source is fetchable
+> by path through the GitHub mirror — which makes the fingerprint match below need no ramp, no
+> box update and no symbols. It reads a repo outside this session's scope, so it wants the
+> owner's word.
 >
 > **`restart-rc` IS 2 FOR 2 AS A FORCING LEVER** against a pooled 10% base rate. n=2, not a rate —
 > but a forced restart makes a COLD browser loading RC's home page, which is the shape the 02:0x
