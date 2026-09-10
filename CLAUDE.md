@@ -6673,6 +6673,36 @@ is a pool of retained `UnsafeSharedMemoryRegion`s — one held handle each, mapp
 matches the shape — and its own header says **"Up-to 32 regions would be pooled"**. Thirty-two,
 not sixteen thousand. Ruled out.
 
+##### THE BASELINE 2 MiB SECTION *IS* `gpu/mapped_memory` — AND IT IS NOT THE RAMP'S (2026-09-10)
+A shortcut worth closing, because it is attractive and it is wrong. **The memory dump cannot be
+read during a ramp** (a wedged renderer contributes zero allocator dumps), but it succeeds on a
+HEALTHY renderer in ~350 ms — so the obvious move is to read the owner of a healthy renderer's
+2 MiB anonymous section and call that the allocator. **Nobody had tried it. It works, and it
+answers a different question.**
+- **TODAY'S HEALTHY BASELINE NAMES IT, WITH THE COUNTS MATCHING EXACTLY.** `MDHIST` on the RC
+  renderer reads `2-4M 2MB count=1`, and `MDOWNER` on the same process reads
+  **`gpu/mapped_memory 2MB count=1`** — one bucket entry, one owner, same size. So
+  `MappedMemoryManager` really is what puts a 2 MiB anonymous pagefile-backed shared section in
+  a normal RC renderer, by Chromium's own ownership graph rather than by the size coincidence.
+  **That is why the 2 MiB match was so persuasive for so long.**
+- **AND THE GPU-OFF TRIAL'S OWN BASELINE SHOWS IT GONE.** The dump taken at **05:24:58 on the
+  flags-on browser** (launched 05:21:50 with `--disable-3d-apis --disable-gpu`) has
+  **no `2-4M` bucket at all**, **no `gpu` root at all**, and owners of only
+  `discardable/segment 7MB count=2` plus `(no ownership edge) count=10`. The flags removed
+  `MappedMemoryManager` from that renderer completely.
+- **A BROWSER IN THAT STATE THEN RAMPED TO 16,385 REGIONS IN THE 2-4M BUCKET.** So the ramp's
+  sections are **not** `gpu/mapped_memory`, and the healthy renderer's 2 MiB section **cannot be
+  used to identify the ramp's allocator** — they are two different things that happen to share a
+  size. The GPU-off refutation is **strengthened**, not weakened, by finally knowing what the
+  baseline section was.
+- **THE TECHNIQUE IS SOUND EVEN THOUGH THE ANSWER IS NO**, and it is worth keeping: the
+  ownership graph resolves cleanly on a healthy renderer, off rows already stored, with no ramp
+  and no box. What it cannot do is speak about a population that is absent at baseline — and the
+  ramp's 16,384 is absent at baseline, which is the whole point.
+- **`discardable/segment` IS THE ONE OWNER PRESENT IN BOTH**, at 4 MB a segment
+  (`4-16M count=1`) — consistent with the recorded weakening of discardable on size, and not
+  something the 2-4M bucket can be blamed on.
+
 ##### THE 2^14 CAP IS THE ALLOCATOR'S, NOT WINDOWS' — AND THE CHECK COST ONE QUERY (2026-09-10)
 Route A's fourth criterion is *"plausibly caps near 16,384"*, and it is the one nobody has
 pressed on. **There is an obvious alternative that is not a Chromium constant at all, and it

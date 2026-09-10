@@ -117,6 +117,14 @@ exact reading has sent people to the box twice over sessions that repaired thems
   identical 32 GiB signature and a GPU process flat at 20 MB. One counterexample refutes; it came
   with the whole walk attached. The 2 MiB match was a coincidence — 2 MiB is a very common
   granularity.
+  **AND THE BASELINE 2 MiB SECTION HAS NOW BEEN IDENTIFIED AS `gpu/mapped_memory`, WHICH CLOSES
+  A SHORTCUT RATHER THAN REOPENING THE CANDIDATE** (2026-09-10). The dump cannot be read during a
+  ramp but succeeds on a healthy renderer in ~350 ms, so the tempting move is to read the owner
+  of a healthy renderer's 2 MiB section. Done: `2-4M count=1` and `gpu/mapped_memory 2MB count=1`
+  match exactly. **But the GPU-off trial's own baseline dump has no `2-4M` bucket and no `gpu`
+  root at all, and that browser still ramped to 16,385 regions** — so the baseline section and
+  the ramp's sections are different things sharing a size, and the healthy renderer cannot
+  identify the ramp's allocator.
 - **Symbols.** The one reachable symbol server 404s our exact key, controlled three ways. Its
   near-neighbours share our TimeDateStamp with a different `SizeOfImage`, so borrowing one would
   name the wrong function confidently.
