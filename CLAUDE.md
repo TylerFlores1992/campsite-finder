@@ -6365,6 +6365,38 @@ shared sections while the main thread does not yield.**
   is not a fingerprint" is exactly how `MappedMemoryManager` was over-credited.** Do not promote
   this without a reading that is not the number 2 MiB.
 
+##### THE REJECTION COUNTER WOULD BE BLIND — PREDICTED BEFORE BUILDING IT (2026-09-10)
+The obvious successor to naming `HandlerAdded` is to count the page's rejection traffic on the
+resident page, in the shape `rc-request-count.mjs` already works (attach where `residentPage = page`,
+report at teardown/bail/hung-close). **Do not build it. The predicted reading is ~0, and the reason
+is structural rather than a matter of tuning.** Read out of Chromium source, not reasoned from the
+outside:
+- **`HandlerAdded` is called SYNCHRONOUSLY from V8's promise reject callback** —
+  `v8_initializer.cc`: `if (data.GetEvent() == v8::kPromiseHandlerAddedAfterReject)
+  rejected_promises.HandlerAdded(data);`. Nothing is queued; it runs on the spot, once per event.
+- **The DOM `unhandledrejection` event is dispatched from a POSTED TASK.**
+  `Agent::NotifyRejectedPromises()` calls `ProcessQueue()`, which moves `queue_` into per-context
+  `MessageQueue`s and `PostTask`s `ProcessQueueNow` (`rejected_promises.cc:254`, the file's SECOND
+  `FROM_HERE`); `ProcessQueueNow` is what calls `Message::Report()`.
+- **A spinning main thread never runs a posted task, so the event never fires.** Both candidate
+  observables — a page-side `unhandledrejection`/`rejectionhandled` listener and Playwright's
+  `page.on('pageerror')` — are downstream of `ProcessQueueNow`. **They go silent during exactly the
+  event they would be built for**, which is the heap trail, Track A and the RAM arm all over again:
+  blind for a reason knowable before a line was written. This is the "PREDICT THE READING BEFORE
+  BUILDING THE INSTRUMENT" rule paying for itself for the first time.
+- **AND IT SHARPENS THE PICTURE OF THE SPIN.** Microtasks are draining — `HandlerAdded` is being
+  called, so promises are settling — while posted TASKS are not. That is a microtask queue kept
+  perpetually non-empty by the page's own promise chain: the event loop never advances to the next
+  task. **So "the main thread is spinning" is precisely "the microtask queue never empties".**
+- **`reported_as_errors_` IS CAPPED AT 1,000** (`kMaxReportedHandlersPendingResolution`, trimmed by
+  10% on overflow), so the second loop is bounded and **`RejectedPromises` cannot itself grow
+  without limit.** That retires the tempting sub-hypothesis that this structure is the memory, and
+  it is consistent with the heap trail reading 8-11 MB flat.
+- **WHAT WOULD ACTUALLY BE WORTH MEASURING IS NOT ON THIS PATH.** Anything whose release runs as a
+  posted task accumulates here, so the question is which subsystem maps 2 MiB sections and frees
+  them from a task — and that is answered by reading source, not by another counter on a page whose
+  event loop is wedged.
+
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
 - **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall
@@ -14061,16 +14093,30 @@ the link-out is.
   `{ok:false, reason:'no purchases plugin in this build'}` and the paywall renders
   `unavailable`, which is **also** what a missing API key, a non-US storefront and an empty
   offering look like. Four causes, one screen, and the app still builds, ships and passes review.
-- **THE REMAINING iOS GAP IS A DISCLOSURE ONE, AND IT IS IN NEITHER STORE FORM.** RevenueCat is
-  now compiled into both binaries and `src/lib/native/purchases.ts:120` configures it with
-  **`appUserID` = the Clerk user id** — so it receives an *Identifiers → User ID* and, once
-  products exist, *Purchases → Purchase History*. **`docs/APP-STORE.md` §1 does not list it
-  among "Third parties that receive data" and `docs/PLAY-STORE.md` §4 (Data safety) does not
-  mention it at all** — checked, not assumed: neither file contains the string. §1 is stamped
-  *"Last audited 2026-07-28"*, which predates RevenueCat entering the tree by a month. A label
-  that keeps saying something the app stopped doing is the failure §1's own header warns about,
-  arriving from the other direction: it now omits something the app started doing. **Fix both
-  forms before the first IAP submission on either store**, not after a rejection.
+- ~~**THE REMAINING iOS GAP IS A DISCLOSURE ONE, AND IT IS IN NEITHER STORE FORM.** … **Fix both
+  forms before the first IAP submission on either store**, not after a rejection.~~ **BOTH HALVES
+  WERE CLOSED BEFORE THIS WAS WRITTEN, AND THE SENTENCE SURVIVED ELEVEN DAYS AS A TASK (struck
+  2026-09-10).** The standing facts are unchanged and still worth keeping: RevenueCat is compiled
+  into both binaries and `src/lib/native/purchases.ts:120` configures it with **`appUserID` = the
+  Clerk user id**, so it receives an *Identifiers → User ID* and *Purchases → Purchase History*.
+  **What is false is "it is in neither store form".**
+  - **Apple: `docs/APP-STORE.md` §1 names it** in the third-party list, in *Identifiers → User ID*
+    and in *Purchases → Purchase History* — **corrected 2026-08-30**, and the file says so in its
+    own header at line 9.
+  - **Play: `docs/PLAY-STORE.md` §4 names it too** (the *User IDs* and *Purchase history* rows),
+    and the open question was **ANSWERED 2026-09-01 — RevenueCat is a SERVICE PROVIDER under
+    Google's own exemption list, so both rows stay *collected, not shared* and nothing on that form
+    changed.** "Nothing changed" is the correct outcome, not an omission.
+  - **THE FILE CARRIED BOTH THE CLAIM AND ITS REFUTATION, IN TWO SECTIONS.** The Play-release entry
+    above already records *"Data safety **answered** (RevenueCat is a service provider under
+    Google's own exemption list, so nothing on that form changed)"*. Same shape as unit 45719 and
+    the duplicate-facility story: **the refutation was present and was read past.**
+  - **IT COST A REAL NEAR-MISS.** On 2026-09-10 this was offered to the owner as outstanding work
+    and authorised — and only reading the two files first stopped a session rewriting disclosure
+    rows that were already correct and better reasoned than the replacement would have been.
+    **"Checked, not assumed: neither file contains the string" was true when the audit happened and
+    wrong when it was written down** — which is why a claim about another file's contents needs
+    re-grepping at the moment it is acted on, not at the moment it is recorded.
 - **THE NOTES FIELD CAP IS 3,999, VERIFIED** — App Store Connect says *"Must be less than 4000
   characters"* and its counter read `-18` against a 4,018-character draft, i.e. it counts
   newlines exactly as `wc -c` does. A local count is therefore trustworthy; no need to
