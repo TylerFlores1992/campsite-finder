@@ -8466,7 +8466,101 @@ race. The two runs overlap for seconds and one is cancelled.
 done; widening it to the rest is the deliberate change this file already says should not be
 made in passing.
 
+### ANDROID 16 IGNORES `overlaysWebView: false`, AND EIGHTEEN SCREENS DREW UNDER THE STATUS BAR (2026-09-10)
+Reported off a new Pixel: *"some pages have buttons at the very top of the page that aren't
+clickable."* **`capacitor.config.ts`'s own comment predicts the symptom word for word** —
+*"otherwise the site's header (Sign in / Sign up) renders in the non-tappable status-bar
+region"* — and the setting it describes has stopped working.
+- **THREE PIECES, EACH READ OUT OF SOURCE RATHER THAN RECALLED.** The app targets **SDK 36**
+  (`codemagic.yaml`, "Assert the Play target API level"). Android 15 enforces edge-to-edge for
+  apps targeting 35+, and Android 16 ignores the `windowOptOutEdgeToEdgeEnforcement` opt-out
+  altogether. The plugin implements `setOverlaysWebView(false)` by CLEARING the legacy
+  `View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN` / `_LAYOUT_STABLE` bits
+  (`@capacitor/status-bar/android/.../StatusBar.java`), which no longer decide the layout once
+  edge-to-edge is enforced. **And the same file says it outright in `shouldSetStatusBarColor()`:
+  above Android 15 it returns false, commented `// app targets 16 - opt-out ignored`** — so
+  `backgroundColor: '#faf7f2'` is dead too and the bar is transparent over the page.
+- **THE STATUS BAR IS A SEPARATE SystemUI WINDOW ON TOP OF OURS**, so a control drawn beneath it
+  is VISIBLE and receives no taps. That is the whole report, and it is why it surfaced on a NEW
+  phone: on Android 14 and below the opt-out still works, so nothing changed in our code and the
+  bug arrived with the handset.
+- **`NativeBridge.tsx` CALLS IT AGAIN AT RUNTIME AND THAT IS ALSO INERT.** Two enforcers of a
+  setting the OS no longer honours read like belt and braces and are both nothing. Neither was
+  deleted — they still work on Android ≤14 and on iOS — but **presence is not liveness**, one
+  more time, and this is the first instance where the API itself is what went quiet.
+- **THE FIX IS CSS AND THERE IS NO CONFIG ALTERNATIVE.** Nothing can be turned off on Android 16;
+  the only remedy is `env(safe-area-inset-top)`. **The pattern already existed three times**
+  — `V2Nav`, `/admin`, `/auto-cart` — each added after its OWN real-device report (2026-08-01,
+  2026-08-08). **So this was diagnosed and fixed three times and never generalised**, which is
+  exactly why the symptom was "some pages": everything inside the `(app)` route group is covered
+  by V2Nav's sticky band, and everything outside it was covered by nobody.
+- **EIGHTEEN SURFACES, TWENTY-FOUR ROUTES.** Six `/camping` accommodation routes are two shared
+  renderers and `/claim` is `ClaimFlow`'s `Shell` — **the 08:00 hand-off screen, whose CampHawk
+  link sat 24px from the top of the highest-stakes screen in the product.**
+- **IT IS WEB-SIDE, SO IT REACHES ALREADY-INSTALLED APPS ON A PUSH** — no rebuild, no review.
+  `env()` is 0px in a browser, so all eighteen are provably no-ops on the web: every `py-N` became
+  `pb-N` plus `paddingTop: calc(env(safe-area-inset-top) + Nrem)`, which is byte-identical
+  arithmetic when the inset is zero.
+- **THE THREE CENTRED SCREENS ARE A DIFFERENT FAILURE AND THE COMMENT THERE SAYS SO.** `/sign-in`,
+  `/sign-up` and `/w/<token>` are `justify-center`, so nothing sits at the top by default —
+  content TALLER than the viewport overflows equally at both ends and the top goes under the bar
+  unreachable. Same remedy, different mechanism, and writing "the control below lands in it"
+  there would have recorded a cause that screen does not have.
+- **THE BOTTOM INSET WAS CHECKED AND IS FINE.** The only fixed-bottom control is `NativeOffline`,
+  which already consumes `env(safe-area-inset-bottom)`; nothing else is anchored there, so the
+  gesture pill covers nothing.
+- **`src/lib/safe-area-top.test.mts` IS A REGISTRY, NOT A SCAN, AND THE REASON IS THE DELEGATION.**
+  A page either owns its inset or points at a shared renderer; a scan of page files alone reports
+  the seven delegating routes as broken, and a scan that follows imports passes on any file that
+  merely mentions the string. Naming the owner makes a **new** standalone route fail here until
+  somebody decides which it is.
+  - **IT PINS `viewportFit: "cover"`, AND THAT IS THE SHARPEST GUARD IN IT.** Without that one
+    line in the root layout every `env(safe-area-inset-*)` resolves to 0 in every direction — so
+    deleting it un-fixes twenty-one screens at once and **nothing else goes red.** The
+    fix-present-and-inert shape, one level up from the code it protects.
+  - It also pins that the root layout does **not** add a top inset of its own — the tempting
+    "just do it once at the root", which would double-count against all twenty-one owners and
+    against V2Nav.
+  - And that a delegating route genuinely renders the file it names, because the owner can be
+    perfect and unreachable.
+  - **Under `src/`, not `worker/`** — checked against `worker-deploy.yml`'s `paths:` rather than
+    remembered, so this fires **no worker deploy**.
+  - Eight mutations, each verified to APPLY and to fail.
+- **IT CROSSES INTO SIDE-LANE FILES** (`src/components/v2/`, `src/app/camping/`) because the bug
+  does. Fixing only the main-lane half would have left `/claim` tappable and every SEO landing
+  page not.
+- **WHAT WAS NOT DONE: nobody rendered this on a device.** `env()` is 0 in headless Chromium and
+  the container cannot reach the live site, so the correctness argument is arithmetic (0px on the
+  web, exactly the reserved band in the app) plus the three surfaces already doing it. **The
+  confirming reading is one screenshot of `/claim` or `/privacy` on the Pixel after the deploy.**
+
 ## Open / next session
+
+> ### 2026-09-10 — THE PIXEL BUG IS A REAL ONE AND IT IS FIXED; THE RDR BURST IS STILL OPEN
+>
+> **Read "ANDROID 16 IGNORES `overlaysWebView: false`" directly above before touching anything
+> native.** Eighteen screens outside the `(app)` route group drew under the status bar on a
+> current Pixel and took no taps at the top — including **`/claim`, the 08:00 hand-off**. Fixed
+> with `env(safe-area-inset-top)`, the pattern `V2Nav`/`/admin`/`/auto-cart` have used since
+> August. **Web-side: it reaches installed apps on a push, no rebuild, no review.**
+> **THE ONE THING OUTSTANDING IS A SCREENSHOT** — `env()` is 0 in headless Chromium and the
+> container cannot reach the live site, so nothing here has SEEN it on a phone. Open `/claim` or
+> `/privacy` on the Pixel after the deploy; the CampHawk mark should clear the clock.
+>
+> **DO NOT reach for `capacitor.config.ts` or `NativeBridge.tsx` for this.** Both already set
+> `overlaysWebView: false`; Android 16 ignores it, the plugin's own source says so, and there is
+> no config that turns edge-to-edge off. They stay because they still work on Android ≤14 and iOS.
+>
+> **THE RDR REQUEST BURST HAS NOT BEEN FIXED, and that was confirmed by grep rather than
+> memory: `futurebookingstartsendsdates` appears NOWHERE in this repo.** Nothing throttles it,
+> nothing blocks it, the only `page.route` in the bot is `force-login-prompt.mjs` on Okta's
+> `/authorize`. What HAS shipped is instrumentation (#292's `(path, status)` counter), and its
+> first reading is the finding: **69,060 asks and not one answer of any kind** — a fourth branch
+> outside the three predicted reading rules. The labelled candidate is requests queued in the
+> renderer faster than the connection pool drains; **untested.** And the burst/leak decoupling is
+> settled five times over in both directions, so **do not re-link them**, and **do not reach for
+> blocking the requests before the cause is named** — that trades a rate-limit risk for a missed
+> cart on the resident page an 08:00 hold depends on.
 
 > ### 2026-09-09 (evening) — THE GPU CENSUS ANSWERED, AND THE SPIN IS SAMPLED NOW
 >
