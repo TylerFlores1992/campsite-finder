@@ -6022,9 +6022,24 @@ and it is the one that makes this a confirmation instead of an impression.
   **The instrument moves 119 -> 20 -> 99+ as the flag goes on and off, and the ramp sits in the
   middle of the low plateau.** That is what closes *"were the flags really applied during the
   ramp?"*, which would otherwise rest on a single reading taken before it.
-- **`max_type` RETURNS TO `gpu-process` AT THE SAME INSTANT**, having been `renderer` or `browser`
-  for the whole trial — i.e. the GPU process is the largest in the family again, exactly as it was
-  at 05:11. A second column agreeing is worth more here than a bigger sample of the first.
+- **`max_type` SPANS BOTH PROFILE FAMILIES — READ `max_family` BESIDE IT OR IT IS NOT ABOUT THIS
+  BROWSER.** This entry first claimed `max_type` "returns to `gpu-process` at the same instant,
+  having been renderer or browser for the whole trial", offering it as a second column agreeing.
+  **That is false and the row that disproves it is inside the trial window**: two of the 42
+  flags-on samples read `gpu-process`, and at 06:22:32 `max_mb` is **118 MB** while the rc family's
+  largest sub-total is `browser` at 52 and its gpu-process is 21.
+  - **Confirmed in the sampler's source, not inferred from the arithmetic.** In
+    `memory-sample.mjs` the `if (mb > out.maxMb)` block sits OUTSIDE any family filter, while
+    `rcByType` is explicitly gated on `fam === 'rc'`. So `max_pid`/`max_type`/`max_mb` are the
+    largest of **ours**, across both families; `rc_by_type` is per-family by construction.
+  - **THE DISCRIMINATOR EXISTS AND IS ONE COLUMN OVER: `max_family`.** That row reads
+    `max_family = recgov`, `source = bot-keepalive` — the rec.gov keepalive browser, which opens
+    for a few seconds twice every thirty minutes. **So this is not "`max_type` is useless", it is
+    "`max_type` alone is ambiguous"**, and the first draft of this bullet said the stronger, wrong
+    thing before the column was looked up.
+  - **What it would have cost:** a confirmation manufactured out of a different browser's
+    arithmetic, on the one reading whose whole job is to prove the flags applied. The genuine
+    second witness is `rc_by_type['gpu-process']`, which is what the table above already quotes.
 - **AND THE COMMIT LIMIT SHRANK BACK TO 17,150 MB AT 06:34**, having been 29,035 all trial and
   45,513 during the ramp. That is Windows growing and then reclaiming the system-managed pagefile,
   and it is the artifact the percentage readings in this file were warned about: **the ratio was
