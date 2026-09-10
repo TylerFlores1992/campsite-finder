@@ -4,8 +4,8 @@
 blocks, which is the opposite of a handover.*
 
 **This is a HANDOVER, not a permanent doc. `CLAUDE.md` owns every finding.** Nothing here is the
-only copy of anything — the eight items that were, got folded into `CLAUDE.md` before this rewrite
-(see "EIGHT THINGS THAT LIVED ONLY IN THE HANDOVER"). **Keep it this way: when a block here goes
+only copy of anything — the ten items that were, got folded into `CLAUDE.md` before this rewrite
+(see "TEN THINGS THAT LIVED ONLY IN THE HANDOVER"). **Keep it this way: when a block here goes
 stale, delete it rather than striking it through.** Strikethrough belongs in `CLAUDE.md`, where the
 correction is itself the record; here it is just weight.
 
