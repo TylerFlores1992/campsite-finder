@@ -936,9 +936,33 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
     parsed the refusal as `check_runs: undefined`, found nothing terminal, and stayed **silent** —
     on course to report `TIMEOUT` after twenty minutes, which reads as *CI is hanging* rather than
     *the instrument never had access*. A watcher blind to its subject is indistinguishable from
-    one patiently waiting, which is this file's most-repeated shape. **To wait on CI, poll the
-    GitHub MCP tools; `curl` to a `/repos/` endpoint cannot work here** — and per the correction
+    one patiently waiting, which is this file's most-repeated shape. ~~**To wait on CI, poll the
+    GitHub MCP tools; `curl` to a `/repos/` endpoint cannot work here**~~ — and per the correction
     above, do not conclude otherwise from `/user` answering.
+  - **THE `/repos/` HALF IS FALSE AS OF 2026-09-10, AND THE REASON IS THAT THE REPO IS PUBLIC.**
+    Measured, all four in one command: the repo reads `private: false, visibility: public`, and
+    **UNAUTHENTICATED** `GET /repos/TylerFlores1992/campsite-finder/actions/runs?head_sha=…`
+    returns **200 with real JSON** — `total_count`, run names, `status`, `conclusion`. So does
+    `/actions/runs/<id>/jobs`. **The token is irrelevant here**: `${#GITHUB_TOKEN}` is still 14,
+    and with or without it the answer is 200, because public reads need no auth at all.
+    - **SO A CI WATCHDOG ON PLAIN `curl` IS BUILDABLE, which the entry above says it is not.**
+      That matters because the 08-23 failure it describes — a watcher that could not see its
+      subject and stayed silent — was caused by using the placeholder TOKEN, not by the endpoint.
+      A `Monitor` polling this unauthenticated works, and one was run to green on this very PR.
+    - **WRITES ARE UNTESTED AND ALMOST CERTAINLY STILL REFUSED.** Public reads are the claim.
+      Anything that mutates (a merge, a comment, a dispatch) needs auth and the token is a
+      placeholder, so **the MCP tools remain the only write path.** Do not widen this to
+      "GitHub works via curl".
+    - **WHY IT CHANGED IS NOT ESTABLISHED — do not write one in.** The 08-24 reading of `403` is
+      recorded as measured; either the repository's visibility changed since, or the policy did.
+      Nobody looked, and the mechanism does not affect the rule.
+  - **JOB LOGS ARE STILL UNREACHABLE — AND THE HOST THIS FILE NAMES IS NOT THE ONE BEING HIT.**
+    `GET /actions/jobs/<id>/logs` answers 302 to a signed blob URL, and following it fails at the
+    egress proxy: **`productionresultssa0.blob.core.windows.net:443 — connect_rejected`.** The
+    entry below names `results-receiver.actions.githubusercontent.com`, which does not appear in
+    the proxy's records at all. **So that entry's CONCLUSION holds and its host is stale** —
+    which matters only if somebody ever goes to allowlist one, and then they would allowlist the
+    wrong thing.
 - **A RED CI'S FAILING TEST NAME CAN BE UNREACHABLE, AND IT WAS ON 2026-09-07.**
   `mcp__github__get_job_logs` caps at about **5,000 lines / 312 KB no matter what `tail_lines`
   says** — 6,000 and 30,000 returned byte-identical output. The `verify` job emits ~6 TAP lines
@@ -963,6 +987,12 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   - **The signed `logs_url` from `get_workflow_run_logs_url` is 403 at the agent proxy**
     (`results-receiver.actions.githubusercontent.com` is not allowlisted), so the full archive
     is not reachable either.
+    - **THE CONCLUSION HOLDS AND THE HOSTNAME IS STALE (checked 2026-09-10).** The per-JOB log
+      endpoint 302s to **`productionresultssa0.blob.core.windows.net`**, which the proxy rejects
+      with `connect_rejected`; `results-receiver…` does not appear in the proxy's records at all.
+      Unauthenticated `/repos/…` JSON now answers 200 (see the GitHub-access entry above), so it
+      is specifically the LOG BLOB that is blocked and not the API. **Quote the blob host if
+      anyone ever goes to allowlist one** — the name above would send them at the wrong target.
   - The three conditions still decide whether a re-run is honest — the diff cannot touch the
     code, the suite passes alone, and the mechanism is named — and **the third can be satisfied
     without the test name**: on 09-07 the Nightly RIDB Sync spanned CI's entire test window,
