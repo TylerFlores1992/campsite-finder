@@ -14163,3 +14163,98 @@ something is badly wrong.
   `worker/fly.toml`. If you change the cadence there, change it there too.
 - **Search Console**: submitted, ~7,387 URLs. Expect "Discovered - currently not
   indexed" for weeks; that's the normal queue, not a fault.
+
+### TEN THINGS THAT LIVED ONLY IN THE HANDOVER (folded 2026-09-10)
+`docs/NEXT-SESSION.md` reached **1,603 lines** — a stack of twenty dated blocks plus a numbered
+section from 08-25 whose first two headings were struck through. Its own subtitle says it is a
+HANDOVER and that *"CLAUDE.md owns every finding"*, so before trimming it, every line was checked
+against this file. **Ten items were found here and nowhere else**, and trimming without folding
+them would have deleted them exactly the way `docs/LANES.md` describes: no diff to notice, no test
+to fail, and the next session re-derives them.
+
+- **THE COMMITTED MANAGE TOKEN IS DEAD — MEASURED, AND IT RETIRES AN ITEM RAISED FIVE TIMES.**
+  A live `/manage/<token>` value was committed to git and has been carried as *"still unrotated,
+  Owner's call"* in the side lane's notes for **five consecutive sessions**, plus once in the
+  handover. **Nobody ever asked the database.** It is **absent from `action_tokens`**, case
+  insensitively, in a table holding **36 live `manage` rows** (and 228 rows across eight actions,
+  all live) — so the table is populated, the query is right, and the row is gone. The value in
+  git history authorizes nothing.
+  - **The check is read-only and does not exercise the token:** `SELECT ... FROM action_tokens
+    WHERE token = $1`, no filter on `expires_at`, so a merely-expired row would still have shown.
+    `GET /api/manage/<token>` would also have answered, and would have been a worse instrument —
+    it reads a real watch, and a 404 cannot tell "rotated" from "expired" from "typo".
+  - **THE SHAPE IS THE POINT, NOT THE TOKEN.** An item re-raised verbatim five times, in a file
+    the main lane does not read, with a one-query check nobody ran. That is the fold-in failure
+    and the absent-reading failure at once: the note was **copied forward** each session as
+    evidence, when it was only ever a copy of itself.
+  - **Not re-verified here as a security claim.** The value still sits in `docs/a2p-campaign.md`
+    and the side lane's notes, so removing it from one file reduces nothing; what changed is that
+    it is now known to grant nothing. If a future token is ever committed, the check is one query.
+
+- **THE rec.gov `carted` SMS BODY OVERFLOWS ONE SEGMENT FOR 19 CAMPGROUNDS.** `carted` is
+  deliberately the CONTROL for the 08-05 filtering work and was left unchanged when `Manage:` came
+  out of the other bodies — so it is the one alert that can still go to two segments, which is the
+  shape that was Undelivered/30007 thirteen times. `fitOneSegment` trims the campground NAME and
+  these nineteen do not fit even trimmed. **Recorded, not fixed:** changing it retires the control,
+  and the control is what makes the domain finding legible.
+
+- **A TOKEN REBROADCAST CAN CLEAR AN `expired` VERDICT IN THE CLAIM GATE.** `rc-inject.js`
+  rebroadcasts on every RC API call, so a token already judged expired can be re-reported and
+  reset the gate's reading. Same family as `renewByReload` measuring itself against the token it
+  meant to replace: **the freshest reading is not automatically the truest one.**
+
+- **THE ZONE-LESS WALL-CLOCK HELPER HAS A NAME, AND IT WAS NOT WRITTEN DOWN.**
+  `pacificWallClockToUtcMs` in `worker/held-cadence.ts` is what to use in JS; `AT TIME ZONE
+  'America/Los_Angeles'` in SQL. The finding is recorded above under "A DISPLAY CONVENTION IS NOT A
+  TIME-ARITHMETIC CONVENTION" and names the FILE but never the FUNCTION — which is the token
+  somebody greps for.
+
+- **A BRANCH CUT FROM ANOTHER FEATURE BRANCH CONFLICTS AFTER THAT BRANCH IS SQUASH-MERGED.**
+  Master carries ONE commit where the branch carried two, so a plain rebase replays both and
+  conflicts on your own already-merged work. **`git rebase --onto origin/master <old-tip>`** replays
+  only what is yours. This repo squash-merges every PR, so it is reachable any time two changes are
+  in flight — and the conflict looks like a real disagreement rather than an artifact of the merge
+  method.
+
+- **NEVER READ AN EXIT CODE THROUGH A PIPE.** `npm run verify 2>&1 | tail -25` reports **`tail`'s**
+  status, which is always 0 — and the tail also cuts every `not ok` line, so the one command
+  produces two independent false greens at once. Redirect to a file and check `$?`. This produced
+  two readings of "green" that were neither.
+
+- **READ THE INSTRUMENT BEFORE REASONING ABOUT THE CODE.** `flyctl logs -a campsite-finder-worker
+  --no-tail` had been printing `too soon to be news, staying quiet` on every pass for two and a
+  half hours while the coming-soon bug was being reasoned about from source. **One command to
+  find, twenty minutes to fix.** The general form: this repo's failures are overwhelmingly
+  instruments that were running and unread, not instruments that were missing.
+
+- **COMPUTE ELAPSED TIME IN SQL, NEVER BY SUBTRACTING A RENDERED LABEL FROM A CLOCK READ
+  SOMEWHERE ELSE (2026-09-10).** Reading the memory series, a `now()` value came back four hours
+  adrift and I reported the last ramp as **1h50m ago** when `extract(epoch from (now()-taken_at))`
+  in the same table said **6.09h**. Every conclusion drawn from it happened to survive — the gap
+  is inside the 2.3-18.6h range either way — which is precisely why it nearly went unnoticed.
+  - **The anomaly did NOT reproduce and no mechanism is written in here.** Minutes later a bare
+    `AT TIME ZONE` cast, `to_char`, `::text` and the container clock all agreed to the second.
+    Four agreeing methods is what makes the CURRENT reading trustworthy; it says nothing about
+    what the earlier one was.
+  - **The durable rule needs no mechanism.** An age computed in SQL is timezone-independent and
+    cannot be wrong; a label plus a mental subtraction has two places to go wrong and announces
+    neither. `round(extract(epoch from (now()-taken_at))/3600.0, 2) as hours_ago` beside the
+    label is one clause, and it is what caught this.
+  - Same family as the zone-less Pacific wall clock that shut the coming-soon window at midnight
+    for three weeks: **a rendered time is a display, and arithmetic on it is a different act.**
+
+- **`api.codemagic.io` IS 403 AT THE AGENT PROXY, AND `CODEMAGIC_API_TOKEN` IS SET.** A policy
+  denial to CONNECT, confirmed 2026-09-04. So **no session can trigger or inspect an iOS build from
+  here**, even though the variable is present and is a plausible 43-character token. **Presence is
+  not reachability** — the same false positive as `GITHUB_TOKEN` answering `/user` with a 200, and
+  it fails in the same direction: the natural check passes and the natural conclusion is wrong. An
+  iOS build is an owner action unless the host allowlists that domain.
+
+- **A BLANK "new watch" NOTE IS THE DESIGNED DEFAULT, NOT A RENDER FAILURE.** `NewWatchOutlook`
+  stays silent under three named rules, and `GET /api/watches/<id>/outlook` reports which in its
+  `silent` field: `arriving-soon` (the reader is already inside the window the copy points at),
+  `already-available` (telling somebody to settle in for a long wait about a stay they could book
+  in thirty seconds is the failure the silence prevents), and **`availability-unknown` — the portal
+  read FAILED**. That last one is the important one: it is the `hasAvailabilityInRange` null rule
+  reaching the UI, and rounding it to either "wait" or "go book it" would be the 2026-07-31 Moab
+  lie one layer up. It is Clerk-authed, so read it in a signed-in browser, not with `curl`.
