@@ -176,9 +176,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > ### TWO THINGS NOT TO MISREAD
 >
-> **1. Ramps are every 2.3-4.2 h right now, not 5-28.** Five in 12.5 h off `bot_events`: 04:45,
-> 08:59, 11:30, 13:47, 17:19 UTC, with `bail:ramp` on all five 3-35 s after the scan. The next
-> reading is hours away.
+> **1. Ramp gaps are 2.3h to 18.6h — quote the RANGE, not a headline.** Recounted over four days
+> on 2026-09-10: nine natural gaps of 18.6 / 5.4 / 5.7 / 13.9 / 4.3 / 2.5 / 2.3 / 3.5 / 11.1 h,
+> median ~5.4. **Both previous figures were windows rather than cadences** — "5-28 h" caught a
+> quiet stretch and "2.3-4.2 h" caught the 09-09 cluster, and this file produced each of them
+> confidently. **So do not plan on reading an armed instrument "in a few hours"**: that is true
+> about half the time, and the other half is overnight.
 >
 > **2. "No ramp dump" on any of them is arithmetic.** The renewal trips read **46.7-59.1 s** in
 > `TAB CLOSES` against `MEM_DUMP_STALL_MS` of 90 s, so the trigger correctly never fired. Do not

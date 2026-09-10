@@ -5824,6 +5824,29 @@ is describing a quieter regime.
   regression**, and do not lower the threshold — a wedged renderer contributes zero allocator
   dumps anyway.
 
+##### AND "EVERY 2.3-4.2 HOURS" HAS THE SAME DEFECT AS THE FIGURE IT CORRECTED (2026-09-10)
+The heading above was written off a twelve-hour window, and a four-day recount says it was a
+BUSY DAY rather than a cadence — which is precisely what it accused "5-28 h" of being. Eleven
+onsets over four days (a sample crossing 1,500 MB whose predecessor was under it), natural gaps
+only:
+
+    18.6h · 5.4h · 5.7h · 13.9h · 4.3h · 2.5h · 2.3h · 3.5h · 11.1h
+
+- **THE RANGE IS 2.3h TO 18.6h WITH A MEDIAN NEAR 5.4h**, and the 09-09 cluster (4.3 / 2.5 / 2.3
+  / 3.5) is the tight run the entry above generalised from. **Quote the range, not either
+  headline** — this file has now produced two confident cadences from two windows and both were
+  the window rather than the leak.
+- **THE 1.4h GAP IS OURS AND IS EXCLUDED.** 2026-09-10 05:51 is the FORCED restart-rc ramp of the
+  GPU trial, so counting it would put our own experiment into a natural-cadence figure.
+- **THE COUNT DEPENDS ON THE BAR, and that is worth saying rather than hiding.** At 1,500 MB
+  (`MEM_DUMP_RAMP_MB`) eleven onsets qualify, two of which peak at 1,688 and 1,924 MB — real
+  against a 200-330 MB baseline, but far short of the 8-9 GB events the earlier entries describe.
+  A count at 3,000 MB (the bail's bar) is a smaller number about a different population.
+- **WHAT IT CHANGES: waiting for a ramp is not reliably an afternoon.** A session that arms an
+  instrument and plans to read it "in a few hours" should expect that to be true about half the
+  time. That is the argument for the forcing recipe existing at all — and not for using it, which
+  costs a password submission from an address that has eaten a twelve-hour block.
+
 #### WHEN A RAMP CAN BE FORCED, MEASURED RATHER THAN ESTIMATED (2026-09-09)
 The recipe needs **Okta GONE *and* the RC token dead**, and the binding half is Okta's ABSOLUTE
 cap, which our own probing cannot bring forward (measured not to reset across a password sign-in
@@ -9136,7 +9159,12 @@ label is American and which ships to the **United States storefront only**.
 > `autocart.bot_version`** (it COALESCEs). There are **no live holds**, so the 6 h release gate
 > is open and an "Update now" lifts the quiet window.
 >
-> ### RAMPS ARE EVERY 2.3-4.2 HOURS RIGHT NOW, NOT 5-28
+> ### RAMP GAPS ARE 2.3h TO 18.6h — AND BOTH EARLIER FIGURES WERE WINDOWS
+>
+> **CORRECTED 2026-09-10 by a four-day recount.** Nine natural gaps: 18.6 / 5.4 / 5.7 / 13.9 /
+> 4.3 / 2.5 / 2.3 / 3.5 / 11.1 h, median ~5.4. The "2.3-4.2 h" below is the 09-09 cluster and has
+> the same defect it accused "5-28 h" of having. **Quote the range.** The reading that follows is
+> still correct about that day and is left as written.
 >
 > Five in 12.5 h off `bot_events`: **04:45, 08:59, 11:30, 13:47, 17:19 UTC**. `bail:ramp` fired
 > on all five, 3-35 s after the scan. **So the next reading is hours away, not days** — and
