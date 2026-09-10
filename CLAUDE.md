@@ -2736,6 +2736,48 @@ ran one.** The run timestamps settle it:
   That is the discriminator between litter and a regression, and it was taken rather than
   assumed.
 
+###### A FOURTH MECHANISM, AND IT IS NEITHER CONCURRENCY NOR A FIXTURE: A TWO-SNAPSHOT INVARIANT (2026-09-10)
+`siteTypeHubs.test.mts` → *"hub totals equal the sum of the states it links to"* failed CI on a
+diff of **four Markdown files**, `1142 !== 1141`. **The three recorded causes all miss it**, and
+reaching for them cost most of the diagnosis:
+```
+for (const hub of SITE_TYPE_HUBS) {
+  const states = await statesForType(hub.siteType);   // query 1
+  const totals = await typeTotals(hub.siteType);      // query 2
+  assert.equal(totals.campgrounds, states.reduce((a, s) => a + s.count, 0));
+}
+```
+**Two queries, one continuously-written table, and an equality between them.** `campgrounds` is
+written by the Nightly RIDB Sync AND by the poller's own `rcSyncIfDue`/`gtcSyncIfDue`, so **one row
+landing between query 1 and query 2 is an off-by-one** — which is exactly the delta observed. It
+needs no second test run, no fixture collision and no cancelled-run litter; **it is a property of
+the assertion, not of the environment.**
+- **IT IS NOT THE FIXED-SENTINEL CLASS** (`#203`): there is no fixture here at all, and nothing is
+  swept. **NOR THE CONCURRENT-RUN CLASS**: it reproduces alone.
+- **AND IT IS NOT THE THIRD-WRITER ENTRY EITHER, THOUGH IT IS ITS COUSIN.** That one is a catalog
+  sync clobbering a suite's *fixtures*; this is a catalog sync being **read twice by one
+  assertion**. Same writer, different victim, different fix.
+- **HOW IT WAS CONFIRMED, because two of the three checks were nearly skipped.** The diff is
+  Markdown and cannot reach it; **the suite passes ALONE, 3 for 3**; and the same red appeared on
+  the **master** run of the same period with an identical signature (`# fail 1`, zero `not ok`
+  visible, the same hidden window `12..1296`, and TAP 391 sits in it) on a tree differing by those
+  four files.
+- **I MISDIAGNOSED IT FIRST, AND THE WRONG ANSWER WAS THE PLAUSIBLE ONE.** I had merged one PR and
+  pushed another **42 seconds later**, so two full runs really did overlap for ~9.5 minutes — the
+  documented "a merge IS a test run" breach, genuinely mine. **It was not the cause.** A named,
+  true, self-implicating mechanism sitting right there is the most convincing wrong answer
+  available, and the only thing that separated them was reproducing in a clean window.
+- **A LOCAL RUN REPORTED EXIT 0 OVER `# fail 1`, AND THE TRAP IS ONE THIS FILE ALREADY RECORDS IN
+  ANOTHER COSTUME.** The command ended `npm test > log 2>&1; echo "EXIT=$?"` — so the harness
+  reported **`echo`'s** status, not the suite's. That is "never read an exit code through a pipe"
+  generalised: **the last command's status is not the one you care about**, whether the last
+  command is `tail` or `echo`. Check `# fail` and `grep '^not ok'` in the log; never the wrapper's
+  exit.
+- **RECORDED, NOT FIXED, and deliberately so.** The honest repair is to derive both sides from ONE
+  read rather than two, which is a change to a test in `src/lib/` — and making it in passing on an
+  unrelated docs PR is precisely what this file warns against. **Any other assertion that equates
+  two separate reads of `campgrounds` has the same defect**; nobody has looked for siblings.
+
 ###### AND ONE PUSH IS ENOUGH — `push` AND `pull_request` RUN CONCURRENTLY FOR ~90s (2026-09-08)
 The account above blames pushing twice, and its remedy is *"do not push again while your own CI
 is still running"*. **Measured on a SINGLE `git push`, twice in one afternoon: that is not

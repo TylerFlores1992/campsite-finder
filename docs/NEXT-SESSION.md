@@ -120,13 +120,19 @@ matches the disassembly with nothing left over. Full entry in `CLAUDE.md`; do no
 
 ## 3. Other things open — all detail is in `CLAUDE.md`
 
-- **One screenshot outstanding.** The Android 16 safe-area fix is deployed and web-side, but
-  `env()` is 0 in headless Chromium and this container cannot reach the live site, so **nothing has
-  seen it on a phone.** Open `/claim` or `/privacy` on the Pixel; the CampHawk mark should clear
-  the clock. Ten seconds.
-- **Apple IAP was decided on 2026-08-24 and is not built.** RevenueCat is already compiled into
-  the iOS binary; what remains is console work plus one env var. `docs/STOREKIT-PLAN.md` is the
-  authority — **not** `docs/APP-STORE.md` §2c, which still frames it as an open question.
+- **One screenshot outstanding, and only the owner can take it.** The Android 16 safe-area fix is
+  deployed and web-side, but `env()` is 0 in headless Chromium and this container cannot reach the
+  live site, so **nothing has seen it on a phone.** Open `/claim` or `/privacy` on the Pixel; the
+  CampHawk mark should clear the clock. Ten seconds.
+- **THE APP/STORE SURFACE IS THE SIDE LANE'S AS OF 2026-09-10** (owner's call, recorded in
+  `docs/LANES.md`): `docs/APP-STORE.md`, `docs/PLAY-STORE.md`, `docs/STOREKIT-PLAN.md`, both store
+  consoles and RevenueCat's. **A main-lane session should not pick these up** — read
+  `STOREKIT-PLAN.md`'s "PICKING THIS UP?" block if you need the state, and hand the work over.
+  - **`src/lib/**` stays MAIN regardless of topic**, including `native/purchases.ts`,
+    `store-plans.ts` and the RevenueCat webhook — a change under `src/lib/auth.ts` or `limits.ts`
+    is in `worker-deploy.yml`'s `paths:` and restarts all three pollers.
+  - **Still MAIN's, and still open:** HMAC is reported-not-enforced, and out-of-order webhook
+    delivery is unhandled (needs a migration, so main's block).
 - **Play production release 25 was IN REVIEW as of 2026-09-01 — nine days ago, and nobody in a
   session can read the Play console, so treat that as a date and not as current state.** Ask the
   owner before acting on it. Whenever it lands, the first REAL purchase is what exercises
