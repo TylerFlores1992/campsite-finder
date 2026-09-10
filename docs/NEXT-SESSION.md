@@ -38,7 +38,12 @@ Three things that will bite in the first ten minutes:
 | | |
 |---|---|
 | master | `7333940` (#325) — **verify against `origin/master`, this line ages** |
-| mini-PC | `7333940` — box and master agree; the commit trigger below is LIVE on it |
+| mini-PC | `7333940` — box and master agree; the commit trigger below **has now FIRED** |
+| last ramp | **2026-09-10 17:53 UTC**, `trigger: "both"` — the commit arm's first firing. Ended by `bail:ramp` on a **57.5-min-old** browser; whole event inside ONE two-minute sample (commit 6,968 → 38,949 → 6,945 MB). **Read `bot_events` for `ramp-scan`, not the tail of the memory series** — a sub-four-minute ramp leaves one sample and rolls out of the default window within the hour, and this one was very nearly missed that way. **Two things it left open:**
+no `ramp` mem-dump landed despite a **150 s** stall (the dump's trigger is 90 s, so it was crossed
+a minute before the bail), and the loop was stalled in the `auto-login` step **with no hold
+queued**. `tail-log rc-keepwarm` had already rolled past the lines that would answer either — on
+the next ramp, read the log BEFORE anything else. |
 | health | **18 of 19 ok**, one documented-benign warn |
 | fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
@@ -149,8 +154,13 @@ matches the disassembly with nothing left over. Full entry in `CLAUDE.md`; do no
   its own request counter gives requests spanning **717x** (109 -> 78,188) against sections spanning
   **1.23x**, with the two *smallest* request counts producing two of the *largest* section counts.
   Full table in `CLAUDE.md`. Do not re-promote it on the strength of the 2 MiB match.
-- **One recorded conclusion is weakened:** "RC's own JavaScript is not the loop and there is no fix
-  on our side of the page". The loop is native, but it is *driven* by JS promise rejection.
+- **One recorded conclusion is weakened, and a second is now split:** "RC's own JavaScript is not
+  the loop and there is no fix on our side of the page" — the loop is native, but it is *driven* by
+  JS promise rejection. And **the spin is not always the same code**: `VMSTACK` has read three
+  ramps, and the two YOUNG-browser ones (2.6 and 2.75 min) show the tight `HandlerAdded` loop while
+  the one OLD-browser one (57.5 min, 2026-09-10 17:53) reads **40 distinct addresses of 48 with JIT
+  as the largest bucket**. Perfect correlation on three points. The naming stands; the
+  generalisation does not.
 
 ### THE BRIEF FOR A SESSION THAT WANTS TO FIX IT
 
@@ -159,15 +169,38 @@ released.** Everything else above is settled. Two routes, and **both need the ow
 starting** — this project's record is three mechanisms guessed at a session's cost each.
 
 **ROUTE A — name the allocator from source.** This is the method that named the spin on 2026-09-10,
-and it needs **no ramp, no box update and no symbols**. `raw.githubusercontent.com` serves Chromium
-by path (200, controlled) and `mcp__github__search_code` with `repo:chromium/chromium` indexes it.
+and it needs **no ramp, no box update and no symbols**.
+
+> **GREP IT LOCALLY — DO NOT USE GITHUB CODE SEARCH, WHICH CANNOT ENUMERATE.** Its own control:
+> `"2 * 1024 * 1024"` returns 3 files for a pattern that occurs everywhere. Chromium's own code
+> search hosts are all 000 at the proxy. **A sparse partial clone is 91 MB and takes one command:**
+> `git clone --depth 1 --filter=blob:none --sparse https://github.com/chromium/chromium
+> /home/user/chromium/chromium`, then `git sparse-checkout set <dirs>` — blobs arrive only for the
+> paths checked out, so widening the search is `sparse-checkout add`. **Do NOT clone it whole.**
+> `raw.githubusercontent.com` (200) still serves single files by path when that is all you need.
+>
+> **THE FIRST SWEEP IS DONE AND IT IS A NEGATIVE (2026-09-10).** Across `base/memory`, `mojo`,
+> `gpu/command_buffer`, `components/discardable_memory`, `services/network`, `content/browser/loader`
+> and blink's loader/fetch: **exactly two 2 MiB constants exist** — `mapped_memory_chunk_size`
+> (**refuted**, the GPU-off trial ramped anyway) and `kLargerDataPipeAllocationSize` (the only
+> survivor on size, and it **cannot supply the count**: a full Okta trip is 112-239 responses).
+> Discardable is out **by source**, not by a snippet: `GetDefaultAllocationSize()` returns 4 MiB on
+> every branch this box can reach. **And `16384`/`1 << 14`/`0x4000` governs no mapping anywhere in
+> that tree.** So criterion 4 will not be met by finding a `kMax… = 16384`, and **the 2 MiB unit has
+> stopped being evidence for anything** — three exact-size matches, one refuted by experiment, one
+> by source, one that cannot produce the count. Full ledger in `CLAUDE.md`.
+
 Look for something that satisfies **all four**, and treat any candidate meeting fewer as unproven:
 1. maps **exactly 2 MiB** pagefile-backed anonymous shared sections,
 2. **one section per object** (the walk sees one allocation base per region),
 3. is **released on the main thread or from a posted task** — that is what makes a wedged event
    loop retain them,
-4. plausibly **caps at exactly 16,384** — the mapped count lands 1 to 3 SHORT of 2^14 on every
-   commit-unconstrained walk (16,381-16,383) and **never reaches or exceeds it**.
+4. plausibly **caps at exactly 16,384** — the mapped count lands 1 to 3 SHORT of 2^14 (16,381 to
+   16,383) and **never reaches or exceeds it**. **But the cap binds only about half the time:** of
+   the eleven walks carrying `VMMAP2M`, six land at the cap and **five stop short** (13,320 /
+   13,550 / 14,321 / 15,494 / 16,213), and only the two lowest are commit-limited. So a candidate
+   must explain a maximum of 2^14 **that often is not reached**, which is a weaker constraint than
+   this criterion read before 2026-09-10 and should not be used to reject a candidate outright.
 **CRITERION 4 IS THE ALLOCATOR'S NUMBER, NOT WINDOWS' — settled 2026-09-10, so do not spend a
 session re-raising it.** A 2 MiB section costs exactly 4 KB of paged pool (512 PTEs x 8 bytes,
 measured at 4.015-4.017 KB over a 1.23x range of counts), so *"caps at 16,384 sections"* and
