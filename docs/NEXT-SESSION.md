@@ -41,18 +41,37 @@ Three things that will bite in the first ten minutes:
 | mini-PC | `7333940` — box and master agree; the commit trigger below **has now FIRED** |
 | last ramp | **2026-09-10 17:53 UTC**, `trigger: "both"` — the commit arm's first firing. Ended by `bail:ramp` on a **57.5-min-old** browser; whole event inside ONE two-minute sample (commit 6,968 → 38,949 → 6,945 MB). **Read `bot_events` for `ramp-scan`, not the tail of the memory series** — a sub-four-minute ramp leaves one sample and rolls out of the default window within the hour, and this one was very nearly missed that way. **Two things it left open:**
 no `ramp` mem-dump landed despite a **150 s** stall (the dump's trigger is 90 s, so it was crossed
-a minute before the bail), and the loop was stalled in the `auto-login` step **with no hold
-queued**. `tail-log rc-keepwarm` had already rolled past the lines that would answer either — on
-the next ramp, read the log BEFORE anything else. |
+a minute before the bail) — **still open**, and the discriminator is the `alloc trail: resident
+renderer armed` line at the ramping browser's launch, which is printed and was confirmed present
+on a later browser. The `auto-login`-with-no-hold half is **ANSWERED: it is `npm test`** — a
+numeric `carted` fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT` and both
+`nextHoldRelease` and `holdAtRisk` count `carted`, so a CI run puts a phantom release in front of
+the keep-warm. Read live at 19:35:40; see CLAUDE.md → "A NUMERIC TEST FIXTURE PUTS A PHANTOM
+RELEASE IN FRONT OF THE KEEP-WARM". **It explains the STEP, not the stall.** On the next ramp,
+read `tail-log rc-keepwarm` BEFORE anything else. |
 | health | **18 of 19 ok**, one documented-benign warn |
 | fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
 | migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
 
-**The one warn is `autocart.rc_session`, and it is the ORDINARY between-releases state.** The RC
-token lives ~1h and `maybeAutoLogin` restores it at T−30 of a real release. **Do not act on it, and
-above all do not run `rc-login.bat`** — that force-kills the Chromium the token lives in. This
-exact reading has sent people to the box twice over sessions that repaired themselves.
+**The one warn is `autocart.bot_version`, and it is the benign branch of it** — its own detail
+reads *"No bot-side code in the gap"*, i.e. the web is ahead of the box and nothing bot-side is
+missing. Checked rather than inferred: `git diff <boxSha>..origin/master --
+scripts/auto-cart-bot/ mini-pc/` is EMPTY. **Do not spend a box update on it**; an update ends
+the RC session.
+
+**Two OTHER warns are equally ordinary and each has a destructive-looking remedy — do not act on
+either.** `autocart.rc_session` reading dead between releases is the RC token's ~1h life, and
+`maybeAutoLogin` restores it at T−30 of a real release; **above all do not run `rc-login.bat`**,
+which force-kills the Chromium the token lives in — that reading has sent people to the box twice
+over sessions that repaired themselves. `autocart.rc_login` standing down inside its own
+once-per-20h gate is a stand-down, not a failure.
+
+**AND DO NOT READ A RED `autocart.rc_session` WITHIN A FEW MINUTES OF A MERGE AS A REAL DEAD
+SESSION.** A numeric `carted` test fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT`, so
+for the length of any `npm test` run — CI on every merge included — the health route counts a hold
+ahead and the check reddens over a session with nothing wrong with it. Check whether a Verify run
+was in flight first. Full entry in CLAUDE.md.
 
 ---
 
@@ -64,13 +83,22 @@ exact reading has sent people to the box twice over sessions that repaired thems
 
 - The ramping renderer maps **~16,384 regions of 2 MiB = 32 GiB exactly**, one allocation base
   each, all anonymous, all READWRITE, pagefile-backed and largely untouched.
-- **THE 2^14 CAP IS REAL AND SEPARABLE FROM THE COMMIT LIMIT** (settled 2026-09-10). Against the
-  headroom each burst actually had, **9 of 12 walks had room for 1,091-2,808 MORE sections and
-  stopped at 16,384 ± 3 anyway**; the 3 that fell short are exactly the 3 lowest commit limits.
-  That closes the live doubt that the count was an artifact of when the scan fired.
-  **"The three lower readings are consistent with catching a fill in progress" is WITHDRAWN** —
-  they are the commit-limited three, which makes such a count a FLOOR on what the allocator
-  wanted rather than a sample of its progress.
+- **THE 2^14 CAP IS REAL AND SEPARABLE FROM THE COMMIT LIMIT** (settled 2026-09-10). For the
+  walks that reach it, the headroom the burst actually had leaves room for **1,091-2,808 MORE
+  sections** and it stops at 16,384 ± 3 anyway — so the count is not an artifact of when the scan
+  fired. **"The lower readings are consistent with catching a fill in progress" is WITHDRAWN for
+  the two LOWEST**, which are commit-limited: for those, the count is a FLOOR on what the
+  allocator wanted rather than a sample of its progress.
+- **BUT IT DOES NOT BIND EVERY TIME, AND SAYING "the ones that fell short are exactly the
+  commit-limited ones" OVER-CORRECTS.** Of the eleven walks carrying `VMMAP2M`, **six land at the
+  cap and five stop short** (13,320 / 13,550 / 14,321 / 15,494 / 16,213), and **only the two
+  lowest are commit-limited** — the 15,494 event is labelled `CAP (1,344 spare)` in that same
+  table while stopping 885 short, and 16,213 stopped 171 short with headroom. **A middle
+  population exists that neither constraint explains**, it is nearly half of all observed ramps,
+  and nothing settles it. **READ THE COLUMN LABEL BEFORE QUOTING ANY OF THESE NUMBERS**: the
+  16,385-16,387 figures are the HISTOGRAM (`VMHIST d`), the 16,381-16,383 ones are the mapped
+  population (`VMMAP2M`), and they are four apart. Criterion 4 in §5 carries the same split —
+  **if you change one, change both**; they disagreed inside this file for a day.
 - **THE WALK-TIME "a few hundred MB from the commit limit" IS THE AFTERMATH, NOT THE STOP.** The
   walk fires ~77 s late and the private-byte climb eats the headroom in between. The sequence is
   three acts: a <=34 s burst of 16,384 sections, then ~2 minutes of private climb at
@@ -293,6 +321,15 @@ legitimate outcome; quietly building a fifth instrument is not.
   `ignoreReason` correctly drops every non-PRODUCTION event, so an absent `subscriptions` row is
   the guard working, not a broken webhook.
 - **The release-window Routine self-disables 2026-09-12**, ~2 firings left.
+- **A NUMERIC TEST FIXTURE IS VISIBLE TO PRODUCTION, AND ONE HALF OF IT HAS A NARROW SAFE FIX.**
+  `REAL = '0'` passes `REAL_UNIT`, so for the length of any `npm test` run both `nextHoldRelease`
+  and `holdAtRisk` return a phantom `carted` hold — which reddens `autocart.rc_session`, can spend
+  a `maybeAutoLogin` turn, and in `hold-fixture-invisibility` (which borrows
+  `SELECT id FROM users LIMIT 1`) returns **a real account's phone**. The safe repair is to give
+  that suite its own inserted user with no phone, as `health-hold-counts` already does — it
+  touches neither the assertion nor the release timing. **Do NOT instead push the fixture's
+  `release_at` out**; the near release is load-bearing and moving it makes the guard flaky in the
+  direction that reads green. It is `worker/**`, so verifying restarts all three pollers.
 - **Recorded, not fixed — do not drive-by any of these:** neither containment arm can fire during
   a ramp; the RDR request burst (69,060 asks, zero answers of any kind); the fixed-sentinel test
   fixtures in `sync-claim`/`ridb-photos`/the hold suites; a pre-migration-070 watch silently

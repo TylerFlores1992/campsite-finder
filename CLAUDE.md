@@ -6635,11 +6635,15 @@ ramps, and they split cleanly on the browser-age populations this file already r
   exists to bound, from an address that has eaten a twelve-hour block. If it hung in the feed call,
   then `maybeAutoLogin` can park the whole resident loop for minutes on a network read — which is
   the shape that starves the profile and loses an 08:00 cart.
-  **NO MECHANISM IS WRITTEN IN.** Candidates nobody has separated: a hold visible to the bot and
+  ~~**NO MECHANISM IS WRITTEN IN.** Candidates nobody has separated: a hold visible to the bot and
   already deleted server-side, a warm-up whose window was still open from the deleted hold, a step
-  marked on a path that does not check the gate, or an unbounded feed read inside the stand-down. **`tail-log rc-keepwarm` has already rolled
-  past the lines before 17:53:58**, so this event cannot answer it; the next one can, and the
-  reading to take is the log line immediately BEFORE the stall.
+  marked on a path that does not check the gate, or an unbounded feed read inside the stand-down.~~
+  **ANSWERED THE SAME EVENING, AND IT IS THE FIRST OF THOSE FOUR: `npm test` ITSELF.** See "A
+  NUMERIC TEST FIXTURE PUTS A PHANTOM RELEASE IN FRONT OF THE KEEP-WARM" directly below — the
+  mechanism was read live at 19:35:40 and the run windows bracket 17:51:28. **What it explains is
+  the STEP, not the stall**: `mark('auto-login')` records the step ENTERED, so a `maybeAutoLogin`
+  that stood down on coverage reads identically to one that navigated. The 150 s is still
+  unattributed.
 - **NO RAMP MEM-DUMP, AND THE "read the trip durations" RULE DOES NOT EXPLAIN IT EITHER.**
   The ramp arm needs a **120 s**
   stall on top of the family threshold; `MEM_DUMP_STALL_MS` is **90 s**. The breadcrumb puts the
@@ -6669,6 +6673,72 @@ ramps, and they split cleanly on the browser-age populations this file already r
     `* holding the bail up to Ns` line says the grace was granted, and one of the two named
     expiries says what became of it. `tail-log rc-keepwarm` rolls at 16,000 characters, so it is
     worth reading BEFORE the next ramp pushes it out.
+
+##### A NUMERIC TEST FIXTURE PUTS A PHANTOM RELEASE IN FRONT OF THE KEEP-WARM (2026-09-10)
+The entry above records a loop stalled 150 s in the `auto-login` step with **no hold queued**, and
+calls the mechanism unestablished. **It is `npm test`, and the box printed the whole chain in
+plain words while a master CI run was in flight:**
+```
+19:33:56Z  master Verify starts (the merge of #328)
+19:35:40   warm-up stood down: the release is 5m away - inside the 30m lead,
+                                where the auto-login owns this
+19:36:39   warm-up stood down: no hold is queued          <- the suite swept its fixture
+```
+- **`worker/health-hold-counts.test.mts:148` IS `cartedHold(REAL, 5)` WHERE `REAL = '0'` — a
+  `carted` row with unit id `0`, releasing FIVE MINUTES OUT.** That is the "5m away" line to the
+  minute. `hold-fixture-invisibility.test.mts` carries the same shape at ~60 s.
+- **AND `'0'` PASSES `REAL_UNIT`.** Read in source rather than assumed: `REAL_UNIT` is
+  `unit_id ~ '^[0-9]+$'`, and **both** `nextHoldRelease` and `holdAtRisk` select
+  `status IN ('requested','carted','claiming')` — so a numeric `carted` fixture is exactly the row
+  they are built to return.
+- **SO THE 2026-08-18 `REAL_UNIT` FIX HAS A HOLE, AND THE HOLE IS THE FIXTURE THE 08-27 GUARD
+  INTRODUCED TO PROVE THE FILTER IS NOT A BLANKET MUTE.** That fixture's safety argument is
+  written out at length and lists three independent reasons — `carted` and never `requested` so
+  `dueHolds` never serves it; seconds old and not `claiming` so the sweeps cannot list it; the id
+  is one digit, under `hold-fixture-safety`'s two-digit floor. **All three are about the CART
+  path. None is about `nextHoldRelease` or `holdAtRisk`.** A safety argument that names a
+  different consumer than the dangerous one is not a safety argument — the 2026-08-07 rule,
+  arriving inside the fix for its own sibling.
+- **THE TIMING FITS THE 17:53 EVENT WITHOUT NEEDING ANOTHER READING.** Verify run 1353 ran
+  **17:48:30 → 17:58:22Z** and the step was entered at **17:51:28**. Inside, with margin either
+  side. That also explains why the table read "zero rows touched in twelve hours": the suites
+  sweep on the way out, and a deleted row leaves no `updated_at` behind.
+- **WHAT IT EXPLAINS AND WHAT IT DOES NOT.** It explains the STEP — `mark('auto-login')` precedes
+  `maybeAutoLogin`, so entering it says nothing about whether a credential was submitted, and at
+  19:35 the session was healthy (token 59m) so it stood down on coverage. **The 150 s stall and
+  the ramp itself remain unattributed.** Do not upgrade this into "the ramp was a test-driven
+  Okta trip".
+- **THE SHARP HALF IS THE ALARM, AND THE TWO SUITES DIFFER — CHECK WHICH ONE BEFORE QUOTING
+  EITHER.** `health-hold-counts` inserts its own user with `(id, email)` and **no phone**, so
+  `holdAtRisk` returns a row the alarm cannot ring. **`hold-fixture-invisibility` takes
+  `SELECT id FROM users LIMIT 1` — a REAL account, unordered** — and its positive test asserts in
+  as many words that `holdAtRisk` returns the numeric fixture (`assert.equal(risk?.hold?.unit_id,
+  UNREACHABLE_NUMERIC)`). So for the seconds that row exists, the alarm's own query returns a
+  fixture attached to a real person's phone. **The guard REQUIRES the dangerous behaviour**, which
+  is the `held-offer-scope` shape, and the same file two tests earlier asserts a `__t` fixture must
+  NOT come back because *"it would ring the owner"* — the authors were alive to the risk for
+  sentinel ids and then introduced a numeric one.
+- **IT HAS NOT RUNG, AND THAT IS TIMING RATHER THAN DESIGN.** The alarm also needs a session
+  reported dead in the same moment, the feed is polled every 15 s, and the row is deleted a
+  statement later. **Do not read "it has never fired" as a guard.**
+- **AND THE DASHBOARD HAS NO SUCH LUCK.** `autocart.rc_session` and the health route's hold counts
+  go red for the length of a run — the 2026-08-23 finding recurring through a numeric fixture that
+  **#202's `holdsAhead`/`holdsDueWithin` fix cannot see**, because that fix carries `REAL_UNIT` and
+  `REAL_UNIT` is exactly what `'0'` satisfies.
+- **THE OBVIOUS REPAIR IS THE FORBIDDEN ONE, AND THERE IS A NARROW ONE BESIDE IT.** Pushing the
+  fixture's `release_at` far out is what the guard's own comment rules out: the row sits inside the
+  next minute so it is unambiguously the minimum and an `AND false` on `REAL_UNIT` cannot pass.
+  Move it out and a real production hold can beat it, which makes the guard flaky **in the
+  direction that reads GREEN**. **The narrow one is to stop `hold-fixture-invisibility` borrowing
+  `SELECT id FROM users LIMIT 1` and give it its own inserted user with no phone**, exactly as
+  `health-hold-counts` already does — it touches neither the assertion nor the timing, and it
+  closes the only path to a real handset. **NOT TAKEN HERE**: it is a real-DB fixture in
+  `worker/**`, so verifying it restarts all three pollers, and a finding whose failure mode has
+  never been observed is written down before it is acted on.
+- **THE EXPOSURE IS BOUNDED AND IT IS NOT ZERO:** seconds per test run, on every merge. The
+  routine outcome is a red dashboard plus a spent `maybeAutoLogin` turn; the tail is the alarm
+  above. **Do not read a red `autocart.rc_session` within a few minutes of a merge as a real dead
+  session** — check whether a Verify run was in flight first.
 
 ##### THE REJECTION COUNTER WOULD BE BLIND — PREDICTED BEFORE BUILDING IT (2026-09-10)
 The obvious successor to naming `HandlerAdded` is to count the page's rejection traffic on the
@@ -9833,6 +9903,14 @@ label is American and which ships to the **United States storefront only**.
 > nonetheless reads *"MISSING bot-side changes"*, because it compares a path timestamp and
 > cannot see that the change was prose — see "A COMMENT ARMS IT" under that check. **Do not
 > spend a box update on that warn**; an update ends the RC session.
+>
+> **UPDATED THE SAME EVENING: the box is on `7333940` (#325) and that bot-side diff is now
+> EMPTY.** `git diff 7333940..origin/master -- scripts/auto-cart-bot/ mini-pc/` returns nothing at
+> all, so the comment-armed case above has CLEARED and `autocart.bot_version` warns only on the
+> ordinary web-ahead-of-box gap — its own detail says so in as many words (*"No bot-side code in
+> the gap"*). **The conclusion is unchanged and now rests on nothing subtle: no box update is
+> owed.** The `7875a6f` above is the sha that was measured then; read the box with
+> `bot-ask git-status`, never from a line in this file.
 >
 > **WHAT HAPPENED.** The flags went live at 05:21:50Z (confirmed independently: `gpu-process` fell
 > to 20-22 MB against a three-day minimum of 78, and back to 99-130 on the revert). `restart-rc`
