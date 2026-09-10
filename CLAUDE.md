@@ -9670,9 +9670,34 @@ label is American and which ships to the **United States storefront only**.
 > its POINTEE (`(*elem)+0x10` and `(*elem)+0x1c`), and the sampled comparison is
 > `**(elem+0x20)` against `*(*elem)`. `rsi` holds two containers — the scan reads its count at
 > `+0x24` and data at `+0x18`, the erase decrements `+0x14` and reads `+0x8`.
-> **NOT TAKEN HERE, DELIBERATELY.** It is a source-reading job, it reads a repository outside this
+> ~~**NOT TAKEN HERE, DELIBERATELY.** It is a source-reading job, it reads a repository outside this
 > session's scope, and this file records three mechanisms guessed and each costing a session — so
-> it wants the owner's word, not an idle afternoon. What is recorded is only that the door opens.
+> it wants the owner's word, not an idle afternoon. What is recorded is only that the door opens.~~
+> **IT WAS TAKEN AND FINISHED FIVE HOURS LATER THE SAME MORNING (struck 2026-09-10 evening).** See
+> "IT IS `blink::RejectedPromises::HandlerAdded` — NAMED FROM THE BINARY, CONFIRMED IN SOURCE"
+> above. This block landed in `52d6e74` at **00:52 PT** and the fingerprint was matched in `ff4b829`
+> at **05:42 PT** — settled with `git merge-base --is-ancestor`, not by reading two dates that both
+> say "2026-09-10". **Every offset the deferral insists on is mapped there:** `elem+0x5c` is
+> `collected_`, the two pointee checks are `script_state_->ContextIsValid()` inlined, and the
+> compare is `promise_ == data.GetPromise()` — with `rdx` the second ARGUMENT rather than a member,
+> which is the part the deferral's own transcription could not make sense of.
+> - **AND ITS "state it precisely" CAVEAT IS SUPERSEDED, WHICH IS THE SHARPER HALF.** The precise
+>   statement it hands you includes the two-containers-on-`rsi` premise, recorded in `fdd99c1` at
+>   23:44 PT the night before and **struck in `ff4b829` as a splice of two loops** — so this block
+>   sits between a premise and its refutation and carries the premise forward. A session obeying it
+>   to the letter would go hunting a structure that does not exist, guided by the sentence warning
+>   it not to. The strike says so in its own words: the premise *"was about to become the premise of
+>   a search for a bookkeeping structure that does not exist"* — which is exactly what this block
+>   still instructs.
+> - **THE OPEN BLOCK IS WHAT A FRESH SESSION READS FIRST, so leaving this standing costs a whole
+>   session** — either asking the owner to authorise work already done, or doing it and re-deriving
+>   `HandlerAdded` from scratch. That is the Feature E fold-in failure arriving inside the block
+>   whose only job is to say what is left, and the third time this file has recorded containing its
+>   own refutation and being read past (unit 45719, the duplicate-facility story).
+> - **THE RULE: strike a deferral when the thing it defers is done.** A newer entry further down is
+>   not a correction, because nothing makes a reader of the older one aware of it. **What is still
+>   open is the FORWARD hunt** — name what maps the 2 MiB sections — and that one genuinely has no
+>   answer yet.
 >
 > #### AND CI CAUGHT A REAL REGRESSION FROM THE EXTRACTION — THE ~28th INSTANCE
 >
