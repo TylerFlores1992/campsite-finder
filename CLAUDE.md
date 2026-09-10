@@ -5987,6 +5987,26 @@ there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
   so a *different* command-buffer client is not excluded by arithmetic alone. **The 2 MiB unit is
   now MORE interesting, not less: something maps 16k two-megabyte shared sections in a renderer
   that has no GPU context.**
+- **`--disable-3d-apis` IS A REAL, POLICY-BACKED WEBGL KILL-SWITCH, AND IT IS ORTHOGONAL TO
+  `--disable-gpu` BY DESIGN — checked, not assumed.** `kDisable3DAPIs` ("disable-3d-apis")
+  disables client-visible 3D APIs, WebGL and Pepper 3D, and Chromium's own review notes say it
+  was deliberately kept "orthogonal to existing ones, so that further changes to those command
+  line arguments will not accidentally regress the group policy support." **That is the residual
+  this entry was one sentence from leaving open**: the GPU-process drop is direct evidence
+  `--disable-gpu` applied and says nothing about the other flag, and `--disable-gpu` ALONE would
+  have left WebGL running on SwiftShader — still through a command buffer. The targeted flag is
+  what makes "removing the WebGL context" the thing that was actually tested.
+  **What is still not DIRECTLY read is that this build accepted the switch** (an unknown switch
+  is logged and ignored). It is a stable policy-backed name, so a silent rename is unlikely, and
+  nobody took a reading. Say "no WebGL context was requested", not "no WebGL context existed".
+- **AND THE 2 MiB MATCH WAS A COINCIDENCE, WHICH IS THE REUSABLE LESSON.** The candidate's
+  strongest evidence was an EXACT numeric identity — `mapped_memory_chunk_size` is 2,097,152
+  bytes and the walk's unit is 2.0000 MB — and that identity survives the refutation while the
+  mechanism does not. **2 MiB is a very common granularity** (Windows' large-page size,
+  PartitionAlloc's super-page size, and the unit of several unrelated Chromium allocators), so
+  matching it is far weaker evidence than it feels. **An exact match on a round power of two is
+  not a fingerprint.** Whatever maps these sections still uses 2 MiB; that no longer points
+  anywhere in particular.
 - **ONE COUNTEREXAMPLE IS WHAT A REFUTATION NEEDS, AND THIS ONE CAME WITH THE WHOLE WALK
   ATTACHED.** Accumulating the twenty quiet trials would have added nothing — that bar exists to
   stop a CURE being credited on silence, and silence is not what arrived. **Do not re-run this
@@ -6007,6 +6027,7 @@ there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
   page — which is the shape the 02:0x cluster turned out to be. So a forced restart plausibly
   ramps far more often than the pooled figure, and **the ~20 bar is probably too conservative for
   forced trials specifically**. n=2; do not quote it as a rate.
+
 #### THE BOX HAS THE BINARY — `code-bytes` READS THE HOT INSTRUCTIONS OFF DISK (2026-09-10)
 With the command-buffer candidate refuted, VMSTACK's native offsets are the only lead left, and
 symbolizing them is blocked from a web session: **all four Playwright CDN hosts are 000 at the
@@ -6067,8 +6088,91 @@ wrong platform" trap that burned the native sampler. **The mini-PC has the exact
 - **GUARDS UNDER `src/`, NOT `worker/`** — read out of `worker-deploy.yml`'s `paths:`, not
   remembered — so this fires **no worker deploy**. **BOT-SIDE, so it is inert until the box
   updates**; confirm with `bot-ask git-status`, never `autocart.bot_version`.
-- **HOW TO USE IT:** `npx tsx scripts/bot-ask.mts code-bytes 18096c6`, then disassemble the hex
-  locally. The two addresses to ask for are `18096c6` (11 of 48 samples) and `180968b` (9 of 48).
+- **HOW TO USE IT:** `npx tsx scripts/bot-ask.mts code-bytes 18096c6 > /tmp/a.txt`, then
+  `npx tsx scripts/disasm-code-bytes.mts /tmp/a.txt 18096c6`. The two addresses to ask for are
+  `18096c6` (11 of 48 samples) and `180968b` (9 of 48).
+
+#### AND THE DISASSEMBLY STEP ALMOST SHIPPED A TAUTOLOGY AS ITS CONFIDENCE READING (2026-09-10)
+`scripts/disasm-code-bytes.mts` sweeps the first 16 start offsets, because the window begins 64
+bytes early and x86 is variable-length, so decoding from byte zero begins mid-instruction and
+produces a plausible, confidently-wrong stream — the worst output this pipeline can give.
+- **ITS FIRST VERSION REPORTED "ALL ALIGNMENTS AGREE ON THE INSTRUCTION AT THE TARGET" AS THE
+  CONFIDENCE, AND THAT IS TRUE BY CONSTRUCTION.** Decoding is deterministic from a byte, so any
+  alignment that lands on the target decodes the same bytes and MUST produce the same answer. It
+  measures nothing and it can never fail — a constant wearing a measurement's clothes, minutes
+  from being shipped. **The disagreement branch it printed was unreachable code.**
+- **WHAT IS ACTUALLY AMBIGUOUS IS EVERYTHING BEFORE THE TARGET** — the loop head, which is the
+  part that says what the loop does. So the output is a **CONVERGENCE POINT**: the earliest
+  address from which every alignment still in range agrees. From there to the target the stream
+  is trustworthy; before it, it is a guess, and the script says which is which instead of
+  printing one confident wall of assembly.
+- **AN ALIGNMENT THAT STARTS AFTER AN ADDRESS GETS NO VOTE ON IT.** Counting silence as agreement
+  would under-report how much of the head is readable — the absent-reading shape, in the
+  direction that discards evidence rather than inventing it.
+- **AND THE `main()` GUARD MATCHED ITS OWN TEST FILE.** `argv[1].includes('disasm-code-bytes')`
+  is true for `disasm-code-bytes.test.mts`, so importing the module ran the CLI and exited 1
+  before a single assertion. It compares `import.meta.url` against `pathToFileURL(argv[1])` now.
+  Anchored on the wrong thing; caught by running it.
+- **TWO OF THE FOUR GUARDS WERE VACUOUS AND MUTATION TESTING FOUND BOTH.** The provenance-line
+  fixture contained nothing an unanchored row regex would actually swallow, so "the keys are not
+  read as bytes" passed either way; and the "no vote" test's own comment admitted every run in
+  its fixture started before the address, i.e. **it proved the opposite of its title**. Both
+  re-done and re-verified failing. Nine mutations across this and `code-bytes`, each asserted to
+  APPLY first.
+
+#### THE LOOP IS A LINEAR SEARCH-AND-ERASE OVER A POINTER ARRAY (2026-09-10) — first read of what it DOES
+`code-bytes` reached the box and answered on its first call.
+`C:\Users\Tyler\AppData\Local\ms-playwright\chromium-1228\chrome-win64\chrome.dll`,
+285,203,968 bytes, `timeDateStamp 0x6a18cf41`, `sizeOfImage 0x112d9000` — **revision 1228, the
+build the box actually launches**, so the identity is confirmed from the file rather than inferred
+from a lockfile.
+- **ONE CALL COVERED BOTH HOT ADDRESSES.** `180968b` is 5 bytes inside the window returned for
+  `18096c6`, so the second round trip was unnecessary. Ask for the higher address first.
+- **THE HOT INSTRUCTION IS A POINTER COMPARISON INSIDE A GUARDED DEREFERENCE CHAIN**, and the
+  code around it is unambiguous once disassembled:
+  ```
+  mov  eax, [rsi+0x24]          ; a COUNT
+  mov  r15, [rsi+0x18]          ; an ARRAY of 8-byte pointers
+  xor  r13d, r13d               ; index = 0
+0x108: mov  rcx, [r15+r13*8]    ; elem = array[index]
+       cmp  BYTE PTR [rcx+0x5c], 0
+       jne  0xfc                ; a FLAG BYTE filters most elements out
+       mov  r8, [rcx]
+       cmp  QWORD PTR [r8+0x10], 0  / je 0xfc
+       cmp  DWORD PTR [r8+0x1c], 0  / je 0xfc
+       mov  r9, [rcx+0x20] / mov r9, [r9]
+       cmp  r9, [r8]            ; <-- THE SAMPLED COMPARISON
+       jne  0xfc                ; no match -> ++index, next element
+  ```
+  and on a match it **ERASES**: `mov QWORD PTR [rdi],0` (clear the slot), a call to release the
+  old value, `mov r8d,[rsi+0x14] / shl r8,3 / add r8,[rsi+0x8] / sub r8,rdx` then a call — a
+  memmove of the tail — and `dec DWORD PTR [rsi+0x14]`. **A vector erase, open-coded.**
+- **`rsi` CARRIES TWO CONTAINERS**: the scan reads its bound from `[rsi+0x24]` and its data from
+  `[rsi+0x18]`, while the erase decrements `[rsi+0x14]` and reads `[rsi+0x8]`. So it searches one
+  list and removes from another — bookkeeping, not a single collection.
+- **THE SAMPLES ARE IN THE PEELED FIRST ITERATION, NOT THE LOOP BODY, AND THAT IS THE READING
+  THAT CHANGES THE STORY.** The compiler peeled iteration one; the hot offsets `+0x05`, `+0x0e`
+  and `+0x40` are all in the peel, and **zero of the 48 samples fall in the loop body at
+  `0x108`-`0x13a`**. So this is not one long O(n) scan being caught mid-sweep — **it is a
+  predicate being CALLED at enormous frequency and usually exiting on its first element.**
+- **WHAT IS ESTABLISHED, AND WHAT IS NOT.** Established: the spinning main thread is in a
+  linear search-and-erase over an array of 8-byte pointers, filtered by a byte flag at
+  `elem+0x5c`, matched by comparing `[[elem+0x20]]` against `[[rdx]]`, called very often. **Not
+  established: which function this is.** There are no symbols, and this file records three
+  mechanisms guessed and each costing a session — **do not name one.** The `[+0x5c]` flag,
+  `[+0x10]`/`[+0x1c]`/`[+0x20]` offsets and the two-container `rsi` are the fingerprint to match
+  against Chromium source, and that is a source-reading job rather than another measurement.
+- **A CANDIDATE, LABELLED: registry bookkeeping going quadratic.** A registry of ~16,384 live
+  objects, each removal a linear scan, is O(n²) in exactly the quantity the walk counts — and it
+  would explain the spin AND why nothing is released. **The peel reading argues AGAINST it**
+  (samples in the entry check, not the sweep), which is precisely why it is written down as a
+  candidate with its own counter-evidence rather than as a finding.
+- **THE PDB KEY CAME BACK AS `[hex]` — `scrub()` REDACTED IT.** The GUID is a 32-character hex
+  run and the reporter's secret-scrubber cannot tell it from a token. **The binary key survived
+  (`6A18CF41112d9000`)**, which is the symbol-server key for the BINARY and is the one a later
+  session with egress would use anyway. Recorded rather than fixed: loosening `scrub` on the path
+  that carries RC session material to retrieve a diagnostic is the wrong trade, and this file has
+  published a credential twice by collecting a field it then had to filter.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.

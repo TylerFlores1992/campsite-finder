@@ -50,6 +50,89 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > every SEO landing page not.
 
 
+> ### THE GPU TRIAL RAN AND THE COMMAND-BUFFER CANDIDATE IS REFUTED (2026-09-10)
+>
+> **STOP: every block below this one treats the command buffer as the live candidate. IT IS NOT.**
+> Read `CLAUDE.md` → "AND IT RAMPED ON TRIAL ONE" before touching anything GPU-related, and
+> **do not re-run the trial to "confirm" it** — one counterexample refutes, and this one came with
+> the whole region walk attached.
+>
+> **WHAT HAPPENED.** #312 took the command buffer away (`--disable-3d-apis` + `--disable-gpu`) and
+> the flags were confirmed live on the running browser by an INDEPENDENT reading rather than by
+> "the code is on disk": `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed.
+> `restart-rc` replaced the browser at 05:49:51Z. **It ramped at 05:51:53Z**, and the walk on that
+> renderer read **32,774 MB across 16,385 regions of 2 MiB, one allocation base each, all
+> anonymous, all READWRITE**, with the same native spin at `chrome.dll+0x18096c6` / `+0x180968b`.
+> **The GPU process never moved: 20 MB throughout.**
+>
+> **THE ~20-TRIAL BAR WAS NEVER REACHED AND DID NOT NEED TO BE.** It exists to stop a CURE being
+> credited on silence; silence is not what arrived.
+>
+> **THE FLAGS ARE OFF AGAIN** (#314 flipped the default; the module is KEPT for the evidence, and
+> `RC_KEEPWARM_DISABLE_GPU=1` re-runs it with no deploy). **This is bot-side, so it needs a box
+> update** — until then the box runs with the flags on, which is measured-useless rather than
+> measured-harmful, and no login canary has failed.
+>
+> **DO NOT OVER-CLAIM IT.** What is established is that **removing the WebGL context does not stop
+> the leak**, so `MappedMemoryManager` serving RC's ArcGIS map cannot be the mechanism.
+> `--disable-gpu` leaves a GPU process running, so a *different* command-buffer client is not
+> excluded by arithmetic alone. **And the 2 MiB match was a coincidence** — 2 MiB is Windows'
+> large-page size and PartitionAlloc's super-page size as well as
+> `gpu::SharedMemoryLimits::mapped_memory_chunk_size`, so an exact match on a round power of two
+> is not a fingerprint. That was the candidate's strongest evidence and it survives the
+> refutation while the mechanism does not.
+>
+> ### THE NEXT READING IS THE ONLY LEAD LEFT, AND ITS INSTRUMENT IS BUILT
+>
+> VMSTACK has the loop in native code at fixed offsets in a known build. Naming what it DOES is
+> what turns "something maps 32 GiB" into a mechanism; everything else measurable from outside the
+> process has been measured.
+>
+> **`code-bytes` (#315) reads those instructions out of `chrome.dll` ON DISK**, because the proxy
+> blocks every Playwright CDN host and this container's Chromium is both the wrong revision and a
+> Linux build. It reads the shipped FILE, never a process, so the `ReadProcessMemory` ban is
+> untouched; its argument is an RVA and can never become a path.
+> - **BOT-SIDE, so update the box first**, then:
+>   `npx tsx scripts/bot-ask.mts code-bytes 18096c6` and `... 180968b`.
+> - **Disassemble the hex HERE**: `objdump -D -b binary -m i386:x86-64 -M intel`, verified working
+>   in the container. The window starts 64 bytes early on purpose — x86 is variable-length, so try
+>   alignments until the stream is sane.
+> - It also returns the **PDB GUID + age**, the symbol-server key for this exact build — what a
+>   later session WITH egress needs, obtained now so the answer does not wait on the proxy twice.
+>
+> ### AND IT ANSWERED: THE LOOP IS A SEARCH-AND-ERASE OVER A POINTER ARRAY
+>
+> `code-bytes` reached the box and worked on its first call, against
+> `chromium-1228\chrome-win64\chrome.dll` — revision 1228, the build the box actually launches,
+> confirmed from the FILE rather than from a lockfile. **One call covered both hot addresses**
+> (`180968b` is 5 bytes inside the window for `18096c6`); ask for the higher one first.
+>
+> The spinning main thread is in a **linear search over an array of 8-byte pointers**
+> (`[rsi+0x18]` data, `[rsi+0x24]` count), filtered on a byte flag at `elem+0x5c`, matching by
+> comparing `[[elem+0x20]]` against `[[rdx]]` — and on a match it **erases**: clears the slot,
+> releases the old value, memmoves the tail, decrements `[rsi+0x14]`.
+>
+> **THE SAMPLES ARE IN THE PEELED FIRST ITERATION, NOT THE LOOP BODY** — zero of 48 fall in the
+> sweep. So it is a predicate CALLED at enormous frequency that usually exits on its first
+> element, not one long scan caught mid-sweep. That distinction is the finding.
+>
+> **DO NOT NAME THE FUNCTION.** There are no symbols and this repo records three guessed
+> mechanisms each costing a session. The fingerprint to match against Chromium source is: a byte
+> flag at `+0x5c`, checks at `[+0x10]` and `[+0x1c]`, a pointer at `[+0x20]`, and an `rsi` struct
+> holding TWO containers (`+0x18`/`+0x24` scanned, `+0x8`/`+0x14` erased from). **That is a
+> source-reading job, not another measurement** — and it is the next step.
+>
+> **The PDB key came back `[hex]`: `scrub()` redacted it**, since a 32-char hex GUID is
+> indistinguishable from a token. The BINARY key survived (`6A18CF41112d9000`). Recorded, not
+> fixed — loosening the scrubber on the path carrying RC session material to retrieve a
+> diagnostic is the wrong trade.
+>
+> **`restart-rc` IS 2 FOR 2 AS A FORCING LEVER** against a pooled 10% base rate. n=2, not a rate —
+> but a forced restart makes a COLD browser loading RC's home page, which is the shape the 02:0x
+> cluster turned out to be. **Pace forced restarts at ~15 minutes**: `supervise.ps1` stops LOUDLY
+> after 5 exits in 10 minutes and leaves the RC pair dead.
+
+
 > ### THE GPU CENSUS ANSWERED — AND THE SPIN IS SAMPLED NOW (2026-09-09, evening)
 >
 > **STOP: the block below this one says the GPU reading is still outstanding. IT IS NOT.** A
