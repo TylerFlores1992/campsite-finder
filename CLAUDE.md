@@ -5666,9 +5666,76 @@ Eight walks, and the 2-4M population barely moves: **15,499 / 15,663 / 16,219 / 
 and the totals sit just above it (32,773-32,779 MB).
 - **Something fills a 32 GiB budget in 2 MiB units and then stops.** A process killed at a
   random point in unbounded growth does not land within 0.02% of the same count three times.
-  The three lower readings are consistent with the walk catching a fill in progress.
+  ~~The three lower readings are consistent with the walk catching a fill in progress.~~
+  **WITHDRAWN — they are the COMMIT-LIMITED ones**, and the withdrawal is in "THE BURST RUNS
+  UNTIL THE BOX SAYS NO" below. Struck here rather than left to a reader who never reaches that
+  section: a correction further down is not a correction to somebody reading this one.
 - **Recorded as an observation, not a mechanism.** What it does is make "what has a 32 GiB
   ceiling?" a sharper question than "what leaks?", and `VMSPAN` is the cheap next fact about it.
+
+##### AND EVERY COUNT ABOVE IS THE WRONG COLUMN — THE MAPPED POPULATION STOPS *BELOW* 2^14 (2026-09-10)
+`VMMAP2M`'s own header says the bounds are the histogram's `d 2-4M` bucket **exactly**, so
+"`VMMAP2M regions` and `VMHIST d` are one population and a reader can diff them". **Diffed, for
+the first time, across all sixteen stored `ramp-scan` rows: they are NOT one population, and the
+number this file has been quoting is the larger one.**
+```
+when (UTC)         pid    VMHIST d   VMMAP2M   bases    diff   vs 2^14
+2026-09-08 14:47   9944     16387     16383    16382      4       -1
+2026-09-09 04:45   7644     16385     16381    16381      4       -3
+2026-09-09 08:59  10524     16386     16382    16382      4       -2
+2026-09-09 11:30   8956     16386     16382    16382      4       -2
+2026-09-09 13:47  10604     16387     16383    16382      4       -1
+2026-09-10 05:52  13332     16385     16381    16381      4       -3
+       control    11772         7         4        4      3
+```
+- **READ IN SOURCE, NOT INFERRED: `VMMAP2M` counts `MEM_MAPPED` (262144) ONLY**
+  (`ramp-scan.mjs`, the comment above the band test), while `VMHIST d` counts **every committed
+  region** in the size band whatever its Type. So the gap is committed 2-4M regions that are
+  private or image — a **near-constant 4-6 on the target and 3 on the CONTROL**, i.e. a baseline
+  property of any renderer rather than part of the ramp.
+- **SO THE MAPPED POPULATION — THE LEAK'S ACTUAL POPULATION — IS 16,381-16,383, NEVER 16,384 AND
+  NEVER ABOVE IT.** Six walks, all 1 to 3 SHORT, on the six events that reached the cluster.
+- **AND THE FOUR LOWER ROWS ARE *NOT* ALL COMMIT-LIMITED — I NEARLY WROTE THAT THEY WERE.**
+  Mapped counts 13,320 / 14,321 / **15,494** / **16,213**. "THE BURST RUNS UNTIL THE BOX SAYS NO"
+  attributes the two lowest to commit exhaustion and I carried that across to all four without
+  checking. **Its own table refutes it for the third:** it marks the 15,499 event
+  `CAP (1,344 spare)` — i.e. NOT commit-limited — while that event stopped **885 short** of the
+  cap, and 16,213 stopped **171 short** with headroom too. So that table's summary line, *"it
+  stopped at 16,384 ± 3"*, is true of nine rows and false of the one it labels `CAP` at 15,499.
+  **A middle population exists that neither constraint explains, and this reading does not settle
+  it** — the walk fires ~77 s after the burst, so "caught mid-fill" is available but not
+  established. Recorded as an open wrinkle, which is what it is.
+- **THAT REVERSES THE SENTENCE ABOVE, and the direction is the whole value.** "The totals sit
+  just above it (32,773-32,779 MB)" is an artifact of counting those 4-6 non-mapped regions:
+  16,381 x 2 MiB is 32,762 MB, and the extra ~12 MB is four regions of ~3 MB. **A count that
+  approaches 2^14 from below and never reaches it is the signature of a hard maximum of 16,384;
+  a count sitting slightly above invites "16,384 plus a few", which is a different search.**
+  Criterion 4 gets sharper rather than weaker.
+- **AND IT RECONCILES TWO ENTRIES THAT DISAGREED IN PRINT.** "THE 2^14 CAP IS THE ALLOCATOR'S"
+  quotes **16,381-16,383** and labels its column `count (VMMAP2M)`; this section quotes
+  **16,385-16,387** and labels its column nothing. Both read as "the count", they are four apart,
+  and the labelled one was right. **Label the column or the next reader picks whichever number is
+  nearer to hand.**
+- **THE ALTERNATIVE IS NOT EXCLUDED AND IS STATED: the walk may race a few unmap/remaps.** Both
+  fit 16,384 − (1..3). What the reading DOES exclude is the population ever exceeding 2^14, which
+  is what the file has said for six entries.
+- **`allocBases` still equals `regions`** (or is 1 short) on every row, so the one-base-per-region
+  finding — N separate `MapViewOfFile` calls — is untouched.
+- **THE COMMENT IN `ramp-scan.mjs` IS WHERE THE CONFLATION CAME FROM, AND IT IS HALF RIGHT.** It
+  reads *"the bounds are the histogram's `d 2-4M` bucket EXACTLY, so `VMMAP2M regions` and
+  `VMHIST … d 2-4M count` are the same population"*. The BOUNDS do match to the byte
+  (`-ge 2097152 -and -le 4194304`); the POPULATIONS do not, because `VMMAP2M` carries
+  `$mbi.Type -eq 262144` and the histogram is gated on `State -eq 4096` alone. **Same size band,
+  one extra filter** — and CLAUDE.md inherited the claim from the comment rather than from the
+  code.
+- **DELIBERATELY NOT FIXED IN THE COMMENT, and the reason is recorded two sections up.** A
+  prose-only edit under `scripts/auto-cart-bot/` moves `CH_BOT_CODE_AT`, so `autocart.bot_version`
+  reports *"MISSING bot-side changes"* — and the honest reading of that warn is to update the box,
+  **which ends the RC session**. A comment is not worth that. Corrected here instead; the next
+  bot-side change that has a real reason to ship should carry the one-line fix with it.
+- **THE METHOD NOTE: the file told a reader to diff two columns and nobody had.** Same shape as
+  the paged-pool quota, which was one query away for as long. **When an entry says "a reader can
+  diff them", that is a task, not a reassurance.**
 
 #### TWO POPULATIONS OF RAMP, AND THE RECORDED DECOUPLING SURVIVES
 Every `bail:ramp` paired with its own request counter splits perfectly in two:
@@ -9670,9 +9737,34 @@ label is American and which ships to the **United States storefront only**.
 > its POINTEE (`(*elem)+0x10` and `(*elem)+0x1c`), and the sampled comparison is
 > `**(elem+0x20)` against `*(*elem)`. `rsi` holds two containers — the scan reads its count at
 > `+0x24` and data at `+0x18`, the erase decrements `+0x14` and reads `+0x8`.
-> **NOT TAKEN HERE, DELIBERATELY.** It is a source-reading job, it reads a repository outside this
+> ~~**NOT TAKEN HERE, DELIBERATELY.** It is a source-reading job, it reads a repository outside this
 > session's scope, and this file records three mechanisms guessed and each costing a session — so
-> it wants the owner's word, not an idle afternoon. What is recorded is only that the door opens.
+> it wants the owner's word, not an idle afternoon. What is recorded is only that the door opens.~~
+> **IT WAS TAKEN AND FINISHED FIVE HOURS LATER THE SAME MORNING (struck 2026-09-10 evening).** See
+> "IT IS `blink::RejectedPromises::HandlerAdded` — NAMED FROM THE BINARY, CONFIRMED IN SOURCE"
+> above. This block landed in `52d6e74` at **00:52 PT** and the fingerprint was matched in `ff4b829`
+> at **05:42 PT** — settled with `git merge-base --is-ancestor`, not by reading two dates that both
+> say "2026-09-10". **Every offset the deferral insists on is mapped there:** `elem+0x5c` is
+> `collected_`, the two pointee checks are `script_state_->ContextIsValid()` inlined, and the
+> compare is `promise_ == data.GetPromise()` — with `rdx` the second ARGUMENT rather than a member,
+> which is the part the deferral's own transcription could not make sense of.
+> - **AND ITS "state it precisely" CAVEAT IS SUPERSEDED, WHICH IS THE SHARPER HALF.** The precise
+>   statement it hands you includes the two-containers-on-`rsi` premise, recorded in `fdd99c1` at
+>   23:44 PT the night before and **struck in `ff4b829` as a splice of two loops** — so this block
+>   sits between a premise and its refutation and carries the premise forward. A session obeying it
+>   to the letter would go hunting a structure that does not exist, guided by the sentence warning
+>   it not to. The strike says so in its own words: the premise *"was about to become the premise of
+>   a search for a bookkeeping structure that does not exist"* — which is exactly what this block
+>   still instructs.
+> - **THE OPEN BLOCK IS WHAT A FRESH SESSION READS FIRST, so leaving this standing costs a whole
+>   session** — either asking the owner to authorise work already done, or doing it and re-deriving
+>   `HandlerAdded` from scratch. That is the Feature E fold-in failure arriving inside the block
+>   whose only job is to say what is left, and the third time this file has recorded containing its
+>   own refutation and being read past (unit 45719, the duplicate-facility story).
+> - **THE RULE: strike a deferral when the thing it defers is done.** A newer entry further down is
+>   not a correction, because nothing makes a reader of the older one aware of it. **What is still
+>   open is the FORWARD hunt** — name what maps the 2 MiB sections — and that one genuinely has no
+>   answer yet.
 >
 > #### AND CI CAUGHT A REAL REGRESSION FROM THE EXTRACTION — THE ~28th INSTANCE
 >
