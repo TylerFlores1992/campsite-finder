@@ -3,6 +3,15 @@
  *
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/gpu-trial-tally.mts 2026-09-10T05:21:50Z
  *
+ * ## THE TRIAL RAN AND IS OVER (2026-09-10) — this is now a general ramp tally
+ *
+ * The first trial RAMPED, two minutes after `restart-rc` replaced the browser, with the full
+ * 32 GiB / 16,385-region walk and the same native spin. **The command-buffer candidate is
+ * refuted and the flags are off again**; the ~20 bar below was for crediting a CURE and was
+ * never reached because silence is not what arrived. Do not re-run the trial to confirm a
+ * refutation — the confirming evidence is the walk. The script is kept because "how many
+ * browser replacements ramped since <instant>?" is the question every future candidate needs.
+ *
  * ## What a trial IS
  *
  * A trial is a BROWSER REPLACEMENT, not a restart command. `restart-rc` is one way to cause
