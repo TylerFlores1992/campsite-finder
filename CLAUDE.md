@@ -5222,6 +5222,15 @@ for.) It then produced a clean sign-in for nothing:
     the same two-minute file, so a 16-second event is invisible to it as well. It exists to
     catch a **burst**, which is a ~30 GB commit step that persists for minutes; a trip that
     allocates nothing for sixteen seconds is not the case it is for.
+- **THE WARM-UP'S PRODUCT SURVIVED, WHICH IS THE HALF WORTH CHECKING.** Okta read **alive at
+  17:17:44** — eighteen minutes on — so the attempt delivered the thing it exists for even
+  though it produced no ramp. **A `dead` reading four minutes earlier (17:13:23, "no token at
+  all — signed out; okta session GONE") was TRANSIENT and repaired itself**, and I was one step
+  from writing it up two ways: as a session my forced attempt had killed, and as a bug in
+  `okta_checked_at` (which had not moved on that row). The next report moved every okta column
+  correctly, so the write path is fine and the row was a probe catching the resident page
+  between states. **Re-read before concluding** — this file's own rule, nearly broken for the
+  fifth time, on a reading four minutes from correcting itself.
 - **DO NOT RE-ARM ON THIS.** A successful warm-up leaves Okta ALIVE and spends the turn, so the
   next GONE window is ~12 h out; the token is fresh for an hour, so `planRenewal` stands down
   and no renewal-driven ramp can arrive inside it either. Natural ramps run 2.3-18.6 h apart and
