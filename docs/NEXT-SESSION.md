@@ -33,14 +33,14 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — 2026-09-10 05:00 PT
+## 1. State — 2026-09-10 17:10 UTC
 
 | | |
 |---|---|
-| master | `3d92065` — **verify against `origin/master`, this line ages** |
-| mini-PC | `52d6e74`; the gap to master contains **zero bot-side files** (`git diff <boxSha>..origin/master -- scripts/auto-cart-bot/ mini-pc/` is empty), so no update is needed. Confirm by DIFF, not by the warn |
+| master | `7333940` (#325) — **verify against `origin/master`, this line ages** |
+| mini-PC | `7333940` — box and master agree; the commit trigger below is LIVE on it |
 | health | **18 of 19 ok**, one documented-benign warn |
-| fleet | 3/3 shards held, heartbeat 1s, 12 watches, capacity 8/12 |
+| fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
 | migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
 
@@ -80,6 +80,14 @@ exact reading has sent people to the box twice over sessions that repaired thems
   that is ~450-500 sections/second — not one-per-request, not one-per-frame. **So the question is
   "what tries to allocate 32 GiB of shared memory in a burst, in 2 MiB units, stopping at exactly
   16,384", not "what leaks 2 MiB at a time".**
+- **THE RAMP SCAN NOW FIRES ON COMMIT AS WELL AS ON `rcMb`, AND IT IS LIVE ON THE BOX** (#325,
+  `RAMP_SCAN_COMMIT_MB = 9000`). The old trigger read *private bytes*, which is the second curve —
+  backtested against every stored burst it fired **60-162 s late on 11 of 19 and never early**, i.e.
+  it was watching the aftermath by construction. **A second trigger, not a replacement**: `rcMb`
+  still fires alone, and the readout names which one did (`trigger rc` / `trigger commit` /
+  `trigger both`). **Nothing has exercised it on a real burst yet** — the first natural ramp does.
+  A `ramp-scan` row whose `trigger` is `commitUsedMb` with `rcMb` still in the hundreds is the
+  reading that says it worked.
 - **The mapping is essentially UNTOUCHED** — working set 2,965 MB against private 2,979 MB, so
   26.7 GB of `commit/mapped` is barely resident. It also carries **~1 retained handle** and
   **~4.0 KB of paged pool** per section (deltas against the same scan's own control), so the owner
@@ -180,9 +188,14 @@ legitimate outcome; quietly building a fifth instrument is not.
 
 ### Do not do these, each for a recorded reason
 
-- **Do not force a ramp out of impatience.** Odds are 3-in-6, it spends the warm-up's one turn per
-  Okta lifetime, and it costs a password submission from an address that has eaten a twelve-hour
+- **Do not force a ramp out of impatience, and separate the two numbers before quoting either.**
+  **Landing in the `okta=GONE` cell is a GATE and it is reliable** — four for four since #296 added
+  the token gate. **Ramping once you are there is a COIN**: of the five ordered attempts two ramped,
+  and of the seven `okta=GONE` password trips on record three did. Forcing also spends the warm-up's
+  one turn per Okta lifetime and a password submission from an address that has eaten a twelve-hour
   block. Natural ramps arrive every **2.3-18.6 h** (median ~5.4) and every instrument is armed.
+  **A forced attempt was spent on 2026-09-10 16:58 and missed** (16 s, no ramp), so that Okta
+  lifetime's turn is gone and the next GONE window is ~12 h out.
 - **Do not lower `LOW_RAM_MB`** — that killed a working repair on 08-19.
 - **Do not lower `MEM_DUMP_STALL_MS`** — 90 s was measured against 133 tab-closes, and a wedged
   renderer contributes zero allocator dumps anyway, so it would fire more often and learn nothing.

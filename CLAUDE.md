@@ -5154,7 +5154,7 @@ the correct cell (`no token at all` AND `okta=GONE(404)`). It ran the **full pas
 established` — in **15.6 seconds for 413 MB.** No ramp, so no dump, and nothing was wasted
 except the attempt.
 
-**DURATION AND COST TRACK EACH OTHER, SIX FOR SIX, AND THAT RETIRES THE CELL AS THE
+**DURATION AND COST TRACK EACH OTHER, SEVEN FOR SEVEN, AND THAT RETIRES THE CELL AS THE
 EXPLANATION.**
 
 | event | duration | cost |
@@ -5164,14 +5164,15 @@ EXPLANATION.**
 | 09-07 20:38 warm-up (ordered) | ~4 min, bailed | 4,805 MB peak |
 | 08-26 rehearsal | 32 s | 0 |
 | 09-07 21:49 warm-up (ordered) | 15.6 s | 413 MB |
-| **09-08 22:33 warm-up (ordered)** | **16 s** | **587 MB peak** |
+| 09-08 22:33 warm-up (ordered) | 16 s | 587 MB peak |
+| **09-10 16:58 warm-up (ordered)** | **16 s** | **no ramp — peak UNOBSERVED, see below** |
 
 - **SO THE QUESTION IS NO LONGER "WHICH CELL?" BUT "WHAT MAKES A TRIP SLOW?"** The
-  `okta=GONE` password form is now **three ramps in six**, and all three misses completed
+  `okta=GONE` password form is now **three ramps in seven**, and all four misses completed
   cleanly and quickly. A password sign-in does not cost gigabytes; a password sign-in **that
   struggles** does. This file already said *"duration and cost track each other, which makes a
   retrying or stalling navigation the better candidate than the password path itself"* — that
-  was one observation then and it is six now.
+  was one observation then and it is seven now.
 - **NOT THE BYTE COUNT.** This trip moved **233 responses / 17.0 MB**, roughly double the
   09-07 05:07 trace's 112 / 8.7 MB, and did not ramp. The three-way verdict refused to speak,
   correctly.
@@ -5182,15 +5183,55 @@ EXPLANATION.**
   clean one** — the ramping traces are the ones that bail, and `tail-log` rolls at 16,000
   characters. That comparison is the next cheap reading and it needs no new instrument, only
   the trace being stored rather than logged.
-  - **THE CLEAN-SIDE BASELINE IS NOW TWO READINGS AND THEY ARE THE SAME: `x7`, 2.4 MB, on
-    09-07 21:49 AND 09-08 22:33** — and the byte totals sit within 3% of each other (233
-    responses / 17.0 MB, then 239 / 17.4 MB). So a clean password trip has a stable shape, and
-    it is the RAMPING side that is unmeasured. **Do not read the matching pair as evidence
-    about the leak** — two samples of the same non-event say nothing about the event; what they
-    buy is a baseline to compare the next ramping trace against.
+  - **THE CLEAN-SIDE BASELINE IS NOW THREE READINGS AND THEY ARE THE SAME: `x7`, 2.4 MB, on
+    09-07 21:49, 09-08 22:33 AND 09-10 16:58** — and the byte totals sit within 3% of one
+    another (233 responses / 17.0 MB, 239 / 17.4 MB, 238 / 17.0 MB). So a clean password trip
+    has a stable shape, and it is the RAMPING side that is unmeasured. **Do not read the
+    matching set as evidence about the leak** — three samples of the same non-event say nothing
+    about the event; what they buy is a baseline to compare the next ramping trace against.
 - **A SUCCESSFUL WARM-UP CLOSES ITS OWN WINDOW.** It leaves Okta ALIVE, so the GONE
   precondition does not return until the session lapses, and `spent` is 1 for that release.
   **One forced attempt per Okta lifetime** is the real budget, whichever way the coin lands.
+
+##### A FOURTH ORDERED ATTEMPT MISSED, AND THE SERIES COULD NOT SEE INSIDE IT (2026-09-10 16:58 UTC)
+Fired to put the new commit trigger (below) in front of a ramp on demand rather than waiting out
+the 2.3-18.6 h cadence. **Both preconditions were READ before it ran, not predicted** — the
+keep-warm reported `no token at all` and `okta=GONE(404)`, so the recipe landed in the correct
+cell for the fourth time since #296 added the token gate. (The one pre-fix attempt, 09-07 20:06,
+found a live token, no-opped in 4.5 s and spent its turn learning so — which is what #296 is
+for.) It then produced a clean sign-in for nothing:
+```
+16:58:57 warming up the session: the release is 120m away and Okta is GONE - signing in now
+16:59:10     -> password entered, submitting
+16:59:13   OK Okta session established - the sign-in before the release will be the cheap one
+16:59:14   network trace: 238 response(s), 17.0 MB ... recaptcha__en.js x7 2.4 MB
+           RAM 10570 -> 10232 MB (-338) => this navigation did NOT ramp
+16:59:59    warm-up stood down: the Okta session is alive
+```
+- **NOTHING WAS AT STAKE AND NOTHING WAS LOCKED.** `--in 120` opens the T-3h..T-30 window at
+  once with ninety minutes of margin; the hold was deleted the moment the trip finished, and
+  the table read 0 live / 0 offered afterwards — **by query, not by assumption.**
+- **THE PEAK IS UNOBSERVED, AND THAT IS A DIFFERENCE FROM 09-08 RATHER THAN A SMALLER
+  NUMBER.** `chromium_memory_samples` runs every two minutes and the samples either side are
+  **16:58:32 (rc 293 MB, commit 6,891) and 17:00:35 (rc 337 MB, commit 6,982)** — so the whole
+  16-second trip fell between two samples and the series never looked inside it. 09-08's
+  "587 MB peak" was genuinely sampled; **this one has no series figure at all**, and the only
+  in-trip reading is the trace's own RAM delta. Do not put the two in a column together as if
+  they were the same kind of measurement — the table above says `UNOBSERVED` for that reason.
+  - **THE COMMIT TRIGGER WOULD NOT HAVE HELPED HERE EITHER, AND THAT IS THE DESIGN.** It reads
+    the same two-minute file, so a 16-second event is invisible to it as well. It exists to
+    catch a **burst**, which is a ~30 GB commit step that persists for minutes; a trip that
+    allocates nothing for sixteen seconds is not the case it is for.
+- **DO NOT RE-ARM ON THIS.** A successful warm-up leaves Okta ALIVE and spends the turn, so the
+  next GONE window is ~12 h out; the token is fresh for an hour, so `planRenewal` stands down
+  and no renewal-driven ramp can arrive inside it either. Natural ramps run 2.3-18.6 h apart and
+  **the commit trigger is live for all of them**, so waiting costs nothing while every forced
+  attempt spends a password submission from an address that has eaten a twelve-hour block.
+- **WHAT IT ACTUALLY BOUGHT: the third clean-side network baseline**, and one distinction
+  worth keeping apart. **Landing in the cell is a GATE and it is reliable** (four for four
+  since #296). **Ramping once you are there is a COIN** — of the five ordered attempts, two
+  ramped; of the seven `okta=GONE` password trips on record, three did. Quoting either number
+  as "the success rate of forcing a ramp" merges a thing we control with a thing we do not.
 
 #### THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08 21:43 PT)
 **A natural ramp arrived fifty minutes before the ordered one, and #302's trigger caught it.
