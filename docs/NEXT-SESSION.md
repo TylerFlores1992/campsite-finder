@@ -59,7 +59,9 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > **WHAT HAPPENED.** #312 took the command buffer away (`--disable-3d-apis` + `--disable-gpu`) and
 > the flags were confirmed live on the running browser by an INDEPENDENT reading rather than by
-> "the code is on disk": `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed.
+> "the code is on disk": `gpu-process` fell to 20-22 MB against the 2,631 samples of the 72 h
+> before it, whose MINIMUM is 78 MB and of which none is below 40, and the revert took it back to
+> 99-130 — it moves both ways with the flag.
 > `restart-rc` replaced the browser at 05:49:51Z. **It ramped at 05:51:53Z**, and the walk on that
 > renderer read **32,774 MB across 16,385 regions of 2 MiB, one allocation base each, all
 > anonymous, all READWRITE**, with the same native spin at `chrome.dll+0x18096c6` / `+0x180968b`.
@@ -154,7 +156,13 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > shared-memory owner is **`gpu/command_buffer_memory — 2 MB across 2 mappings`** — the same
 > allocator and the same 2 MB unit the ramping renderer holds 13,320 of.
 >
-> ### WHAT IS OUTSTANDING NOW: A BOX UPDATE, THEN ONE RAMP
+> ### ~~WHAT IS OUTSTANDING NOW: A BOX UPDATE, THEN ONE RAMP~~ — BOTH HAPPENED, IT ANSWERED
+>
+> **STRUCK 2026-09-10. The box took it, a ramp came, and VMSTACK named the class: NATIVE, 42
+> of 48 samples inside `chrome.dll`.** The block below is kept for HOW the instrument
+> refuses, which still applies — but read as current its heading is a task that is done, and
+> this file's own history is that such a line gets quoted as one. The follow-through is the
+> disassembly block above, not another wait.
 >
 > **`VMSTACK` samples the spinning thread's INSTRUCTION POINTER from outside the process.** The
 > census named the symptom; this names the cause, and its two answers are in opposite halves of
@@ -175,15 +183,22 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > ### TWO THINGS NOT TO MISREAD
 >
-> **1. Ramps are every 2.3-4.2 h right now, not 5-28.** Five in 12.5 h off `bot_events`: 04:45,
-> 08:59, 11:30, 13:47, 17:19 UTC, with `bail:ramp` on all five 3-35 s after the scan. The next
-> reading is hours away.
+> **1. Ramp gaps are 2.3h to 18.6h — quote the RANGE, not a headline.** Recounted over four days
+> on 2026-09-10: nine natural gaps of 18.6 / 5.4 / 5.7 / 13.9 / 4.3 / 2.5 / 2.3 / 3.5 / 11.1 h,
+> median ~5.4. **Both previous figures were windows rather than cadences** — "5-28 h" caught a
+> quiet stretch and "2.3-4.2 h" caught the 09-09 cluster, and this file produced each of them
+> confidently. **So do not plan on reading an armed instrument "in a few hours"**: that is true
+> about half the time, and the other half is overnight.
 >
 > **2. "No ramp dump" on any of them is arithmetic.** The renewal trips read **46.7-59.1 s** in
 > `TAB CLOSES` against `MEM_DUMP_STALL_MS` of 90 s, so the trigger correctly never fired. Do not
 > lower it — a wedged renderer contributes zero allocator dumps anyway.
 >
-> ### WHEN A RAMP COULD BE FORCED: 22:33:36 PT TONIGHT — AND IT SHOULD NOT BE
+> ### WHEN A RAMP COULD BE FORCED — AND IT SHOULD NOT BE
+>
+> **The window named below (22:33:36 PT) was 2026-09-09 and has passed; a natural ramp landed at
+> 04:25Z on 09-10 without it, exactly as the last sentence predicted. The ADVICE is unchanged and
+> the arithmetic is the reusable part — only the word "tonight" was perishable.**
 >
 > The recipe needs Okta GONE **and** the token dead. The token is dead; Okta binds, and its
 > ABSOLUTE cap is **FROZEN, measured rather than inferred**: across a real 20-minute probe the
@@ -275,7 +290,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > (16,383 regions across 16,382 allocation bases), not the adjective**: `SCATTERED` fires on the
 > 4-region control too and does not discriminate.
 >
-> ### THAT NEXT MOVE IS BUILT — IT NEEDS A BOX UPDATE AND ONE RAMP
+> ### ~~THAT NEXT MOVE IS BUILT — IT NEEDS A BOX UPDATE AND ONE RAMP~~ — IT GOT BOTH
+>
+> **STRUCK 2026-09-10. The GPU census fired on the 09-09 10:19 PT ramp, three minutes after
+> the box took it, and read BLOCKED — the predicted branch.** Kept for the prediction and for
+> the CONSISTENT-WITH-NOT-PROOF wording, both of which still govern how to quote it. The
+> heading is not a task.
 >
 > **`VMTHREAD` takes the GPU process of the target's own browser generation now** (#309, and it
 > is **on the box** — applied 17:17 UTC in 23 seconds, `updated and verified`). The

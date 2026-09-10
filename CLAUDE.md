@@ -5824,6 +5824,29 @@ is describing a quieter regime.
   regression**, and do not lower the threshold — a wedged renderer contributes zero allocator
   dumps anyway.
 
+##### AND "EVERY 2.3-4.2 HOURS" HAS THE SAME DEFECT AS THE FIGURE IT CORRECTED (2026-09-10)
+The heading above was written off a twelve-hour window, and a four-day recount says it was a
+BUSY DAY rather than a cadence — which is precisely what it accused "5-28 h" of being. Eleven
+onsets over four days (a sample crossing 1,500 MB whose predecessor was under it), natural gaps
+only:
+
+    18.6h · 5.4h · 5.7h · 13.9h · 4.3h · 2.5h · 2.3h · 3.5h · 11.1h
+
+- **THE RANGE IS 2.3h TO 18.6h WITH A MEDIAN NEAR 5.4h**, and the 09-09 cluster (4.3 / 2.5 / 2.3
+  / 3.5) is the tight run the entry above generalised from. **Quote the range, not either
+  headline** — this file has now produced two confident cadences from two windows and both were
+  the window rather than the leak.
+- **THE 1.4h GAP IS OURS AND IS EXCLUDED.** 2026-09-10 05:51 is the FORCED restart-rc ramp of the
+  GPU trial, so counting it would put our own experiment into a natural-cadence figure.
+- **THE COUNT DEPENDS ON THE BAR, and that is worth saying rather than hiding.** At 1,500 MB
+  (`MEM_DUMP_RAMP_MB`) eleven onsets qualify, two of which peak at 1,688 and 1,924 MB — real
+  against a 200-330 MB baseline, but far short of the 8-9 GB events the earlier entries describe.
+  A count at 3,000 MB (the bail's bar) is a smaller number about a different population.
+- **WHAT IT CHANGES: waiting for a ramp is not reliably an afternoon.** A session that arms an
+  instrument and plans to read it "in a few hours" should expect that to be true about half the
+  time. That is the argument for the forcing recipe existing at all — and not for using it, which
+  costs a password submission from an address that has eaten a twelve-hour block.
+
 #### WHEN A RAMP CAN BE FORCED, MEASURED RATHER THAN ESTIMATED (2026-09-09)
 The recipe needs **Okta GONE *and* the RC token dead**, and the binding half is Okta's ABSOLUTE
 cap, which our own probing cannot bring forward (measured not to reset across a password sign-in
@@ -5959,8 +5982,18 @@ browser being measured in the variable under test.
 
 #### AND IT RAMPED ON TRIAL ONE — THE COMMAND-BUFFER CANDIDATE IS REFUTED (2026-09-10 05:51 PT-UTC)
 The flags reached the box at 05:21:50Z and were confirmed live by an INDEPENDENT reading rather
-than by "the code is on disk" — `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed
-there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
+than by "the code is on disk" — `gpu-process` fell to **20-22 MB** and stayed there, against a
+prior distribution of **2,631 samples in the 72 h before the flags went live** (the
+`rc_by_type->'gpu-process'` series over `2026-09-07T05:21:50Z .. 2026-09-10T05:21:50Z`): **minimum
+78 MB, median 111**, p05 95, p95 130. **Not one of those 2,631 readings is below 40 MB** — nor is
+any of them zero, so no filter is doing quiet work here. The plateau is outside the whole range
+rather than merely low in it, which is a stronger statement than a range and is what makes this a
+confirmation instead of an impression.
+**The window is stated because the first draft's "2,577 over three days" was `NOW() - 3 days` at
+the moment the query happened to run** — a number nobody could reproduce, in the paragraph whose
+job is to be checkable. The figures that matter did not move.
+
+`restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
 ```
 05:49:53  rc   209 MB  pid  1692  renderer  101 MB  commit  7050/29035  gpu-process 20 MB
 05:51:53  rc  3452 MB  pid 13332  renderer 3234 MB  commit 44336/45513  gpu-process 20 MB
@@ -5980,6 +6013,42 @@ there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
 - **THE GPU PROCESS DID NOT MOVE AT ANY POINT: 20 MB before, 20 MB during, 22 MB after.** It is
   not merely uninvolved, it is at the reduced post-flag value throughout, which is the same
   reading that proves the flags applied.
+- **AND THE REVERT CLOSES IT FROM THE OTHER SIDE — ONE SERIES, BOTH EDGES, A 5x SWING EACH WAY.**
+  The whole trial fits in ninety minutes of `chromium_memory_samples`, so the baseline is not
+  quoted from another day:
+  ```
+  05:21:23  rc 317 MB  gpu-process 119 MB   <- BEFORE, flags off
+  05:21:50  rc 236 MB  gpu-process  22 MB   <- flags ON (browser replaced)
+  05:51:53  rc 3452 MB gpu-process  20 MB   <- THE RAMP, flags still on
+  06:23:56  rc 167 MB  gpu-process  21 MB   <- still on, thirty quiet minutes
+  06:24:55  rc 246 MB  gpu-process  99 MB   <- flags OFF (browser replaced)
+  06:42:57  rc 325 MB  gpu-process 130 MB   <- settled back at the pre-trial baseline
+  ```
+  **The instrument moves 119 -> 20 -> 99+ as the flag goes on and off, and the ramp sits in the
+  middle of the low plateau.** That is what closes *"were the flags really applied during the
+  ramp?"*, which would otherwise rest on a single reading taken before it.
+- **`max_type` SPANS BOTH PROFILE FAMILIES — READ `max_family` BESIDE IT OR IT IS NOT ABOUT THIS
+  BROWSER.** This entry first claimed `max_type` "returns to `gpu-process` at the same instant,
+  having been renderer or browser for the whole trial", offering it as a second column agreeing.
+  **That is false and the row that disproves it is inside the trial window**: two of the 42
+  flags-on samples read `gpu-process`, and at 06:22:32 `max_mb` is **118 MB** while the rc family's
+  largest sub-total is `browser` at 52 and its gpu-process is 21.
+  - **Confirmed in the sampler's source, not inferred from the arithmetic.** In
+    `memory-sample.mjs` the `if (mb > out.maxMb)` block sits OUTSIDE any family filter, while
+    `rcByType` is explicitly gated on `fam === 'rc'`. So `max_pid`/`max_type`/`max_mb` are the
+    largest of **ours**, across both families; `rc_by_type` is per-family by construction.
+  - **THE DISCRIMINATOR EXISTS AND IS ONE COLUMN OVER: `max_family`.** That row reads
+    `max_family = recgov`, `source = bot-keepalive` — the rec.gov keepalive browser, which opens
+    for a few seconds twice every thirty minutes. **So this is not "`max_type` is useless", it is
+    "`max_type` alone is ambiguous"**, and the first draft of this bullet said the stronger, wrong
+    thing before the column was looked up.
+  - **What it would have cost:** a confirmation manufactured out of a different browser's
+    arithmetic, on the one reading whose whole job is to prove the flags applied. The genuine
+    second witness is `rc_by_type['gpu-process']`, which is what the table above already quotes.
+- **AND THE COMMIT LIMIT SHRANK BACK TO 17,150 MB AT 06:34**, having been 29,035 all trial and
+  45,513 during the ramp. That is Windows growing and then reclaiming the system-managed pagefile,
+  and it is the artifact the percentage readings in this file were warned about: **the ratio was
+  never measuring pressure — the absolute figures were.**
 - **STATED PRECISELY, BECAUSE THE OVER-CLAIM IS THE FAILURE MODE OF A GOOD FINDING.** What is
   established is that **removing the WebGL context does not stop the leak**, so
   `MappedMemoryManager` serving RC's ArcGIS map — the mechanism as proposed, and the one the
@@ -8947,16 +9016,19 @@ label is American and which ships to the **United States storefront only**.
 > **Read `CLAUDE.md` → "AND IT RAMPED ON TRIAL ONE" before touching anything GPU-related. The
 > experiment is FINISHED and its answer was negative — do not re-run it to "confirm".**
 >
-> **State: master `43c1d67` (#312 + #313 merged); the mini-PC is on `6f7cc57`, confirmed by its
+> **State: master `fdd99c1` (#312-#316 merged); the mini-PC is on `7875a6f`, confirmed by its
 > own `git rev-parse HEAD` through `bot-ask git-status` — NEVER `autocart.bot_version`, which
 > COALESCEs and can show a stale sha beside a live heartbeat.** 3/3 shards, 0 live holds.
+> **The box has `code-bytes` (#315) and does NOT need an update for it** — the gap to master is
+> the disassembly script and docs, which run here rather than there.
 >
 > **WHAT HAPPENED.** The flags went live at 05:21:50Z (confirmed independently: `gpu-process` fell
-> 80-126 MB -> 20-22 MB and stayed). `restart-rc` replaced the browser at 05:49:51Z. **It ramped
-> at 05:51:53Z** — ~35 GB of commit inside one two-minute tick, a renderer that did not exist a
-> minute earlier, and the walk on it reading **32,774 MB across 16,385 regions of 2 MiB, one
-> allocation base each, all anonymous, all READWRITE**, with the same native spin at
-> `chrome.dll+0x18096c6` / `+0x180968b`. **The GPU process never moved: 20 MB throughout.**
+> to 20-22 MB against a three-day minimum of 78, and back to 99-130 on the revert). `restart-rc`
+> replaced the browser at 05:49:51Z. **It ramped at 05:51:53Z** — ~35 GB of commit inside one
+> two-minute tick, a renderer that did not exist a minute earlier, and the walk on it reading
+> **32,774 MB across 16,385 regions of 2 MiB, one allocation base each, all anonymous, all
+> READWRITE**, with the same native spin at `chrome.dll+0x18096c6` / `+0x180968b`. **The GPU
+> process never moved: 20 MB throughout.**
 >
 > **SO THE ~20-TRIAL BAR WAS NEVER REACHED AND DID NOT NEED TO BE.** That bar exists to stop a
 > CURE being credited on silence; silence is not what arrived. One counterexample refutes, and
@@ -9107,11 +9179,20 @@ label is American and which ships to the **United States storefront only**.
 > `autocart.bot_version`** (it COALESCEs). There are **no live holds**, so the 6 h release gate
 > is open and an "Update now" lifts the quiet window.
 >
-> ### RAMPS ARE EVERY 2.3-4.2 HOURS RIGHT NOW, NOT 5-28
+> ### RAMP GAPS ARE 2.3h TO 18.6h — AND BOTH EARLIER FIGURES WERE WINDOWS
+>
+> **CORRECTED 2026-09-10 by a four-day recount.** Nine natural gaps: 18.6 / 5.4 / 5.7 / 13.9 /
+> 4.3 / 2.5 / 2.3 / 3.5 / 11.1 h, median ~5.4. The "2.3-4.2 h" below is the 09-09 cluster and has
+> the same defect it accused "5-28 h" of having. **Quote the range.** The five timestamps below
+> are a correct reading of that day and are left as written; **the two forward-looking clauses in
+> them are not** — see the strikes.
 >
 > Five in 12.5 h off `bot_events`: **04:45, 08:59, 11:30, 13:47, 17:19 UTC**. `bail:ramp` fired
-> on all five, 3-35 s after the scan. **So the next reading is hours away, not days** — and
-> every entry quoting 5-28 h describes a quieter regime.
+> on all five, 3-35 s after the scan. ~~**So the next reading is hours away, not days** — and
+> every entry quoting 5-28 h describes a quieter regime.~~ **Both struck 2026-09-10**: over four
+> days the gaps reach 18.6 h, so "hours away, not days" is true about half the time; and the
+> 5-28 h entries were describing the same distribution from the other end rather than a different
+> regime.
 >
 > **"No ramp dump" on any of them is ARITHMETIC, not a regression:** the renewal trips read
 > **46.7-59.1 s** in `TAB CLOSES` against `MEM_DUMP_STALL_MS` of 90 s, so the stall trigger
