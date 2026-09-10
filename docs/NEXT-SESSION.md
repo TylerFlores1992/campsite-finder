@@ -155,7 +155,13 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > shared-memory owner is **`gpu/command_buffer_memory — 2 MB across 2 mappings`** — the same
 > allocator and the same 2 MB unit the ramping renderer holds 13,320 of.
 >
-> ### WHAT IS OUTSTANDING NOW: A BOX UPDATE, THEN ONE RAMP
+> ### ~~WHAT IS OUTSTANDING NOW: A BOX UPDATE, THEN ONE RAMP~~ — BOTH HAPPENED, IT ANSWERED
+>
+> **STRUCK 2026-09-10. The box took it, a ramp came, and VMSTACK named the class: NATIVE, 42
+> of 48 samples inside `chrome.dll`.** The block below is kept for HOW the instrument
+> refuses, which still applies — but read as current its heading is a task that is done, and
+> this file's own history is that such a line gets quoted as one. The follow-through is the
+> disassembly block above, not another wait.
 >
 > **`VMSTACK` samples the spinning thread's INSTRUCTION POINTER from outside the process.** The
 > census named the symptom; this names the cause, and its two answers are in opposite halves of
@@ -187,7 +193,11 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > `TAB CLOSES` against `MEM_DUMP_STALL_MS` of 90 s, so the trigger correctly never fired. Do not
 > lower it — a wedged renderer contributes zero allocator dumps anyway.
 >
-> ### WHEN A RAMP COULD BE FORCED: 22:33:36 PT TONIGHT — AND IT SHOULD NOT BE
+> ### WHEN A RAMP COULD BE FORCED — AND IT SHOULD NOT BE
+>
+> **The window named below (22:33:36 PT) was 2026-09-09 and has passed; a natural ramp landed at
+> 04:25Z on 09-10 without it, exactly as the last sentence predicted. The ADVICE is unchanged and
+> the arithmetic is the reusable part — only the word "tonight" was perishable.**
 >
 > The recipe needs Okta GONE **and** the token dead. The token is dead; Okta binds, and its
 > ABSOLUTE cap is **FROZEN, measured rather than inferred**: across a real 20-minute probe the
@@ -279,7 +289,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > (16,383 regions across 16,382 allocation bases), not the adjective**: `SCATTERED` fires on the
 > 4-region control too and does not discriminate.
 >
-> ### THAT NEXT MOVE IS BUILT — IT NEEDS A BOX UPDATE AND ONE RAMP
+> ### ~~THAT NEXT MOVE IS BUILT — IT NEEDS A BOX UPDATE AND ONE RAMP~~ — IT GOT BOTH
+>
+> **STRUCK 2026-09-10. The GPU census fired on the 09-09 10:19 PT ramp, three minutes after
+> the box took it, and read BLOCKED — the predicted branch.** Kept for the prediction and for
+> the CONSISTENT-WITH-NOT-PROOF wording, both of which still govern how to quote it. The
+> heading is not a task.
 >
 > **`VMTHREAD` takes the GPU process of the target's own browser generation now** (#309, and it
 > is **on the box** — applied 17:17 UTC in 23 seconds, `updated and verified`). The

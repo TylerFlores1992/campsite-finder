@@ -9178,12 +9178,16 @@ label is American and which ships to the **United States storefront only**.
 >
 > **CORRECTED 2026-09-10 by a four-day recount.** Nine natural gaps: 18.6 / 5.4 / 5.7 / 13.9 /
 > 4.3 / 2.5 / 2.3 / 3.5 / 11.1 h, median ~5.4. The "2.3-4.2 h" below is the 09-09 cluster and has
-> the same defect it accused "5-28 h" of having. **Quote the range.** The reading that follows is
-> still correct about that day and is left as written.
+> the same defect it accused "5-28 h" of having. **Quote the range.** The five timestamps below
+> are a correct reading of that day and are left as written; **the two forward-looking clauses in
+> them are not** — see the strikes.
 >
 > Five in 12.5 h off `bot_events`: **04:45, 08:59, 11:30, 13:47, 17:19 UTC**. `bail:ramp` fired
-> on all five, 3-35 s after the scan. **So the next reading is hours away, not days** — and
-> every entry quoting 5-28 h describes a quieter regime.
+> on all five, 3-35 s after the scan. ~~**So the next reading is hours away, not days** — and
+> every entry quoting 5-28 h describes a quieter regime.~~ **Both struck 2026-09-10**: over four
+> days the gaps reach 18.6 h, so "hours away, not days" is true about half the time; and the
+> 5-28 h entries were describing the same distribution from the other end rather than a different
+> regime.
 >
 > **"No ramp dump" on any of them is ARITHMETIC, not a regression:** the renewal trips read
 > **46.7-59.1 s** in `TAB CLOSES` against `MEM_DUMP_STALL_MS` of 90 s, so the stall trigger
