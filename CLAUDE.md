@@ -8724,6 +8724,80 @@ label is American and which ships to the **United States storefront only**.
 
 ## Open / next session
 
+> ### 2026-09-10 — THE COMMAND BUFFER IS OFF, AND THE FLAGS ARE MEASURED LIVE
+>
+> **#312 merged as `6f7cc57`; the mini-PC is on it, confirmed by its own `git rev-parse HEAD`
+> through `bot-ask git-status` — NEVER `autocart.bot_version`, which COALESCEs and can show a
+> stale sha beside a live heartbeat.** Worker deploy green, fleet **19 of 19 ok**, 0 live holds.
+>
+> **THE FLAGS ARE ON THE RUNNING BROWSER, AND THAT IS MEASURED RATHER THAN INFERRED.** "The code
+> is on disk" is the fix-present-and-inert shape this file has paid for eight times, and neither
+> diagnostic can settle it — `list-processes` cannot see Chromium by construction, and `memory`
+> deliberately collects the profile directory and never argv (Chromium argv carries URLs). The
+> independent reading is the per-type breakdown: **`gpu-process` is 20-22 MB across seven
+> settled samples against 80-126 MB for the entire pre-update history**, with the rc family
+> total falling ~310 -> ~222 MB. A sustained 5x drop, not a restart artifact.
+>
+> **TRIAL CLOCK STARTS 2026-09-10T05:21:50Z** — the first sample carrying the reduced GPU
+> process. A replacement before that instant is a CONTROL, not a trial, and folding the two
+> together is how a repair gets credited to the wrong mechanism.
+>
+> **THE BAR, STATED BEFORE THE EXPERIMENT AND WRITTEN INTO `keepwarm-launch.mjs` ITSELF:** a
+> browser replacement ramps ~**10%** of the time (11 of 110 over ten days), so **three quiet
+> restarts is what a change doing NOTHING produces about three quarters of the time.** Roughly
+> **twenty** clean trials is the bar. **Natural ramps count toward it** — the browser does not
+> know which lever started it. Tally with `scratchpad/tally.mts <since>`; the arithmetic is in
+> the module header.
+>
+> **PRE-TRIAL BASELINE, so the trial has something to be compared against: 13 ramps in the five
+> days to 2026-09-10**, peaks 3,357-9,294 MB, most recent 04:25Z — a cadence of roughly 2.5-8
+> hours. At that rate the bar is hours of wall clock, not days.
+>
+> **A RAMP THAT STILL ARRIVES WITH THE FLAGS ON REFUTES THE COMMAND-BUFFER CANDIDATE OUTRIGHT**,
+> which is worth as much as a cure and arrives sooner. Read its VMSTACK and region-walk rows.
+>
+> **WATCH THE LOGIN CANARIES, AND THE HAZARD IS NOT THE MEMORY.** RC and Okta fingerprint this
+> browser, and a browser with no WebGL is itself a bot signal; the recorded cost of getting
+> anti-bot posture wrong on this address is **twelve hours of IP block**. `autocart.rc_login`
+> (the nightly rehearsal), `rc-test-login` on demand and `autocart.rc_session` are the three that
+> would catch it. **If the rehearsal starts failing or a CAPTCHA appears, set
+> `RC_KEEPWARM_DISABLE_GPU=0` and restart — no deploy needed — then ask questions.**
+>
+> **PACE RESTARTS AT ~15 MINUTES.** `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and
+> leaves the RC pair dead, so a tighter loop ends the experiment by killing the thing under test.
+>
+> #### SYMBOLIZATION IS STILL BLOCKED, AND THE LOCAL COPY IS A TRAP FOR TWO REASONS
+>
+> The build identity is exact and needs no more work: **`scripts/auto-cart-bot/package-lock.json`
+> has its OWN lockfile pinning playwright 1.61.1** (the web app's pins 1.56.1 — starting from the
+> repo-root lockfile is what made `chrome.dll 149.0.7827.55` look impossible), which gives
+> chromium revision **1228 -> 149.0.7827.55**, an exact match for the box.
+> - **All four Playwright CDN hosts return 000 at the proxy**, re-checked 2026-09-10.
+> - **THIS CONTAINER'S OWN CHROMIUM IS NOT A SUBSTITUTE, AND IT LOOKS LIKE ONE.**
+>   `/opt/pw-browsers/chromium-1194` is **141.0.7390.37** — a different revision, and **a LINUX
+>   build**. Even at a matching revision the offsets would not transfer, because the box runs
+>   `chrome.dll` on Windows. Two independent reasons, and the second survives a version match —
+>   which is exactly the "validated on the wrong platform" trap that burned the native sampler.
+> - **Two routes out:** allowlist `cdn.playwright.dev` and fetch
+>   `builds/chromium/1228/chromium-win64.zip`, or add a **NAMED** read-only bot command dumping
+>   the bytes at RVA `0x180968b` from `chrome.dll` **ON DISK** — the shipped binary, not process
+>   memory, so it touches neither the `ReadProcessMemory` ban nor any session material.
+>
+> #### AND CI CAUGHT A REAL REGRESSION FROM THE EXTRACTION — THE ~28th INSTANCE
+>
+> `keepwarm-recycle.test.mts` pinned `'--hide-crash-restore-bubble'` in `rc-keepwarm.mjs`'s OWN
+> source and the move took the literal with it. Behaviour was unchanged. **Re-anchored rather
+> than relaxed, and the extraction WIDENS what the guard must cover**: pointing the assertion at
+> the new file would have left the three banned throttling flags scanned in only one of the two
+> places they can now be reinstated. `launchCode` is the UNION. **The mutation that matters is a
+> throttling flag added to the NEW module** — it passes against a naive re-point and fails now.
+>
+> **AND THE FAILING TEST NAME WAS UNREACHABLE THROUGH CI, AGAIN.** `not ok` appears **zero**
+> times in everything `get_job_logs` returns over a job reporting `# fail 1`; the `ok`-number
+> technique bounded it to **12..1229** and no further. **`npm test > log 2>&1` locally, then
+> `grep '^not ok'`, is still the only route to the name** — it took one run and named it exactly.
+
+
 > ### 2026-09-10 — TWO PHONE-REPORTED DEFECTS, BOTH FIXED; THE RDR BURST IS STILL OPEN
 >
 > **Read "ANDROID 16 IGNORES `overlaysWebView: false`" directly above before touching anything
