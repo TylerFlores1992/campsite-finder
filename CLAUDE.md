@@ -5983,10 +5983,15 @@ browser being measured in the variable under test.
 #### AND IT RAMPED ON TRIAL ONE — THE COMMAND-BUFFER CANDIDATE IS REFUTED (2026-09-10 05:51 PT-UTC)
 The flags reached the box at 05:21:50Z and were confirmed live by an INDEPENDENT reading rather
 than by "the code is on disk" — `gpu-process` fell to **20-22 MB** and stayed there, against a
-prior distribution of **2,577 samples over three days whose minimum is 78 MB and whose median is
-111** (p05 95, p95 131). **Not one of those 2,577 readings is below 40 MB**, so the plateau is
-outside the whole range rather than merely low in it — which is a stronger statement than a range,
-and it is the one that makes this a confirmation instead of an impression.
+prior distribution of **2,631 samples in the 72 h before the flags went live** (the
+`rc_by_type->'gpu-process'` series over `2026-09-07T05:21:50Z .. 2026-09-10T05:21:50Z`): **minimum
+78 MB, median 111**, p05 95, p95 130. **Not one of those 2,631 readings is below 40 MB** — nor is
+any of them zero, so no filter is doing quiet work here. The plateau is outside the whole range
+rather than merely low in it, which is a stronger statement than a range and is what makes this a
+confirmation instead of an impression.
+**The window is stated because the first draft's "2,577 over three days" was `NOW() - 3 days` at
+the moment the query happened to run** — a number nobody could reproduce, in the paragraph whose
+job is to be checkable. The figures that matter did not move.
 
 `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
 ```
