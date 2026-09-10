@@ -156,6 +156,14 @@ Look for something that satisfies **all four**, and treat any candidate meeting 
 3. is **released on the main thread or from a posted task** — that is what makes a wedged event
    loop retain them,
 4. plausibly **caps near 16,384**, since the count lands within 0.02% of 2^14 on the top cluster.
+**CRITERION 4 IS THE ALLOCATOR'S NUMBER, NOT WINDOWS' — settled 2026-09-10, so do not spend a
+session re-raising it.** A 2 MiB section costs exactly 4 KB of paged pool (512 PTEs x 8 bytes,
+measured at 4.015-4.017 KB over a 1.23x range of counts), so *"caps at 16,384 sections"* and
+*"caps at 64 MiB of paged pool"* are the same sentence in different units — and a Windows quota
+would produce 2^14 with no Chromium constant involved. Killed off stored rows two ways: over the
+six capped walks the COUNT is the tighter quantity (±0.012% against the byte total's ±0.045%),
+and the rank correlation is POSITIVE where a binding byte ceiling predicts a flat pool with the
+count varying inversely. Full entry in `CLAUDE.md`.
 **There is no standing candidate — the data pipe was dropped on 2026-09-10.** Two limits on the
 method, both measured: every real code-search host is **000 at the proxy**, and
 `mcp__github__search_code` over `repo:chromium/chromium` works **only for unique identifiers** (a

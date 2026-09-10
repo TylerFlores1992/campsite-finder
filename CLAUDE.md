@@ -6655,6 +6655,41 @@ is a pool of retained `UnsafeSharedMemoryRegion`s — one held handle each, mapp
 matches the shape — and its own header says **"Up-to 32 regions would be pooled"**. Thirty-two,
 not sixteen thousand. Ruled out.
 
+##### THE 2^14 CAP IS THE ALLOCATOR'S, NOT WINDOWS' — AND THE CHECK COST ONE QUERY (2026-09-10)
+Route A's fourth criterion is *"plausibly caps near 16,384"*, and it is the one nobody has
+pressed on. **There is an obvious alternative that is not a Chromium constant at all, and it
+has to be killed before a source hunt keyed on that number means anything.** A 2 MiB section
+needs 512 prototype PTEs at 8 bytes each = **exactly 4 KB of paged pool**, so
+*"stops at 16,384 sections"* and *"stops at 64 MiB of paged pool"* are **the same sentence in
+different units** — and if Windows were refusing on a paged-pool charge, the count would come
+out at 2^14 with no Chromium cap involved anywhere.
+- **THE 4 KB IS MEASURED, NOT ASSUMED.** Across all ten stored walks, the target renderer's
+  paged pool minus the same scan's own CONTROL renderer divided by `VMMAP2M regions` is
+  **4.015-4.017 KB, dead linear over a 1.23x range of counts** (13,320 -> 16,383). So the
+  identity is real and the ambiguity is real.
+- **ELIMINATED TWO WAYS, off rows already in `bot_events`.** Over the six capped walks:
+
+  | | count (`VMMAP2M`) | target paged pool |
+  |---|---|---|
+  | spread | 16,381-16,383 (**±0.012%**) | 66,552-66,582 KB (**±0.045%**) |
+
+  1. **THE COUNT IS THE TIGHTER QUANTITY, BY ~4x.** A binding byte ceiling makes the BYTES the
+     pinned number and forces the count to absorb the slack left by everything else charging
+     paged pool. It is the other way round.
+  2. **THE RANK CORRELATION IS POSITIVE.** The two walks at 16,383 carry the two highest
+     paged-pool figures and the two at 16,381 the two lowest. A ceiling predicts a flat pool
+     with the count varying **inversely** against the ~150 other mapped regions (which
+     themselves vary 150-158 across those same six walks).
+- **SO CRITERION 4 STANDS: something in the allocator caps the 2 MiB population at 2^14**, and
+  a source hunt for that number is hunting a real thing. **Six capped walks is a small sample**
+  and both readings are about ±30 KB of spread — this is an elimination, not a proof, and the
+  reason to record it is that the quota idea is the first thing a fresh reader will raise.
+- **AND IT LEAVES A FREE CROSS-CHECK ON THE WALK.** Excess paged pool ÷ 4.015 is an INDEPENDENT
+  count of the sections — it comes from `Get-Process`, not from `VirtualQueryEx` — and it agrees
+  with `VMMAP2M regions` on all ten walks. The walk has never had a second witness before.
+- **NO RAMP, NO BOX, NO NEW INSTRUMENT.** The hypothesis was raised and killed inside one query
+  against stored rows, which is the shape Route A is supposed to have.
+
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
 - **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall
