@@ -5928,6 +5928,34 @@ pid=15284 tid=6460 main=True deltaMs=1234 samples=48
   is weak evidence and ~20 would be needed to speak. Do not credit a repair to it on three quiet
   restarts; that is the mistake this file has made three times.
 
+#### THE COMMAND BUFFER IS OFF NOW, GATED, AND THE BAR WAS SET BEFORE THE TRIAL (2026-09-10)
+`keepwarmLaunchArgs()` (`scripts/auto-cart-bot/keepwarm-launch.mjs`) adds `--disable-3d-apis`
+(the targeted flag — no WebGL context, so no command buffer, so no `MappedMemoryManager`) and
+`--disable-gpu` (the belt). **ONE definition, BOTH launch sites** — `withProfile` and the
+resident loop — because two arrays is two chances for the browser under test to differ from the
+browser being measured in the variable under test.
+- **GATED ON `RC_KEEPWARM_DISABLE_GPU`, DEFAULT ON, REVERTIBLE WITH NO DEPLOY.** Set it to `0`
+  and restart. That matters because **RC and Okta fingerprint this browser, and a browser with
+  no WebGL is itself a bot signal** — the recorded cost of getting anti-bot posture wrong on
+  this address is twelve hours of IP block. **If the login rehearsal starts failing or a CAPTCHA
+  appears, turn it off first and ask questions second.**
+- **THE BAR IS WRITTEN INTO THE MODULE BEFORE THE EXPERIMENT, NOT AFTER IT.** A browser
+  replacement ramps ~**10%** of the time (11 of 110 over ten days), so **three quiet restarts is
+  what a change doing NOTHING produces three quarters of the time.** Roughly **twenty** clean
+  restarts is the bar, and natural ramps count toward it. Crediting a repair to the wrong
+  mechanism is the mistake this file has recorded three times.
+- **A RAMP THAT STILL ARRIVES WITH THE FLAGS ON IS WORTH AS MUCH AS A CURE, AND ARRIVES
+  SOONER** — it refutes the command-buffer candidate outright.
+- **AND CI CAUGHT A REAL REGRESSION FROM THE EXTRACTION — the ~28th instance of the shape.**
+  `keepwarm-recycle.test.mts` pinned `'--hide-crash-restore-bubble'` in `rc-keepwarm.mjs`'s OWN
+  source, and moving the args took the literal with them. Behaviour was unchanged. **Re-anchored
+  rather than relaxed, and the extraction WIDENS what it must cover**: the obvious repair —
+  point the assertion at the new file — would leave the three banned throttling flags scanned in
+  only one of the two places they can now be reinstated. `launchCode` is the UNION of both.
+  Three mutations, each verified to apply and to fail; **the one that matters is a throttling
+  flag added to the NEW module**, which a naive re-point would have sailed past.
+
+
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
 - **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall
