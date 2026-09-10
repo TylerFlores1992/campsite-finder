@@ -58,14 +58,19 @@ exact reading has sent people to the box twice over sessions that repaired thems
 **ESTABLISHED, and none of it needs re-deriving:**
 
 - The ramping renderer maps **~16,384 regions of 2 MiB = 32 GiB exactly**, one allocation base
-  each, all anonymous, all READWRITE, pagefile-backed and largely untouched. Nine walks agree to
-  within 0.02%. It is a **ceiling**, not a runaway.
+  each, all anonymous, all READWRITE, pagefile-backed and largely untouched. Nine walks: the top
+  cluster lands within **0.02% of 16,384** and the three lower readings are consistent with
+  catching a fill in progress. So it is a **ceiling**, not a runaway — "what has a 32 GiB budget?"
+  is a sharper question than "what leaks?".
 - Its **main thread spins at 100% of a core** while a control renderer in the same scan burns 0 ms
   — which is why three instruments on three different CDP calls all got silence. CDP is serviced
   on that thread.
 - **VMSTACK put the loop in native code**, 42 of 48 samples inside `chrome.dll`, so RC's own
   JavaScript is not the loop and there is no fix on our side of the page.
-- The **RAM arm has never fired**; what ends every ramp is the bail. Containment is holding at
+- The **RAM arm has not fired since August** — 15+ consecutive ramps, because untouched commit
+  never lowers free RAM, so it watches the one resource that is not running out. (It *did* fire,
+  three times on 08-18/19, with its own `RUNAWAY` line; "never fired" is wrong and gets quoted.)
+  What ends a ramp now is `bail:ramp`, 3-35 s after the scan. Containment is holding at
   **3.4-4.6 GB** against 8-9 GB untreated.
 
 **REFUTED — do not re-run these:**
@@ -101,8 +106,10 @@ starting it.**
 - **Do not build Track B** — the renewal's Okta trip is measured flat at −4 MB.
 - **Do not park the resident page** — refused by `checkAndReport`'s localStorage rule, which would
   silence `autocart.rc_session` and the phone alarm.
-- **Do not rebuild the heap trail, Track A, or the RAM arm.** Each was measured blind for a reason
-  that was knowable in advance.
+- **Do not rebuild the heap trail, Track A, the RAM arm, or the dump's ownership graph.** Each is
+  blind to this allocation for a reason that was knowable before it was built — `JSHeapUsedSize`
+  excludes external memory; the sampling profiler reads 1-74 MB against 8-9 GB; untouched commit
+  never lowers free RAM; and a wedged renderer contributes zero allocator dumps at every level.
 
 ---
 
