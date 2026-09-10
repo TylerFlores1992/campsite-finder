@@ -565,7 +565,7 @@ function UsersRevenuePanel({
             <span className="text-ch-body font-normal text-ch-muted"> /mo</span>
           </p>
           <p className="mb-4 text-ch-fine text-ch-muted">
-            {mrr ? `${mrr.activeCount} paying · normalised monthly` : 'Stripe unavailable'}
+            {mrr ? `${mrr.activeCount} paying · normalized monthly` : 'Stripe unavailable'}
           </p>
           <ul>
             <StatusRow label="Active" value={subMap['active'] ?? 0} dot="bg-ch-green" />

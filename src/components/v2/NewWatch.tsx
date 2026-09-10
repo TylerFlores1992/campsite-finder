@@ -20,6 +20,8 @@ import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from 
 import { useIsNativeApp } from "@/lib/native/context";
 import { useNativeLinkout, useStoreCanSell, StorePlansLink, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import SubscribeCta, { useAccountGate } from "./SubscribeCta";
+import { useSubscription } from "./useSubscription";
+import { autoCartOffer, autoCartIntent } from "@/lib/autocart-offer";
 import type { Campground } from "@/lib/types";
 import { WATCH_LIMIT, MAX_DIVISIONS_PER_WATCH } from "@/lib/limits";
 
@@ -112,6 +114,18 @@ export default function NewWatch({
   const [flexNights, setFlexNights] = useState(2);
   const [weekendsOnly, setWeekendsOnly] = useState(false);
   const [autoCart, setAutoCart] = useState(true);
+  /**
+   * WHAT THE TOGGLE MAY PROMISE — declared here, above `submit`, because its dependency array
+   * reads `offer` and a `const` below it would be in the temporal dead zone at render.
+   *
+   * Gated on the campground alone until 2026-09-09, so a base-tier subscriber was shown
+   * "we put the site in your cart" for a plan he does not have, with a TrustPanel under it,
+   * and nothing on the screen said otherwise. `autoCartOffer` keeps the historic UI for an
+   * entitled reader AND for `unknown`/unresolved — a failed lookup must never downgrade
+   * somebody who is paying. See `@/lib/autocart-offer`.
+   */
+  const { loaded: subLoaded, autocart: mayAutoCart, unknown: subUnknown } = useSubscription();
+  const offer = autoCartOffer({ loaded: subLoaded, autocart: mayAutoCart, unknown: subUnknown });
   /**
    * Sites muted before the watch exists. Local only — there is no watch to write to
    * yet — and posted with the creation below. Cleared when the campground changes,
@@ -326,7 +340,12 @@ export default function NewWatch({
           // was never sent, the column was never written, and the poller decided the
           // auto-cart lane from the account-level setting alone. Turning it off
           // carted anyway.
-          autoCart,
+          //
+          // `autoCartIntent`, NOT the raw toggle: a reader shown the upsell records FALSE.
+          // The column outlives the watch, so leaving it true would mean the day they
+          // upgrade, every watch made while they were told they could not have this starts
+          // carting real campsites on a consent nobody gave.
+          autoCart: autoCartIntent(offer, autoCart),
           // MUTES COVER EVERY CHECKED DIVISION, and can only contain ids the picker
           // offered: it lists exactly `targets`, and `pruneMutes` drops anything that
           // leaves that set when the selection changes. That is what keeps
@@ -383,7 +402,7 @@ export default function NewWatch({
     // divisions work added it, and the effect of an omission is invisible: useCallback
     // hands back a closure over whatever the value was when it was last rebuilt, so the
     // payload is stale while the JSX, the body and the API all look correct.
-  }, [campgroundId, campgroundName, divisions, chosen, range, mode, flexNights, weekendsOnly, autoCart, muted, router]);
+  }, [campgroundId, campgroundName, divisions, chosen, range, mode, flexNights, weekendsOnly, autoCart, offer, muted, router]);
 
   const canAutoCart = campgroundSource ? supportsAutoCart(campgroundSource) : false;
   // Narrower than isUseDirectSource on purpose -- the bot holds ONE ReserveCalifornia
@@ -751,7 +770,7 @@ export default function NewWatch({
           </div>
         )}
 
-        {canAutoCart && (
+        {canAutoCart && offer === "promise" && (
           <fieldset className="mt-5">
             <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
               Auto-cart
@@ -782,6 +801,37 @@ export default function NewWatch({
           </fieldset>
         )}
 
+        {/* THE UPSELL VARIANT. Shown ONLY on a confirmed "not entitled" — `autoCartOffer`
+            keeps the promise above for an entitled reader and for a failed lookup alike.
+
+            IT STATES WHAT STILL HAPPENS, and that is the load-bearing half. Auto-cart being
+            absent does not make the watch useless: the poller still detects and still alerts
+            within seconds, which is the whole base plan. A caveat with no "here is what you
+            do get" reads as a broken feature rather than a plan boundary — the same reason
+            the RC beta label names its remedy instead of only warning.
+
+            NO PRICE, and no purchase control built here. `/pricing` already renders the right
+            thing per platform (the store paywall in the app, the plans on the web), and the
+            App Store forbids a price in the native build. A second copy of that decision on
+            this screen is how the five gated surfaces drift apart. */}
+        {canAutoCart && offer === "upsell" && (
+          <fieldset className="mt-5">
+            <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
+              Auto-cart
+            </legend>
+            <div className="rounded-ch-input border border-ch-line bg-ch-card px-3.5 py-3">
+              <p className="text-ch-body font-bold">Auto-cart is on the Auto-Cart plan</p>
+              <p className="mt-0.5 text-ch-fine leading-normal text-ch-muted">
+                We&apos;ll still check this campground every 15 seconds and alert you the moment
+                a site opens — you book it yourself.{" "}
+                <Link href="/pricing" className="underline underline-offset-2 hover:text-ch-ink">
+                  See plans
+                </Link>
+              </p>
+            </div>
+          </fieldset>
+        )}
+
         {/* RESERVECALIFORNIA GETS A STATEMENT, AND IT IS NOT A REVERSAL OF THE CALL BELOW.
             That call removed a paragraph that INTRODUCED auto-cart and then WITHDREW it —
             three lines teaching the reader why they cannot have something. This is the
@@ -795,7 +845,13 @@ export default function NewWatch({
             offer and the bot never takes a site nobody asked for. A switch here would imply
             a standing consent this product deliberately does not take. So the panel says
             what will happen and where the decision lands, and nothing more. */}
-        {canRcHold && (
+        {/* AND THE SAME RULE APPLIES HERE, because this panel makes the same kind of promise.
+            The poller's hold offer is gated on `hasAutocartEntitlement` — no entitlement, no
+            "Hold it for me" button — so "we'll offer to cart it the second it does" is an
+            offer that never arrives for a base-tier reader. Found while fixing the toggle
+            above, three lines away. Applying the fix to one of two siblings asking the same
+            question is the shape this repo keeps recording. */}
+        {canRcHold && offer === "promise" && (
           <div className="mt-5 rounded-ch-input border border-ch-line bg-ch-card px-3.5 py-3">
             <p className="flex flex-wrap items-baseline gap-x-2">
               <span className="text-ch-body font-bold">We can grab a site at 8am</span>
@@ -810,6 +866,23 @@ export default function NewWatch({
             </p>
             <p className="mt-1.5 text-ch-fine leading-normal text-ch-muted">
               {AUTOCART_BETA_NOTE}
+            </p>
+          </div>
+        )}
+
+        {/* The upsell twin. NO BETA LABEL — that badge exists to caveat a promise, and there
+            is no promise here to caveat; carrying it over would read as a warning about
+            something the reader is not being offered. */}
+        {canRcHold && offer === "upsell" && (
+          <div className="mt-5 rounded-ch-input border border-ch-line bg-ch-card px-3.5 py-3">
+            <p className="text-ch-body font-bold">Grabbing a site at 8am is on the Auto-Cart plan</p>
+            <p className="mt-1 text-ch-fine leading-normal text-ch-muted">
+              ReserveCalifornia releases cancelled sites at 8am. We&apos;ll still tell you the
+              night before which site is opening, and alert you the moment it does — you book
+              it yourself.{" "}
+              <Link href="/pricing" className="underline underline-offset-2 hover:text-ch-ink">
+                See plans
+              </Link>
             </p>
           </div>
         )}

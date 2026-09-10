@@ -40,7 +40,18 @@ export default async function WatchActionPage({ params }: { params: Promise<{ to
           : null;
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-ch-paper px-4">
+    <main
+      // SAFE-AREA INSET. This screen is outside the (app) route group, so V2Nav —
+      // where every other screen's status-bar handling lives — never runs. Android 16
+      // IGNORES Capacitor's `overlaysWebView: false`, so the webview draws under the
+      // status bar. This column is vertically CENTRED, so the failure here is the other
+      // one: content taller than the viewport overflows equally at both ends and the top
+      // of it goes under the bar, unreachable. Reserving the band keeps the centring
+      // region below it. Resolves to 0px on the web, so nothing outside the app moves.
+      // Rule and full mechanism: src/lib/safe-area-top.test.mts.
+      style={{ paddingTop: "env(safe-area-inset-top)" }}
+      className="min-h-screen flex items-center justify-center bg-ch-paper px-4"
+    >
       <div className="max-w-md w-full bg-white rounded-2xl border border-ch-line shadow-sm p-8 text-center">
         <div className="text-3xl mb-3">{result.ok ? '✅' : '⚠️'}</div>
         <h1 className="text-lg font-semibold text-ch-ink mb-2">

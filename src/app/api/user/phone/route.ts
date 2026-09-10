@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, syncUser } from '@/lib/auth';
-import { mutate, queryOne } from '@/lib/db/client';
+import { queryOne } from '@/lib/db/client';
+import { setUserPhone, clearUserPhone } from '@/lib/sms-consent';
 
 /** Normalize US numbers to E.164 (+1XXXXXXXXXX). Returns null if unusable. */
 function normalizePhone(raw: string): string | null {
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
   const { phone } = await req.json();
 
   if (phone === null || phone === '') {
-    await mutate('UPDATE users SET phone = NULL, updated_at = NOW() WHERE id = $1', [userId]);
+    await clearUserPhone(userId);
     return NextResponse.json({ ok: true, phone: null });
   }
 
@@ -36,6 +37,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Enter a valid US phone number' }, { status: 400 });
   }
 
-  await mutate('UPDATE users SET phone = $1, updated_at = NOW() WHERE id = $2', [normalized, userId]);
+  // Consent is stamped by the write itself — see `lib/sms-consent`. Migration 034 added the
+  // column and backfilled it once on 2026-08-01; nothing wrote it in the five weeks since, so
+  // ten of the seventeen accounts holding a number had no consent record while receiving SMS.
+  await setUserPhone(userId, normalized);
   return NextResponse.json({ ok: true, phone: normalized });
 }

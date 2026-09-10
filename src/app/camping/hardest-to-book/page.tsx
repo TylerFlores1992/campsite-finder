@@ -74,7 +74,16 @@ export default async function HardestToBookPage() {
         dangerouslySetInnerHTML={{ __html: jsonLdScript(breadcrumb) }}
       />
 
-      <div className="mx-auto max-w-[var(--ch-max)] px-5 py-8">
+      <div
+        // SAFE-AREA INSET. This screen is outside the (app) route group, so V2Nav —
+        // where every other screen's status-bar handling lives — never runs. Android 16
+        // IGNORES Capacitor's `overlaysWebView: false`, so the webview draws under the
+        // status bar and the control below lands in it, where taps go to the system and
+        // not to the page. Resolves to 0px on the web, so nothing outside the app moves.
+        // Rule and full mechanism: src/lib/safe-area-top.test.mts.
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 2rem)" }}
+        className="mx-auto max-w-[var(--ch-max)] px-5 pb-8"
+      >
         <nav aria-label="Breadcrumb" className="mb-4 text-ch-fine text-ch-muted">
           <Link className="font-bold text-ch-green hover:text-ch-green-deep" href="/">
             {SITE_NAME}
@@ -93,7 +102,7 @@ export default async function HardestToBookPage() {
 
         <div className="mt-3 max-w-[70ch] space-y-3 text-ch-body leading-relaxed text-ch-ink-2">
           <p>
-            {`Some campgrounds are gone the moment their booking window opens. Refresh at the wrong second and a whole summer of Yosemite Valley is spoken for before you have finished typing. It is not a queue you can win by being organised — for these ${total > 0 ? total : ""} campgrounds, being early is not early enough.`}
+            {`Some campgrounds are gone the moment their booking window opens. Refresh at the wrong second and a whole summer of Yosemite Valley is spoken for before you have finished typing. It is not a queue you can win by being organized — for these ${total > 0 ? total : ""} campgrounds, being early is not early enough.`}
           </p>
           <p>
             {"What does work is being there when somebody gives one back. Cancellations happen constantly — plans change, weather turns, someone holds three weekends and keeps one — and the site drops back into the booking system with no announcement, often in the middle of the night. Nearly every one of them is taken within minutes by whoever happened to be looking."}

@@ -343,7 +343,7 @@ export default function CostsPanel({
           </button>
         </div>
         <p className="mb-3 text-ch-fine text-ch-muted">
-          Bought once — hardware, a developer enrolment, a domain transfer. These never enter
+          Bought once — hardware, a developer enrollment, a domain transfer. These never enter
           the monthly or yearly totals, because they have no run rate.
         </p>
 

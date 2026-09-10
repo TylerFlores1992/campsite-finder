@@ -8333,7 +8333,291 @@ tree, the deploy and the fleet were all correct.
   not buy any of that.** `CH_ALLOW_MASTER_PUSH=1` stays unspent: `docs/LANES.md` reserves it
   for a genuine incident, and a cosmetic blemish in a commit body is not one.
 
+### THE TWO NEW SUBSCRIBERS PAID FOR THREE FINDINGS (2026-09-09)
+
+Asked what we knew about two new subscribers and how they found us. Reading their rows
+produced three defects, all the same shape this file keeps recording: **a fact captured once
+and never wired to the thing that needed it.** Merged as #307.
+
+**FIRST, THE ACQUISITION ANSWER, because it is the one that changes what to build.** The two
+who converted (trial → paid on 09-07 and 09-08, both **Auto-Cart at $10/mo**) signed up 08-31
+and 09-01 — **before migration 072 shipped on 09-04**, so their source is unknowable and
+always will be. The one who signed up 09-08 carries it, and it is worth reading twice:
+
+```
+ref:  https://chatgpt.com
+path: /campground/231868       -> COLLEGIATE PEAKS, Salida, Colorado (rec.gov)
+16:09:39  lands from ChatGPT
+16:10:46  account created          (67 seconds)
+16:13:10  subscribed               (3.5 minutes from landing to paid)
+16:14     first watch: Collegiate Peaks, the exact page they landed on
+```
+
+**n=1, and `document.referrer` is client-supplied and untrusted by design** — 072's own header
+says to read it as evidence about a population, never as a fact about one account. But it is
+the first thing the instrument caught, five days after it shipped, and it is an LLM referral
+rather than a search one. The only other sourced signup (`google.com` → a ReserveAmerica page
+in NY) made zero watches.
+
+**Both converters converted after the product actually delivered.** rachelrvt: 28 alerts across
+her trial, **6 of them `carted`**, every SMS carrier-confirmed. brentwolfe: one `carted` on
+09-02, two days before his Tahoe trip. That is a better retention story than any funnel number,
+and it is the argument for reading `client_reports` and `notifications` per subscriber rather
+than only counting rows.
+
+#### SMS CONSENT HAS BEEN EVIDENCED FOR NOBODY SINCE 2026-08-01
+
+Migration 034 added `users.sms_consent_at` so A2P 10DLC consent could be shown per subscriber —
+*"it exists so the evidence is there if a carrier ever asks"* — backfilled everyone holding a
+number, and **nothing ever wrote the column again.** Counted against production:
+
+```
+17 accounts hold a phone
+10 have no consent row
+10 of those 10 were created AFTER the backfill ran
+all 10 are being sent SMS
+```
+
+`src/lib/sms-consent.ts` owns both writes now. **COALESCE**, so changing your number does not
+restamp the date the evidence is about (same posture as `grandfathered`, `signup_source` and
+`onboarded_at`); **removing the number CLEARS it**, because removal is the withdrawal and a
+re-add must not inherit consent from a period the subscriber had opted out of — a consent
+record that overstates itself is worse than none, since it is the document you would hand a
+carrier. Extracted rather than left inline for the reason `applyMutes` was: the behaviour is
+two SQL statements, so a test against a copy of them would assert the copy.
+
+- **NOT BACKFILLED for the ten, deliberately.** `created_at` predates the save and `updated_at`
+  is bumped by `syncUser` on every authenticated page load, so both would be inventions. An
+  absent reading stays absent. **If a carrier ever asks about those ten, the honest answer is
+  that we have their number and no record of when they gave it.**
+
+#### `/new` PROMISED AUTO-CART TO A PLAN THE READER DOES NOT HAVE
+
+The toggle was gated on `supportsAutoCart(campgroundSource)` alone — *"is this rec.gov"* — and
+on **nothing about the reader**. It defaults ON, says *"We put the site in your Recreation.gov
+cart the moment it opens"*, and renders a `TrustPanel` under it. A $2.50 base-tier subscriber
+created three watches with it on. `isAutocartLane` refuses correctly and fails open to an
+ordinary alert, so the **SAFETY was never in question — the PROMISE was**, and this product's
+own rule is that the cost of a miss is a user who believes the site is handled and stops
+watching.
+
+`src/lib/autocart-offer.ts` decides the copy.
+
+- **`unknown` and unresolved both KEEP the promise.** A failed status lookup must never tell a
+  paying subscriber they are on the wrong plan. The failure direction of `unknown` is always
+  "behave as we did before", never "downgrade the reader".
+- **NOT a seventh enforcer.** `hasAutocartEntitlement` still has six and a client value gates
+  no spend. This decides COPY, which is the half none of the six covers.
+- **An upsell reader records `auto_cart = false`.** The column outlives the watch, so a stale
+  `true` would mean that the day they upgrade, every watch made while they were told they could
+  not have this silently starts carting real campsites — a standing consent nobody gave.
+- **A signed-out visitor gets the upsell**, pinned as a decision. `/new` is public and
+  `useSubscription` reports signed-out with the same shape as base tier, which is correct: for
+  both, auto-cart will not happen for the watch they are about to create.
+- **THE RC HOLD PANEL THREE LINES DOWN HAD IT TOO.** *"we'll offer to cart it the second it
+  does"* — and the poller's hold offer is gated on `hasAutocartEntitlement`, so that offer never
+  arrives for a base-tier reader. Fixing one of two siblings asking the same question is the
+  shape this file keeps recording, so both are gated. The upsell twin carries **no BETA badge**:
+  that badge caveats a promise, and there is no promise here to caveat.
+
+#### `watches.notify_sms` / `notify_email` / `notify_push` ARE DEAD COLUMNS
+
+They appear in **migration 001 and nowhere else in the repository** — never written, never read
+— so every row carries 001's defaults for ever. That is why a subscriber's watches read
+`notify_sms = false` next to a delivered text, and disproving it cost a diagnosis. The real
+gates are per USER: `email_alerts_opt_in` and `phone IS NOT NULL`, in `lib/notifications`.
+`src/lib/notify-columns.test.mts` guards it bidirectionally, the `watch-filters.test.mts`
+pattern: it fails if a control ever collects a per-watch channel choice nothing honours, and
+tells you to delete it if an implementation lands.
+
+#### TWO THINGS EXPLAINED AND DELIBERATELY NOT CHANGED
+
+- **brentwolfe gets SMS and no email** because he set `email_alerts_opt_in = false` at the
+  welcome step. The system honoured his preference exactly. **Do not read a channel asymmetry
+  as a delivery fault before checking the per-user flag.**
+- **No server-side sanitising of `auto_cart` at watch creation.** Entitlement is checked where
+  it would be spent; freezing it at creation would be wrong the day someone upgrades.
+
+#### AND I RECORDED A FALSE PREMISE, THEN CORRECTED IT IN PLACE
+
+The fixture for the new real-DB suite was a **fixed sentinel deleted by exact id** — the class
+this file names as the one #203 does NOT cover. Scoped per run with an age-gated sweep. **The
+justification I first wrote was wrong**: I said two CI runs per push make concurrent runs the
+ordinary case. They do not — `verify.yml` has carried a concurrency group keyed on the bare
+branch name with `cancel-in-progress` since 2026-08-15, added after PR #44 measured that exact
+race. The two runs overlap for seconds and one is cancelled.
+
+- **The fix stands on two exposures that ARE real and are documented as having happened:** a
+  local `npm run verify` while CI runs (twice on 2026-08-28, both times by the person enforcing
+  the rule against it), and a branch run overlapping a MASTER run, where different branch names
+  are different concurrency groups and nothing cancels either.
+- **MEASURED, not argued.** Two concurrent runs of the pre-fix version fail **2 of 5 each**, on
+  exactly the predicted assertions; two of the fixed version pass 5/5.
+- **Corrected in the code comment, the commit message and the PR body**, rather than quietly
+  rewritten — a fix resting on a false premise is how the premise survives to be quoted later.
+- **AND MY OWN MONITOR PRODUCED A FALSE NEGATIVE while this was happening**: it reported "no run
+  yet" because it queried GitHub with a SHORT sha, while both runs were live. The
+  absent-reading-as-a-negative shape, built into the instrument watching my own work. **The
+  GitHub API's `head_sha` needs the full 40 characters.**
+
+#### THE FIXED-SENTINEL CLASS IS STILL OPEN ELSEWHERE
+
+`sync-claim`, `ridb-photos` and the hold suites' fixed sentinels still have it. One suite is
+done; widening it to the rest is the deliberate change this file already says should not be
+made in passing.
+
+### ANDROID 16 IGNORES `overlaysWebView: false`, AND EIGHTEEN SCREENS DREW UNDER THE STATUS BAR (2026-09-10)
+Reported off a new Pixel: *"some pages have buttons at the very top of the page that aren't
+clickable."* **`capacitor.config.ts`'s own comment predicts the symptom word for word** —
+*"otherwise the site's header (Sign in / Sign up) renders in the non-tappable status-bar
+region"* — and the setting it describes has stopped working.
+- **THREE PIECES, EACH READ OUT OF SOURCE RATHER THAN RECALLED.** The app targets **SDK 36**
+  (`codemagic.yaml`, "Assert the Play target API level"). Android 15 enforces edge-to-edge for
+  apps targeting 35+, and Android 16 ignores the `windowOptOutEdgeToEdgeEnforcement` opt-out
+  altogether. The plugin implements `setOverlaysWebView(false)` by CLEARING the legacy
+  `View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN` / `_LAYOUT_STABLE` bits
+  (`@capacitor/status-bar/android/.../StatusBar.java`), which no longer decide the layout once
+  edge-to-edge is enforced. **And the same file says it outright in `shouldSetStatusBarColor()`:
+  above Android 15 it returns false, commented `// app targets 16 - opt-out ignored`** — so
+  `backgroundColor: '#faf7f2'` is dead too and the bar is transparent over the page.
+- **THE STATUS BAR IS A SEPARATE SystemUI WINDOW ON TOP OF OURS**, so a control drawn beneath it
+  is VISIBLE and receives no taps. That is the whole report, and it is why it surfaced on a NEW
+  phone: on Android 14 and below the opt-out still works, so nothing changed in our code and the
+  bug arrived with the handset.
+- **`NativeBridge.tsx` CALLS IT AGAIN AT RUNTIME AND THAT IS ALSO INERT.** Two enforcers of a
+  setting the OS no longer honours read like belt and braces and are both nothing. Neither was
+  deleted — they still work on Android ≤14 and on iOS — but **presence is not liveness**, one
+  more time, and this is the first instance where the API itself is what went quiet.
+- **THE FIX IS CSS AND THERE IS NO CONFIG ALTERNATIVE.** Nothing can be turned off on Android 16;
+  the only remedy is `env(safe-area-inset-top)`. **The pattern already existed three times**
+  — `V2Nav`, `/admin`, `/auto-cart` — each added after its OWN real-device report (2026-08-01,
+  2026-08-08). **So this was diagnosed and fixed three times and never generalised**, which is
+  exactly why the symptom was "some pages": everything inside the `(app)` route group is covered
+  by V2Nav's sticky band, and everything outside it was covered by nobody.
+- **EIGHTEEN FILES, TWENTY-TWO ROUTES** (of twenty-four standalone routes; `/admin` and
+  `/auto-cart` were the two already done). Six `/camping` accommodation routes are two shared
+  renderers and `/claim` is `ClaimFlow`'s `Shell` — **the 08:00 hand-off screen, whose CampHawk
+  link sat 24px from the top of the highest-stakes screen in the product.**
+- **IT IS WEB-SIDE, SO IT REACHES ALREADY-INSTALLED APPS ON A PUSH** — no rebuild, no review.
+  `env()` is 0px in a browser, so all eighteen are provably no-ops on the web: every `py-N` became
+  `pb-N` plus `paddingTop: calc(env(safe-area-inset-top) + Nrem)`, which is byte-identical
+  arithmetic when the inset is zero.
+- **THE THREE CENTRED SCREENS ARE A DIFFERENT FAILURE AND THE COMMENT THERE SAYS SO.** `/sign-in`,
+  `/sign-up` and `/w/<token>` are `justify-center`, so nothing sits at the top by default —
+  content TALLER than the viewport overflows equally at both ends and the top goes under the bar
+  unreachable. Same remedy, different mechanism, and writing "the control below lands in it"
+  there would have recorded a cause that screen does not have.
+- **THE BOTTOM INSET WAS CHECKED AND IS FINE.** The only fixed-bottom control is `NativeOffline`,
+  which already consumes `env(safe-area-inset-bottom)`; nothing else is anchored there, so the
+  gesture pill covers nothing.
+- **`src/lib/safe-area-top.test.mts` IS A REGISTRY, NOT A SCAN, AND THE REASON IS THE DELEGATION.**
+  A page either owns its inset or points at a shared renderer; a scan of page files alone reports
+  the seven delegating routes as broken, and a scan that follows imports passes on any file that
+  merely mentions the string. Naming the owner makes a **new** standalone route fail here until
+  somebody decides which it is.
+  - **IT PINS `viewportFit: "cover"`, AND THAT IS THE SHARPEST GUARD IN IT.** Without that one
+    line in the root layout every `env(safe-area-inset-*)` resolves to 0 in every direction — so
+    deleting it un-fixes twenty-one screens at once and **nothing else goes red.** The
+    fix-present-and-inert shape, one level up from the code it protects.
+  - It also pins that the root layout does **not** add a top inset of its own — the tempting
+    "just do it once at the root", which would double-count against all twenty-one owners and
+    against V2Nav.
+  - And that a delegating route genuinely renders the file it names, because the owner can be
+    perfect and unreachable.
+  - **Under `src/`, not `worker/`** — checked against `worker-deploy.yml`'s `paths:` rather than
+    remembered, so this fires **no worker deploy**.
+  - Eight mutations, each verified to APPLY and to fail.
+- **IT CROSSES INTO SIDE-LANE FILES** (`src/components/v2/`, `src/app/camping/`) because the bug
+  does. Fixing only the main-lane half would have left `/claim` tappable and every SEO landing
+  page not.
+- **WHAT WAS NOT DONE: nobody rendered this on a device.** `env()` is 0 in headless Chromium and
+  the container cannot reach the live site, so the correctness argument is arithmetic (0px on the
+  web, exactly the reserved band in the app) plus the three surfaces already doing it. **The
+  confirming reading is one screenshot of `/claim` or `/privacy` on the Pixel after the deploy.**
+
+### "FAVORITES IS SPELT WRONG" — IT WAS, AND FIVE MORE WERE (2026-09-10)
+Reported by the owner from a phone. `src/app/admin/users/[id]/page.tsx` rendered
+`<Row label="Favourites">` — the British form, in a product whose every other favorites
+label is American and which ships to the **United States storefront only**.
+- **A SWEEP FOUND FIVE MORE, ALL IN COPY A PERSON READS:** `honour` and
+  `authorise`/`authorised` on `/auto-cart`, `organised` on the hardest-to-book landing
+  page, `normalised monthly` on the admin MRR tile, and `a developer enrolment` in the
+  Costs panel. **Every one was invisible to `tsc`, to `next build` and to the whole
+  suite** — the same blind spot the `jsx-spacing` gate exists for, which is why this
+  shipped as a gate (`src/lib/us-spelling.test.mts`) rather than six edits.
+- **COMMENTS ARE STRIPPED, AND THAT IS THE LOAD-BEARING DECISION.** This repo writes its
+  comments in British English on purpose — `colour`, `behaviour`, `favourite`,
+  `serialised` and `recognise` appear in hundreds of lines no customer will ever see. A
+  guard that flagged those would produce four hundred hits, **bury the one label that is
+  genuinely wrong, and be deleted by the next person it inconvenienced** — taking the
+  real finding with it. That reasoning already rejected a whole-file scan in
+  `hold-fixture-safety.test.mts`; this is the second time it has decided a guard's scope.
+- **`cancelled` IS DELIBERATELY NOT IN THE WORD LIST, AND A TEST ASSERTS IT STAYS OUT.**
+  It is the single most tempting addition and it would be a mistake three ways: it is an
+  **accepted American variant** (Merriam-Webster; `canceled` is merely commoner), it is
+  used **consistently across ~15 user-visible strings**, and **the alert bodies feed the
+  A2P 10DLC registered samples** — `docs/a2p-campaign.md` exists because drift between
+  live SMS copy and those samples cost a week of filtered alerts. Rewording alerts for a
+  spelling preference spends that risk for nothing.
+- **`'centre'` IN `geocode.ts` IS DATA, NOT COPY, AND AMERICANISING IT WOULD BREAK
+  GEOCODING.** It is a token in `GENERIC_NAME_WORDS` matching real published place names
+  ("Visitor Centre"). It is allow-listed with that reason — as are two identifiers on
+  paths where a cosmetic rename buys nothing a user can see (`authorise()` on the
+  release-critical claim route, `summarise()` in `AdminTabs`).
+- **THE ALLOW-LIST IS BIDIRECTIONAL.** An entry needs a reason **and a STALE entry fails
+  too**, so it cannot rot into a blanket permission nobody re-reads — the next British
+  word to land in that file would otherwise inherit a reason written about something else.
+- **THE STORE LISTINGS ARE CLEAN**, checked rather than assumed:
+  `docs/play-full-description.txt` and `docs/appstore-description.txt` produce three
+  unknown words between them and all three are real proper nouns (RIDB, MDWFP, Smokies).
+- **AND `CampingandHiking` IS NOT A TYPO** — it is r/CampingandHiking, the real subreddit
+  name, in `src/lib/mentions/sources/reddit.ts`. It reads exactly like a missing space.
+- **THE TOOL IS IN THE SCRATCHPAD, NOT THE REPO.** `cspell` was installed under the
+  session scratchpad and run against comment-stripped source and the two store listings;
+  nothing was added to `package.json`. The durable half is the test.
+- Eight mutations, each verified to APPLY and each caught — including the reported label
+  restored, the geocode entry deleted, a stale entry added, `cancelled` added to the list,
+  comment stripping removed (the guard then fails on its own prose) and `copyOnly`
+  returning nothing (the guard blind while reading green).
+
 ## Open / next session
+
+> ### 2026-09-10 — TWO PHONE-REPORTED DEFECTS, BOTH FIXED; THE RDR BURST IS STILL OPEN
+>
+> **Read "ANDROID 16 IGNORES `overlaysWebView: false`" directly above before touching anything
+> native.** Eighteen screens outside the `(app)` route group drew under the status bar on a
+> current Pixel and took no taps at the top — including **`/claim`, the 08:00 hand-off**. Fixed
+> with `env(safe-area-inset-top)`, the pattern `V2Nav`/`/admin`/`/auto-cart` have used since
+> August. **Web-side: it reaches installed apps on a push, no rebuild, no review.**
+> **THE ONE THING OUTSTANDING IS A SCREENSHOT** — `env()` is 0 in headless Chromium and the
+> container cannot reach the live site, so nothing here has SEEN it on a phone. Open `/claim` or
+> `/privacy` on the Pixel after the deploy; the CampHawk mark should clear the clock.
+>
+> **DO NOT reach for `capacitor.config.ts` or `NativeBridge.tsx` for this.** Both already set
+> `overlaysWebView: false`; Android 16 ignores it, the plugin's own source says so, and there is
+> no config that turns edge-to-edge off. They stay because they still work on Android ≤14 and iOS.
+>
+> **AND "FAVORITES IS SPELT WRONG" WAS ALSO RIGHT — see the entry of that name above.** The
+> admin user page rendered `label="Favourites"`, and a sweep found **five more British
+> spellings in copy a person reads** (`honour`, `authorise`/`authorised`, `organised`,
+> `normalised`, `enrolment`). All six fixed, and `src/lib/us-spelling.test.mts` is the gate,
+> because every one of them was invisible to `tsc`, to `next build` and to the whole suite.
+> **DO NOT add `cancelled` to that word list** — a test asserts it stays out, and the reason is
+> the A2P registered samples, not taste. **DO NOT americanise `'centre'` in `geocode.ts`** —
+> it is DATA that matches real place names, and it is allow-listed saying so. **And do not
+> "tidy" the comments**: they are British on purpose and the guard strips them, which is the
+> only reason it produces one finding rather than four hundred.
+>
+> **THE RDR REQUEST BURST HAS NOT BEEN FIXED, and that was confirmed by grep rather than
+> memory: `futurebookingstartsendsdates` appears NOWHERE in this repo.** Nothing throttles it,
+> nothing blocks it, the only `page.route` in the bot is `force-login-prompt.mjs` on Okta's
+> `/authorize`. What HAS shipped is instrumentation (#292's `(path, status)` counter), and its
+> first reading is the finding: **69,060 asks and not one answer of any kind** — a fourth branch
+> outside the three predicted reading rules. The labelled candidate is requests queued in the
+> renderer faster than the connection pool drains; **untested.** And the burst/leak decoupling is
+> settled five times over in both directions, so **do not re-link them**, and **do not reach for
+> blocking the requests before the cause is named** — that trades a rate-limit risk for a missed
+> cart on the resident page an 08:00 hold depends on.
 
 > ### 2026-09-09 (evening) — THE GPU CENSUS ANSWERED, AND THE SPIN IS SAMPLED NOW
 >
@@ -8486,6 +8770,48 @@ tree, the deploy and the fleet were all correct.
 >   recorded remedy for a missed one is still to run it by hand before 07:58:30 PT, **not**
 >   another schedule tweak.
 
+> ### 2026-09-09 — THE SUBSCRIBER READ (#307). THE LEAK ENTRY BELOW IS THE STANDING PRIORITY.
+>
+> **Two main-lane sessions ran today.** This block is the billing/acquisition side; the leak
+> blocks either side of it are the other lane's live thread and outrank this for attention.
+> Neither touches the other's files. **`git fetch origin master` before trusting either.**
+>
+> **#307 IS MERGED-OR-OPEN — CHECK, DO NOT ASSUME.** Three commits, CI green on all three,
+> `npm run verify` 2022/2022 locally. Full write-up: CLAUDE.md → "THE TWO NEW SUBSCRIBERS PAID
+> FOR THREE FINDINGS".
+>
+> **NOTHING IN IT NEEDS A BOX UPDATE OR A DEPLOY BEYOND VERCEL.** No `worker/` runtime code and
+> no `scripts/auto-cart-bot/` change; the one `worker/*.test.mts` touched is a re-anchor, which
+> does fire a worker deploy and restarts the pollers — expected, check `poller.shards` after.
+>
+> **THREE THINGS ARE NOW TRUE THAT WERE NOT:**
+> - `users.sms_consent_at` is written by the save that captures it. **Ten accounts remain
+>   without one and are NOT backfilled** — the honest date does not exist. If a carrier ever
+>   asks about those ten, that is the answer.
+> - `/new` no longer promises auto-cart, or an 8am RC hold, to a reader with no entitlement.
+> - `watches.notify_sms/notify_email/notify_push` are documented as dead by a guard rather
+>   than by a comment nobody reads.
+>
+> **THE ACQUISITION INSTRUMENT HAS ITS FIRST INTERESTING READING AND IT IS `chatgpt.com`** —
+> landing to paid in **3.5 minutes**, first watch on the exact campground page they landed on.
+> **n=1 and client-supplied.** Worth watching, not yet worth acting on:
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/funnel-readout.mts`. **37 accounts still carry no
+> source, so the source table is not a share of anything yet.**
+>
+> **ONE CHURN RISK, UNACTIONED BY CHOICE.** An Auto-Cart subscriber ($10/mo, trial converted
+> 09-08) has **zero active watches** — his Tahoe watches closed themselves when the trip
+> passed, which is correct. A re-engagement note is **drafted in Gmail and deliberately
+> unsent** (owner's instruction, 09-09). He set `email_alerts_opt_in = false`, which is an
+> ALERT preference rather than a blanket unsubscribe — that distinction is the owner's call,
+> not an agent's.
+>
+> **STILL OPEN, AND NOT TO BE DONE IN PASSING:** the fixed-sentinel fixture class is fixed for
+> `sms-consent` only. `sync-claim`, `ridb-photos` and the hold suites still have it.
+>
+> **TWO TRAPS THIS SESSION PAID FOR:** the GitHub API's `head_sha` needs the **full 40
+> characters** — a short sha returns zero runs and reads as "CI never started"; and
+> `git checkout -- <file>` during mutation testing reverts to HEAD, so **commit before
+> mutating** or the fix under test is what gets deleted.
 
 > ### 2026-09-09 (later) — THE DUMP IS RETIRED; THE READING MOVED OUTSIDE THE PROCESS
 >

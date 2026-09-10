@@ -172,7 +172,16 @@ export default function ConnectPage() {
   };
 
   return (
-    <div className="min-h-dvh bg-ch-paper px-4 py-8 font-ch-body text-ch-ink">
+    <div
+      // SAFE-AREA INSET. This screen is outside the (app) route group, so V2Nav —
+      // where every other screen's status-bar handling lives — never runs. Android 16
+      // IGNORES Capacitor's `overlaysWebView: false`, so the webview draws under the
+      // status bar and the control below lands in it, where taps go to the system and
+      // not to the page. Resolves to 0px on the web, so nothing outside the app moves.
+      // Rule and full mechanism: src/lib/safe-area-top.test.mts.
+      style={{ paddingTop: "calc(env(safe-area-inset-top) + 2rem)" }}
+      className="min-h-dvh bg-ch-paper px-4 pb-8 font-ch-body text-ch-ink"
+    >
       <div className="mx-auto max-w-3xl">
         {/* THIS PAGE HAS NO NAV, AND UNTIL NOW NO WAY BACK AT ALL.
             `/connect` lives OUTSIDE the `(app)` route group, so it never gets `V2Nav` —
