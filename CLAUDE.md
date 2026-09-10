@@ -5666,9 +5666,67 @@ Eight walks, and the 2-4M population barely moves: **15,499 / 15,663 / 16,219 / 
 and the totals sit just above it (32,773-32,779 MB).
 - **Something fills a 32 GiB budget in 2 MiB units and then stops.** A process killed at a
   random point in unbounded growth does not land within 0.02% of the same count three times.
-  The three lower readings are consistent with the walk catching a fill in progress.
+  ~~The three lower readings are consistent with the walk catching a fill in progress.~~
+  **WITHDRAWN — they are the COMMIT-LIMITED ones**, and the withdrawal is in "THE BURST RUNS
+  UNTIL THE BOX SAYS NO" below. Struck here rather than left to a reader who never reaches that
+  section: a correction further down is not a correction to somebody reading this one.
 - **Recorded as an observation, not a mechanism.** What it does is make "what has a 32 GiB
   ceiling?" a sharper question than "what leaks?", and `VMSPAN` is the cheap next fact about it.
+
+##### AND EVERY COUNT ABOVE IS THE WRONG COLUMN — THE MAPPED POPULATION STOPS *BELOW* 2^14 (2026-09-10)
+`VMMAP2M`'s own header says the bounds are the histogram's `d 2-4M` bucket **exactly**, so
+"`VMMAP2M regions` and `VMHIST d` are one population and a reader can diff them". **Diffed, for
+the first time, across all sixteen stored `ramp-scan` rows: they are NOT one population, and the
+number this file has been quoting is the larger one.**
+```
+when (UTC)         pid    VMHIST d   VMMAP2M   bases    diff   vs 2^14
+2026-09-08 14:47   9944     16387     16383    16382      4       -1
+2026-09-09 04:45   7644     16385     16381    16381      4       -3
+2026-09-09 08:59  10524     16386     16382    16382      4       -2
+2026-09-09 11:30   8956     16386     16382    16382      4       -2
+2026-09-09 13:47  10604     16387     16383    16382      4       -1
+2026-09-10 05:52  13332     16385     16381    16381      4       -3
+       control    11772         7         4        4      3
+```
+- **READ IN SOURCE, NOT INFERRED: `VMMAP2M` counts `MEM_MAPPED` (262144) ONLY**
+  (`ramp-scan.mjs`, the comment above the band test), while `VMHIST d` counts **every committed
+  region** in the size band whatever its Type. So the gap is committed 2-4M regions that are
+  private or image — a **near-constant 4-6 on the target and 3 on the CONTROL**, i.e. a baseline
+  property of any renderer rather than part of the ramp.
+- **SO THE MAPPED POPULATION — THE LEAK'S ACTUAL POPULATION — IS 16,381-16,383, NEVER 16,384 AND
+  NEVER ABOVE IT.** Six commit-unconstrained walks, all 1 to 3 SHORT. The four lower rows
+  (13,320 / 14,321 / 15,494 / 16,213) are the commit-limited ones already accounted for.
+- **THAT REVERSES THE SENTENCE ABOVE, and the direction is the whole value.** "The totals sit
+  just above it (32,773-32,779 MB)" is an artifact of counting those 4-6 non-mapped regions:
+  16,381 x 2 MiB is 32,762 MB, and the extra ~12 MB is four regions of ~3 MB. **A count that
+  approaches 2^14 from below and never reaches it is the signature of a hard maximum of 16,384;
+  a count sitting slightly above invites "16,384 plus a few", which is a different search.**
+  Criterion 4 gets sharper rather than weaker.
+- **AND IT RECONCILES TWO ENTRIES THAT DISAGREED IN PRINT.** "THE 2^14 CAP IS THE ALLOCATOR'S"
+  quotes **16,381-16,383** and labels its column `count (VMMAP2M)`; this section quotes
+  **16,385-16,387** and labels its column nothing. Both read as "the count", they are four apart,
+  and the labelled one was right. **Label the column or the next reader picks whichever number is
+  nearer to hand.**
+- **THE ALTERNATIVE IS NOT EXCLUDED AND IS STATED: the walk may race a few unmap/remaps.** Both
+  fit 16,384 − (1..3). What the reading DOES exclude is the population ever exceeding 2^14, which
+  is what the file has said for six entries.
+- **`allocBases` still equals `regions`** (or is 1 short) on every row, so the one-base-per-region
+  finding — N separate `MapViewOfFile` calls — is untouched.
+- **THE COMMENT IN `ramp-scan.mjs` IS WHERE THE CONFLATION CAME FROM, AND IT IS HALF RIGHT.** It
+  reads *"the bounds are the histogram's `d 2-4M` bucket EXACTLY, so `VMMAP2M regions` and
+  `VMHIST … d 2-4M count` are the same population"*. The BOUNDS do match to the byte
+  (`-ge 2097152 -and -le 4194304`); the POPULATIONS do not, because `VMMAP2M` carries
+  `$mbi.Type -eq 262144` and the histogram is gated on `State -eq 4096` alone. **Same size band,
+  one extra filter** — and CLAUDE.md inherited the claim from the comment rather than from the
+  code.
+- **DELIBERATELY NOT FIXED IN THE COMMENT, and the reason is recorded two sections up.** A
+  prose-only edit under `scripts/auto-cart-bot/` moves `CH_BOT_CODE_AT`, so `autocart.bot_version`
+  reports *"MISSING bot-side changes"* — and the honest reading of that warn is to update the box,
+  **which ends the RC session**. A comment is not worth that. Corrected here instead; the next
+  bot-side change that has a real reason to ship should carry the one-line fix with it.
+- **THE METHOD NOTE: the file told a reader to diff two columns and nobody had.** Same shape as
+  the paged-pool quota, which was one query away for as long. **When an entry says "a reader can
+  diff them", that is a task, not a reassurance.**
 
 #### TWO POPULATIONS OF RAMP, AND THE RECORDED DECOUPLING SURVIVES
 Every `bail:ramp` paired with its own request counter splits perfectly in two:
