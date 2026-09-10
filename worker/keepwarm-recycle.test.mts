@@ -24,6 +24,17 @@ const SRC = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
 const code = SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
 
 /**
+ * The launch flags moved out of this file on 2026-09-10 (`keepwarmLaunchArgs`), so a guard
+ * that reads only `rc-keepwarm.mjs` now describes half the surface. `launchCode` is the
+ * UNION of the two, because a throttling flag reinstated in the new module would be just as
+ * live and would sail past a scan of the old one — which is how an extraction quietly
+ * un-guards the thing it moved.
+ */
+const LAUNCH_SRC = readFileSync('scripts/auto-cart-bot/keepwarm-launch.mjs', 'utf8');
+const launchCode =
+  code + '\n' + LAUNCH_SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+/**
  * Read a numeric default out of a `process.env.X || N` fallback.
  *
  * IT MUST HANDLE `60_000`. The first version of this used a bare `(\d+)`, which stops at the
@@ -238,14 +249,17 @@ test('the disproven throttling flags are gone and stay gone', () => {
   //
   // So they bought nothing and cost the brakes on an occluded tab running a permanently-401
   // SPA. Comment lines are stripped above, so the explanation quoting them cannot fail this.
+  //
+  // Scanned across BOTH launch files since the 2026-09-10 extraction: the flags are gone from
+  // wherever the args are built, not merely from the file that used to build them.
   for (const flag of [
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
   ]) {
-    assert.ok(!code.includes(flag), `${flag} must not come back without new evidence`);
+    assert.ok(!launchCode.includes(flag), `${flag} must not come back without new evidence`);
   }
-  assert.match(code, /'--hide-crash-restore-bubble'/,
+  assert.match(launchCode, /'--hide-crash-restore-bubble'/,
     'the crash-restore bubble suppression is unrelated and must stay');
 });
 
