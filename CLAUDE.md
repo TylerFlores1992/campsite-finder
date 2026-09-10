@@ -7598,6 +7598,33 @@ scheduling layer.
   `run_in_background: false, timeout: 600000` and names this failure so the next agent does not
   reinvent the workaround that caused it.
 
+#### AND ON 2026-09-10 ALL THREE FACILITIES CLOSED BEFORE T — the median is negative now
+The 09-04 reading rests on ONE facility's bracket (`rc-583`, −2.2 → −0.2) while the other two
+straddle T, which is why that entry's reading rule is *quote the negative bracket, never the
+median*. **Today every facility is negative, so the caveat is no longer load-bearing:**
+```
+rc-583   locked -4.2s -> free -2.2s   (9 nights, across 3 different campsites)
+rc-539   locked -3.5s -> free -1.5s   (5 nights, across 2)
+rc-542   locked -2.9s -> free -0.9s   (1 night)
+EARLIEST -2.2s · MEDIAN -2.2s · LATEST -0.9s      15 of 15 flipped · 315 polls · 0 unreadable
+```
+- **15 OF 15 NIGHTS WERE FREE BEFORE THE PREDICTED RELEASE**, and **earliest, median and latest
+  are all negative** — so this is the first day on which the finding does not depend on picking
+  the right facility out of three. **Early release is now three-for-three across independent
+  facilities on one morning**, on top of one-for-three on 09-04.
+- **FACILITY-ATOMICITY HELD AGAIN, and more strongly than on 09-04.** Each facility's nights share
+  a single bracket **to the poll** — rc-583's nine span three different campsites and rc-539's
+  five span two — and the three facilities are separated by ~0.7s from one another. Same staggered
+  sequence, on a different morning, with different inventory.
+- **IT IS DIRECT SUPPORT FOR THE CART BURST'S T−15s LEAD.** Every observed flip lies between
+  **−4.2s and −0.9s**, so a lane that opened at T would have been late to all fifteen. `#261`
+  opened the lane early when early release was only *not excluded*; it is now measured twice.
+- **THE ONE RE-LOCK IS NOT CONTENTION AND IS NOT REPORTED AS SUCH.** `rc-583 #102 @2026-09-25`
+  was taken again at **+78.2s**. From the grid our own cart and a competitor's are identical, and
+  that rule does not relax because the number is interesting.
+- **Recorded: 3 facility rows.** With 09-04 and 09-09 that is three measured releases in the
+  table; the Routine has one firing left (09-11) and self-disables on 09-12.
+
 #### IT IS A DAILY CRON FOR A WEEK NOW (2026-09-04) — with two gaps recorded, not papered over
 Owner: *"make it a daily cron for a week then we should have plenty of info."*
 **`trig_01MDTcr2WFDqX6dCsi7gVDPG`** is `56 14 * * *` (07:56 PT) and it **self-disables on any
