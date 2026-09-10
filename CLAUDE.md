@@ -5879,6 +5879,49 @@ is not a login. **`supervise.ps1` STOPS LOUDLY AFTER 5 EXITS IN 10 MINUTES**, wh
 the RC pair dead, so restarts must be paced at ~15 minutes; that also matches the ~11 minutes the
 session takes to repair itself. Run it only with no holds queued.
 
+
+#### VMSTACK ANSWERED, AND THE FORCING LEVER WORKED FIRST TRY (2026-09-09 21:26 PT)
+The prediction above was tested the evening it was written. `restart-rc` fired at 21:23:58 with
+the box quiet at 295 MB, and **the replacement browser ramped inside ninety seconds** — one
+restart, not the ten the prediction budgeted for.
+```
+21:23  rc  295  procs 9  pid  4972  commit  7108     <- quiet
+21:23:58  restart-rc
+21:25  rc 2366  procs 8  pid 15284  commit 38596     <- new browser, ~35 GB commit in one tick
+peak 3913 MB, contained; 21:27 replaced, commit back to 7064
+```
+- **ONE TRIAL IS NOT A RATE.** The measured base rate is 10% of replacements, so a first-try hit
+  is luck as much as evidence. What it establishes is that the lever WORKS, not how often.
+- **AND IT COSTS NOTHING**: no test hold, no campsite, no password submission, no waiting on
+  Okta's cap. That is the cheapest ramp this investigation has ever bought.
+
+**THE READING — IT IS A NATIVE LOOP, NOT OUR PAGE SCRIPT.**
+```
+pid=15284 tid=6460 main=True deltaMs=1234 samples=48
+   count=12 chrome.dll+0x180968b      count=6 anon-exec (JIT)
+   count=8  chrome.dll+0x18096c6      count=6 chrome.dll+0x1809694
+   count=2  chrome.dll+0x18096b1      count=1 chrome.dll+0x180969f
+42 of 48 samples inside a loaded module; chrome.dll is 149.0.7827.55
+```
+- **THE JIT BRANCH IS CLOSED.** Six of forty-eight. RC's own JavaScript is not the loop, so there
+  is no fix on our side of the page and no point looking for one. **The fix is Chromium-level —
+  a flag, or not using the feature.**
+- **THE HOT ADDRESSES SPAN 59 BYTES** (`0x180968b` to `0x18096c6`) and carry 29 of 48 samples.
+  One small loop body, not a call graph. `chrome.dll 149.0.7827.55` symbolizes that offset
+  offline and names the function; that is the next reading and it needs no ramp.
+- **THE HANDLE COUNT CORROBORATES FROM OUTSIDE**: the ramping renderer held **14,600 handles and
+  58,281 KB of paged pool** against ~230-290 handles and ~780 KB for every healthy renderer in
+  the same scan — the shape of ~14.3k section objects, matching `commit/mapped count=14534`.
+- **`MappedMemoryManager` IS STILL A CANDIDATE AND IS NOT PROMOTED BY THIS.** VMSTACK says the
+  loop is native and WHERE; it does not say WHAT. The 2 MiB unit, the idle GPU process and the
+  token-reclaim argument are unchanged — better aimed, not confirmed.
+- **THE CHEAP FIX TO TRY FIRST, and it is testable in minutes now rather than days.** The
+  keep-warm's browser exists to hold a session; it does not need to RENDER RC's WebGL ArcGIS map.
+  Launching it with GPU acceleration off removes the command buffer entirely. **The restart lever
+  makes that iterable** — but note the arithmetic: at a 10% base rate, a handful of clean restarts
+  is weak evidence and ~20 would be needed to speak. Do not credit a repair to it on three quiet
+  restarts; that is the mistake this file has made three times.
+
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
 - **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall
