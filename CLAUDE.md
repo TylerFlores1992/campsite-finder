@@ -5154,7 +5154,7 @@ the correct cell (`no token at all` AND `okta=GONE(404)`). It ran the **full pas
 established` — in **15.6 seconds for 413 MB.** No ramp, so no dump, and nothing was wasted
 except the attempt.
 
-**DURATION AND COST TRACK EACH OTHER, SIX FOR SIX, AND THAT RETIRES THE CELL AS THE
+**DURATION AND COST TRACK EACH OTHER, SEVEN FOR SEVEN, AND THAT RETIRES THE CELL AS THE
 EXPLANATION.**
 
 | event | duration | cost |
@@ -5164,14 +5164,15 @@ EXPLANATION.**
 | 09-07 20:38 warm-up (ordered) | ~4 min, bailed | 4,805 MB peak |
 | 08-26 rehearsal | 32 s | 0 |
 | 09-07 21:49 warm-up (ordered) | 15.6 s | 413 MB |
-| **09-08 22:33 warm-up (ordered)** | **16 s** | **587 MB peak** |
+| 09-08 22:33 warm-up (ordered) | 16 s | 587 MB peak |
+| **09-10 16:58 warm-up (ordered)** | **16 s** | **no ramp — peak UNOBSERVED, see below** |
 
 - **SO THE QUESTION IS NO LONGER "WHICH CELL?" BUT "WHAT MAKES A TRIP SLOW?"** The
-  `okta=GONE` password form is now **three ramps in six**, and all three misses completed
+  `okta=GONE` password form is now **three ramps in seven**, and all four misses completed
   cleanly and quickly. A password sign-in does not cost gigabytes; a password sign-in **that
   struggles** does. This file already said *"duration and cost track each other, which makes a
   retrying or stalling navigation the better candidate than the password path itself"* — that
-  was one observation then and it is six now.
+  was one observation then and it is seven now.
 - **NOT THE BYTE COUNT.** This trip moved **233 responses / 17.0 MB**, roughly double the
   09-07 05:07 trace's 112 / 8.7 MB, and did not ramp. The three-way verdict refused to speak,
   correctly.
@@ -5182,15 +5183,64 @@ EXPLANATION.**
   clean one** — the ramping traces are the ones that bail, and `tail-log` rolls at 16,000
   characters. That comparison is the next cheap reading and it needs no new instrument, only
   the trace being stored rather than logged.
-  - **THE CLEAN-SIDE BASELINE IS NOW TWO READINGS AND THEY ARE THE SAME: `x7`, 2.4 MB, on
-    09-07 21:49 AND 09-08 22:33** — and the byte totals sit within 3% of each other (233
-    responses / 17.0 MB, then 239 / 17.4 MB). So a clean password trip has a stable shape, and
-    it is the RAMPING side that is unmeasured. **Do not read the matching pair as evidence
-    about the leak** — two samples of the same non-event say nothing about the event; what they
-    buy is a baseline to compare the next ramping trace against.
+  - **THE CLEAN-SIDE BASELINE IS NOW THREE READINGS AND THEY ARE THE SAME: `x7`, 2.4 MB, on
+    09-07 21:49, 09-08 22:33 AND 09-10 16:58** — and the byte totals sit within 3% of one
+    another (233 responses / 17.0 MB, 239 / 17.4 MB, 238 / 17.0 MB). So a clean password trip
+    has a stable shape, and it is the RAMPING side that is unmeasured. **Do not read the
+    matching set as evidence about the leak** — three samples of the same non-event say nothing
+    about the event; what they buy is a baseline to compare the next ramping trace against.
 - **A SUCCESSFUL WARM-UP CLOSES ITS OWN WINDOW.** It leaves Okta ALIVE, so the GONE
   precondition does not return until the session lapses, and `spent` is 1 for that release.
   **One forced attempt per Okta lifetime** is the real budget, whichever way the coin lands.
+
+##### A FOURTH ORDERED ATTEMPT MISSED, AND THE SERIES COULD NOT SEE INSIDE IT (2026-09-10 16:58 UTC)
+Fired to put the new commit trigger (below) in front of a ramp on demand rather than waiting out
+the 2.3-18.6 h cadence. **Both preconditions were READ before it ran, not predicted** — the
+keep-warm reported `no token at all` and `okta=GONE(404)`, so the recipe landed in the correct
+cell for the fourth time since #296 added the token gate. (The one pre-fix attempt, 09-07 20:06,
+found a live token, no-opped in 4.5 s and spent its turn learning so — which is what #296 is
+for.) It then produced a clean sign-in for nothing:
+```
+16:58:57 warming up the session: the release is 120m away and Okta is GONE - signing in now
+16:59:10     -> password entered, submitting
+16:59:13   OK Okta session established - the sign-in before the release will be the cheap one
+16:59:14   network trace: 238 response(s), 17.0 MB ... recaptcha__en.js x7 2.4 MB
+           RAM 10570 -> 10232 MB (-338) => this navigation did NOT ramp
+16:59:59    warm-up stood down: the Okta session is alive
+```
+- **NOTHING WAS AT STAKE AND NOTHING WAS LOCKED.** `--in 120` opens the T-3h..T-30 window at
+  once with ninety minutes of margin; the hold was deleted the moment the trip finished, and
+  the table read 0 live / 0 offered afterwards — **by query, not by assumption.**
+- **THE PEAK IS UNOBSERVED, AND THAT IS A DIFFERENCE FROM 09-08 RATHER THAN A SMALLER
+  NUMBER.** `chromium_memory_samples` runs every two minutes and the samples either side are
+  **16:58:32 (rc 293 MB, commit 6,891) and 17:00:35 (rc 337 MB, commit 6,982)** — so the whole
+  16-second trip fell between two samples and the series never looked inside it. 09-08's
+  "587 MB peak" was genuinely sampled; **this one has no series figure at all**, and the only
+  in-trip reading is the trace's own RAM delta. Do not put the two in a column together as if
+  they were the same kind of measurement — the table above says `UNOBSERVED` for that reason.
+  - **THE COMMIT TRIGGER WOULD NOT HAVE HELPED HERE EITHER, AND THAT IS THE DESIGN.** It reads
+    the same two-minute file, so a 16-second event is invisible to it as well. It exists to
+    catch a **burst**, which is a ~30 GB commit step that persists for minutes; a trip that
+    allocates nothing for sixteen seconds is not the case it is for.
+- **THE WARM-UP'S PRODUCT SURVIVED, WHICH IS THE HALF WORTH CHECKING.** Okta read **alive at
+  17:17:44** — eighteen minutes on — so the attempt delivered the thing it exists for even
+  though it produced no ramp. **A `dead` reading four minutes earlier (17:13:23, "no token at
+  all — signed out; okta session GONE") was TRANSIENT and repaired itself**, and I was one step
+  from writing it up two ways: as a session my forced attempt had killed, and as a bug in
+  `okta_checked_at` (which had not moved on that row). The next report moved every okta column
+  correctly, so the write path is fine and the row was a probe catching the resident page
+  between states. **Re-read before concluding** — this file's own rule, nearly broken for the
+  fifth time, on a reading four minutes from correcting itself.
+- **DO NOT RE-ARM ON THIS.** A successful warm-up leaves Okta ALIVE and spends the turn, so the
+  next GONE window is ~12 h out; the token is fresh for an hour, so `planRenewal` stands down
+  and no renewal-driven ramp can arrive inside it either. Natural ramps run 2.3-18.6 h apart and
+  **the commit trigger is live for all of them**, so waiting costs nothing while every forced
+  attempt spends a password submission from an address that has eaten a twelve-hour block.
+- **WHAT IT ACTUALLY BOUGHT: the third clean-side network baseline**, and one distinction
+  worth keeping apart. **Landing in the cell is a GATE and it is reliable** (four for four
+  since #296). **Ramping once you are there is a COIN** — of the five ordered attempts, two
+  ramped; of the seven `okta=GONE` password trips on record, three did. Quoting either number
+  as "the success rate of forcing a ramp" merges a thing we control with a thing we do not.
 
 #### THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08 21:43 PT)
 **A natural ramp arrived fifty minutes before the ordered one, and #302's trigger caught it.
@@ -6466,6 +6516,15 @@ read them for this:
   walk fires later). That is not one-per-request, not one-per-frame (60/s), not one-per-anything a
   user does. **The question is no longer "what leaks 2 MiB at a time" but "what tries to allocate
   32 GiB of shared memory in a burst, in 2 MiB units, and stops at exactly 16,384".**
+  - **QUOTE IT AS A LOWER BOUND, BECAUSE 33-34 s IS A SAMPLE GAP AND NOT A DURATION.** Both
+    readings are the interval between two `bot-keepalive` samples that happen to bracket the
+    step, so the burst is **at most** that long and the rate is **at least** ~482/s. The
+    tempting next move is to divide it out — 2.07 ms a section — and reason about what paces
+    an allocation that slowly (an IPC round trip fits; a bare `CreateFileMapping` at 10-50 us
+    does not). **That inference is not available**: 2.07 ms is an upper bound on the per-section
+    time, so a plain syscall loop finishing in two seconds fits the same data. Nothing here
+    licenses a claim about pacing, and the sampler cannot produce one — the forced keepalive
+    pair is the finest resolution this box has.
 - **AND IT SHARPENS THE CEILING RATHER THAN WEAKENING IT.** Across 13 walks the 2-4M count is
   never above **16,387** and shows **no relation to `privateMB`** (2,981-4,587 MB) — so it is not
   "how far the ramp got". A cap of 2^14 reached in half a minute reads like a loop bounded by a
@@ -6613,6 +6672,71 @@ Every walk on file, with the OS line beside the count:
 is a pool of retained `UnsafeSharedMemoryRegion`s — one held handle each, mapped, reusable, which
 matches the shape — and its own header says **"Up-to 32 regions would be pooled"**. Thirty-two,
 not sixteen thousand. Ruled out.
+
+##### THE BASELINE 2 MiB SECTION *IS* `gpu/mapped_memory` — AND IT IS NOT THE RAMP'S (2026-09-10)
+A shortcut worth closing, because it is attractive and it is wrong. **The memory dump cannot be
+read during a ramp** (a wedged renderer contributes zero allocator dumps), but it succeeds on a
+HEALTHY renderer in ~350 ms — so the obvious move is to read the owner of a healthy renderer's
+2 MiB anonymous section and call that the allocator. **Nobody had tried it. It works, and it
+answers a different question.**
+- **TODAY'S HEALTHY BASELINE NAMES IT, WITH THE COUNTS MATCHING EXACTLY.** `MDHIST` on the RC
+  renderer reads `2-4M 2MB count=1`, and `MDOWNER` on the same process reads
+  **`gpu/mapped_memory 2MB count=1`** — one bucket entry, one owner, same size. So
+  `MappedMemoryManager` really is what puts a 2 MiB anonymous pagefile-backed shared section in
+  a normal RC renderer, by Chromium's own ownership graph rather than by the size coincidence.
+  **That is why the 2 MiB match was so persuasive for so long.**
+- **AND THE GPU-OFF TRIAL'S OWN BASELINE SHOWS IT GONE.** The dump taken at **05:24:58 on the
+  flags-on browser** (launched 05:21:50 with `--disable-3d-apis --disable-gpu`) has
+  **no `2-4M` bucket at all**, **no `gpu` root at all**, and owners of only
+  `discardable/segment 7MB count=2` plus `(no ownership edge) count=10`. The flags removed
+  `MappedMemoryManager` from that renderer completely.
+- **A BROWSER IN THAT STATE THEN RAMPED TO 16,385 REGIONS IN THE 2-4M BUCKET.** So the ramp's
+  sections are **not** `gpu/mapped_memory`, and the healthy renderer's 2 MiB section **cannot be
+  used to identify the ramp's allocator** — they are two different things that happen to share a
+  size. The GPU-off refutation is **strengthened**, not weakened, by finally knowing what the
+  baseline section was.
+- **THE TECHNIQUE IS SOUND EVEN THOUGH THE ANSWER IS NO**, and it is worth keeping: the
+  ownership graph resolves cleanly on a healthy renderer, off rows already stored, with no ramp
+  and no box. What it cannot do is speak about a population that is absent at baseline — and the
+  ramp's 16,384 is absent at baseline, which is the whole point.
+- **`discardable/segment` IS THE ONE OWNER PRESENT IN BOTH**, at 4 MB a segment
+  (`4-16M count=1`) — consistent with the recorded weakening of discardable on size, and not
+  something the 2-4M bucket can be blamed on.
+
+##### THE 2^14 CAP IS THE ALLOCATOR'S, NOT WINDOWS' — AND THE CHECK COST ONE QUERY (2026-09-10)
+Route A's fourth criterion is *"plausibly caps near 16,384"*, and it is the one nobody has
+pressed on. **There is an obvious alternative that is not a Chromium constant at all, and it
+has to be killed before a source hunt keyed on that number means anything.** A 2 MiB section
+needs 512 prototype PTEs at 8 bytes each = **exactly 4 KB of paged pool**, so
+*"stops at 16,384 sections"* and *"stops at 64 MiB of paged pool"* are **the same sentence in
+different units** — and if Windows were refusing on a paged-pool charge, the count would come
+out at 2^14 with no Chromium cap involved anywhere.
+- **THE 4 KB IS MEASURED, NOT ASSUMED.** Across all ten stored walks, the target renderer's
+  paged pool minus the same scan's own CONTROL renderer divided by `VMMAP2M regions` is
+  **4.015-4.017 KB, dead linear over a 1.23x range of counts** (13,320 -> 16,383). So the
+  identity is real and the ambiguity is real.
+- **ELIMINATED TWO WAYS, off rows already in `bot_events`.** Over the six capped walks:
+
+  | | count (`VMMAP2M`) | target paged pool |
+  |---|---|---|
+  | spread | 16,381-16,383 (**±0.012%**) | 66,552-66,582 KB (**±0.045%**) |
+
+  1. **THE COUNT IS THE TIGHTER QUANTITY, BY ~4x.** A binding byte ceiling makes the BYTES the
+     pinned number and forces the count to absorb the slack left by everything else charging
+     paged pool. It is the other way round.
+  2. **THE RANK CORRELATION IS POSITIVE.** The two walks at 16,383 carry the two highest
+     paged-pool figures and the two at 16,381 the two lowest. A ceiling predicts a flat pool
+     with the count varying **inversely** against the ~150 other mapped regions (which
+     themselves vary 150-158 across those same six walks).
+- **SO CRITERION 4 STANDS: something in the allocator caps the 2 MiB population at 2^14**, and
+  a source hunt for that number is hunting a real thing. **Six capped walks is a small sample**
+  and both readings are about ±30 KB of spread — this is an elimination, not a proof, and the
+  reason to record it is that the quota idea is the first thing a fresh reader will raise.
+- **AND IT LEAVES A FREE CROSS-CHECK ON THE WALK.** Excess paged pool ÷ 4.015 is an INDEPENDENT
+  count of the sections — it comes from `Get-Process`, not from `VirtualQueryEx` — and it agrees
+  with `VMMAP2M regions` on all ten walks. The walk has never had a second witness before.
+- **NO RAMP, NO BOX, NO NEW INSTRUMENT.** The hypothesis was raised and killed inside one query
+  against stored rows, which is the shape Route A is supposed to have.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.

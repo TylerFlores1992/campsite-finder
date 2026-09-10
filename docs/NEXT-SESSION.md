@@ -33,14 +33,14 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — 2026-09-10 05:00 PT
+## 1. State — 2026-09-10 17:10 UTC
 
 | | |
 |---|---|
-| master | `3d92065` — **verify against `origin/master`, this line ages** |
-| mini-PC | `52d6e74`; the gap to master contains **zero bot-side files** (`git diff <boxSha>..origin/master -- scripts/auto-cart-bot/ mini-pc/` is empty), so no update is needed. Confirm by DIFF, not by the warn |
+| master | `7333940` (#325) — **verify against `origin/master`, this line ages** |
+| mini-PC | `7333940` — box and master agree; the commit trigger below is LIVE on it |
 | health | **18 of 19 ok**, one documented-benign warn |
-| fleet | 3/3 shards held, heartbeat 1s, 12 watches, capacity 8/12 |
+| fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
 | migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
 
@@ -77,9 +77,20 @@ exact reading has sent people to the box twice over sessions that repaired thems
   resolution off the `bot-keepalive` forced samples: commit goes +34,766 MB in 33 s and +29,001 MB
   in 34 s, while `rc_mb` is still at 1,688-1,924 MB. **The mapping and the private-byte climb are
   two different curves and every instrument so far has watched the second one.** At 2 MiB a section
-  that is ~450-500 sections/second — not one-per-request, not one-per-frame. **So the question is
+  that is **at least** ~482 sections/second — **a LOWER bound, because 33-34 s is the gap between
+  the two samples that bracket the step, not a measured duration.** So do not divide it out and
+  reason about pacing: 2.07 ms a section is an upper bound, and a plain syscall loop finishing in
+  two seconds fits the same data. It is not one-per-request and not one-per-frame. **So the question is
   "what tries to allocate 32 GiB of shared memory in a burst, in 2 MiB units, stopping at exactly
   16,384", not "what leaks 2 MiB at a time".**
+- **THE RAMP SCAN NOW FIRES ON COMMIT AS WELL AS ON `rcMb`, AND IT IS LIVE ON THE BOX** (#325,
+  `RAMP_SCAN_COMMIT_MB = 9000`). The old trigger read *private bytes*, which is the second curve —
+  backtested against every stored burst it fired **60-162 s late on 11 of 19 and never early**, i.e.
+  it was watching the aftermath by construction. **A second trigger, not a replacement**: `rcMb`
+  still fires alone, and the readout names which one did (`trigger rc` / `trigger commit` /
+  `trigger both`). **Nothing has exercised it on a real burst yet** — the first natural ramp does.
+  A `ramp-scan` row whose `trigger` is `commitUsedMb` with `rcMb` still in the hundreds is the
+  reading that says it worked.
 - **The mapping is essentially UNTOUCHED** — working set 2,965 MB against private 2,979 MB, so
   26.7 GB of `commit/mapped` is barely resident. It also carries **~1 retained handle** and
   **~4.0 KB of paged pool** per section (deltas against the same scan's own control), so the owner
@@ -106,6 +117,14 @@ exact reading has sent people to the box twice over sessions that repaired thems
   identical 32 GiB signature and a GPU process flat at 20 MB. One counterexample refutes; it came
   with the whole walk attached. The 2 MiB match was a coincidence — 2 MiB is a very common
   granularity.
+  **AND THE BASELINE 2 MiB SECTION HAS NOW BEEN IDENTIFIED AS `gpu/mapped_memory`, WHICH CLOSES
+  A SHORTCUT RATHER THAN REOPENING THE CANDIDATE** (2026-09-10). The dump cannot be read during a
+  ramp but succeeds on a healthy renderer in ~350 ms, so the tempting move is to read the owner
+  of a healthy renderer's 2 MiB section. Done: `2-4M count=1` and `gpu/mapped_memory 2MB count=1`
+  match exactly. **But the GPU-off trial's own baseline dump has no `2-4M` bucket and no `gpu`
+  root at all, and that browser still ramped to 16,385 regions** — so the baseline section and
+  the ramp's sections are different things sharing a size, and the healthy renderer cannot
+  identify the ramp's allocator.
 - **Symbols.** The one reachable symbol server 404s our exact key, controlled three ways. Its
   near-neighbours share our TimeDateStamp with a different `SizeOfImage`, so borrowing one would
   name the wrong function confidently.
@@ -148,6 +167,14 @@ Look for something that satisfies **all four**, and treat any candidate meeting 
 3. is **released on the main thread or from a posted task** — that is what makes a wedged event
    loop retain them,
 4. plausibly **caps near 16,384**, since the count lands within 0.02% of 2^14 on the top cluster.
+**CRITERION 4 IS THE ALLOCATOR'S NUMBER, NOT WINDOWS' — settled 2026-09-10, so do not spend a
+session re-raising it.** A 2 MiB section costs exactly 4 KB of paged pool (512 PTEs x 8 bytes,
+measured at 4.015-4.017 KB over a 1.23x range of counts), so *"caps at 16,384 sections"* and
+*"caps at 64 MiB of paged pool"* are the same sentence in different units — and a Windows quota
+would produce 2^14 with no Chromium constant involved. Killed off stored rows two ways: over the
+six capped walks the COUNT is the tighter quantity (±0.012% against the byte total's ±0.045%),
+and the rank correlation is POSITIVE where a binding byte ceiling predicts a flat pool with the
+count varying inversely. Full entry in `CLAUDE.md`.
 **There is no standing candidate — the data pipe was dropped on 2026-09-10.** Two limits on the
 method, both measured: every real code-search host is **000 at the proxy**, and
 `mcp__github__search_code` over `repo:chromium/chromium` works **only for unique identifiers** (a
@@ -180,9 +207,14 @@ legitimate outcome; quietly building a fifth instrument is not.
 
 ### Do not do these, each for a recorded reason
 
-- **Do not force a ramp out of impatience.** Odds are 3-in-6, it spends the warm-up's one turn per
-  Okta lifetime, and it costs a password submission from an address that has eaten a twelve-hour
+- **Do not force a ramp out of impatience, and separate the two numbers before quoting either.**
+  **Landing in the `okta=GONE` cell is a GATE and it is reliable** — four for four since #296 added
+  the token gate. **Ramping once you are there is a COIN**: of the five ordered attempts two ramped,
+  and of the seven `okta=GONE` password trips on record three did. Forcing also spends the warm-up's
+  one turn per Okta lifetime and a password submission from an address that has eaten a twelve-hour
   block. Natural ramps arrive every **2.3-18.6 h** (median ~5.4) and every instrument is armed.
+  **A forced attempt was spent on 2026-09-10 16:58 and missed** (16 s, no ramp), so that Okta
+  lifetime's turn is gone and the next GONE window is ~12 h out.
 - **Do not lower `LOW_RAM_MB`** — that killed a working repair on 08-19.
 - **Do not lower `MEM_DUMP_STALL_MS`** — 90 s was measured against 133 tab-closes, and a wedged
   renderer contributes zero allocator dumps anyway, so it would fire more often and learn nothing.
