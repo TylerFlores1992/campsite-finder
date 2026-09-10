@@ -9016,11 +9016,16 @@ label is American and which ships to the **United States storefront only**.
 > **Read `CLAUDE.md` → "AND IT RAMPED ON TRIAL ONE" before touching anything GPU-related. The
 > experiment is FINISHED and its answer was negative — do not re-run it to "confirm".**
 >
-> **State: master `fdd99c1` (#312-#316 merged); the mini-PC is on `7875a6f`, confirmed by its
+> **State: master `38cf6be` (#312-#318 merged); the mini-PC is on `7875a6f`, confirmed by its
 > own `git rev-parse HEAD` through `bot-ask git-status` — NEVER `autocart.bot_version`, which
-> COALESCEs and can show a stale sha beside a live heartbeat.** 3/3 shards, 0 live holds.
-> **The box has `code-bytes` (#315) and does NOT need an update for it** — the gap to master is
-> the disassembly script and docs, which run here rather than there.
+> COALESCEs and can show a stale sha beside a live heartbeat.** 3/3 shards, 0 live holds,
+> health 17 of 19 with both warns documented-benign.
+> **The box has `code-bytes` (#315), has the GPU-flag revert, and does NOT need an update** —
+> checked by diffing rather than by reading the warn: `git diff 7875a6f..origin/master --
+> scripts/auto-cart-bot/ mini-pc/` is **one hunk, and it is a comment**. `autocart.bot_version`
+> nonetheless reads *"MISSING bot-side changes"*, because it compares a path timestamp and
+> cannot see that the change was prose — see "A COMMENT ARMS IT" under that check. **Do not
+> spend a box update on that warn**; an update ends the RC session.
 >
 > **WHAT HAPPENED.** The flags went live at 05:21:50Z (confirmed independently: `gpu-process` fell
 > to 20-22 MB against a three-day minimum of 78, and back to 99-130 on the revert). `restart-rc`
