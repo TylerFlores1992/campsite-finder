@@ -77,7 +77,10 @@ exact reading has sent people to the box twice over sessions that repaired thems
   resolution off the `bot-keepalive` forced samples: commit goes +34,766 MB in 33 s and +29,001 MB
   in 34 s, while `rc_mb` is still at 1,688-1,924 MB. **The mapping and the private-byte climb are
   two different curves and every instrument so far has watched the second one.** At 2 MiB a section
-  that is ~450-500 sections/second — not one-per-request, not one-per-frame. **So the question is
+  that is **at least** ~482 sections/second — **a LOWER bound, because 33-34 s is the gap between
+  the two samples that bracket the step, not a measured duration.** So do not divide it out and
+  reason about pacing: 2.07 ms a section is an upper bound, and a plain syscall loop finishing in
+  two seconds fits the same data. It is not one-per-request and not one-per-frame. **So the question is
   "what tries to allocate 32 GiB of shared memory in a burst, in 2 MiB units, stopping at exactly
   16,384", not "what leaks 2 MiB at a time".**
 - **THE RAMP SCAN NOW FIRES ON COMMIT AS WELL AS ON `rcMb`, AND IT IS LIVE ON THE BOX** (#325,

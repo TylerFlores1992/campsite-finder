@@ -6507,6 +6507,15 @@ read them for this:
   walk fires later). That is not one-per-request, not one-per-frame (60/s), not one-per-anything a
   user does. **The question is no longer "what leaks 2 MiB at a time" but "what tries to allocate
   32 GiB of shared memory in a burst, in 2 MiB units, and stops at exactly 16,384".**
+  - **QUOTE IT AS A LOWER BOUND, BECAUSE 33-34 s IS A SAMPLE GAP AND NOT A DURATION.** Both
+    readings are the interval between two `bot-keepalive` samples that happen to bracket the
+    step, so the burst is **at most** that long and the rate is **at least** ~482/s. The
+    tempting next move is to divide it out — 2.07 ms a section — and reason about what paces
+    an allocation that slowly (an IPC round trip fits; a bare `CreateFileMapping` at 10-50 us
+    does not). **That inference is not available**: 2.07 ms is an upper bound on the per-section
+    time, so a plain syscall loop finishing in two seconds fits the same data. Nothing here
+    licenses a claim about pacing, and the sampler cannot produce one — the forced keepalive
+    pair is the finest resolution this box has.
 - **AND IT SHARPENS THE CEILING RATHER THAN WEAKENING IT.** Across 13 walks the 2-4M count is
   never above **16,387** and shows **no relation to `privateMB`** (2,981-4,587 MB) — so it is not
   "how far the ramp got". A cap of 2^14 reached in half a minute reads like a loop bounded by a
