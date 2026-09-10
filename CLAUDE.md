@@ -6674,6 +6674,88 @@ ramps, and they split cleanly on the browser-age populations this file already r
     expiries says what became of it. `tail-log rc-keepwarm` rolls at 16,000 characters, so it is
     worth reading BEFORE the next ramp pushes it out.
 
+##### THE COMMIT TRIGGER CAUGHT THE BURST ITSELF — THE MAPPING IS COMPLETE AT 1.8 GB (2026-09-10 19:17 UTC)
+Everything this investigation has ever walked was measured AFTER the mapping, during the private-byte
+climb. **This one was not, and the readout says so in its own trigger line:**
+```
+12:17:08 PT  trigger COMMIT 44354 MB — fired DURING the burst, private bytes only 1869 MB
+TARGET pid=11912 renderer privateMB=1843
+  committed 34956 MB — image 310 · mapped 32848 · private 1798
+  2-4M  32774 MB across 16385 region(s)   [VMMAP2M: 16382 across 16382 bases, ALL ANONYMOUS]
+  pagedPoolKB=66564   handles=17827
+```
+- **THE FULL 32 GiB IS MAPPED, AT THE CAP, WITH PRIVATE BYTES AT 1.8 GB.** So the three-act model
+  is now OBSERVED rather than inferred from a gap between two sampler ticks: the burst maps
+  ~16,384 sections, and **the cap is reached IN THE BURST** — it is not something the climb walks
+  up to. Any account of the 2^14 maximum has to explain a number chosen before a single one of
+  those pages is touched.
+- **AND IT IS A FIFTH CRITERION, WHICH REFUTES THE DATA PIPE FROM A SECOND DIRECTION.** Anything
+  that maps **incrementally as work arrives** is out: one pipe per response body cannot produce
+  16,384 mappings before the first byte is read. The earlier refutation was arithmetic on request
+  counts (a full Okta trip is 112-239 responses); this one is about the SHAPE of the allocation and
+  does not depend on counting anything.
+- **THE INSTRUMENT CLASSIFIES ITSELF, AND THIS IS THE FIRST `DURING`.** The other three scans in
+  the same corpus print *"AFTER the burst; the mapping was already complete"*. **That is what the
+  commit arm is FOR** — it is the only trigger that can fire before the family's private bytes
+  reach 3,000 MB, and it has now done the one thing the `rc` arm structurally cannot.
+- **AND IT FIRED ALONE.** 17:53 was `trigger: "both"`; this is `trigger: COMMIT` with `rc` still
+  well under its bar. Second firing, first solo.
+- **THE PAGED-POOL CROSS-CHECK HOLDS MID-BURST TOO** — 66,564 KB over 16,382 mapped regions is
+  **4.06 KB each**, and handles run ~1 per section (17,827). Both are computed from
+  `Get-Process`, not from `VirtualQueryEx`, so the walk keeps its independent second witness at a
+  moment when the private bytes cannot supply one.
+- **EXCESS 34,551 MB against an OS commit gap of 37,586 MB.** The walk still accounts for the bulk
+  of it, but the two are **~3 GB apart** where earlier (post-burst) walks agreed to within a few
+  hundred — expected, since this one fired with the climb still ahead of it. **No mechanism is
+  written in for the residual**; it is one reading, and the two figures come from different scans
+  in the same sweep.
+- **VMSTACK IS FOUR READINGS NOW AND THE SPLIT HOLDS 4 FOR 4.** This is a **young** browser (3 min
+  at the bail) and it reads like the other young ones: 41 of 48 samples in a loaded module,
+  **23 distinct addresses**, top `chrome.dll+0x180968b` (9 of 48), and the four `HandlerAdded`
+  addresses carrying **23 of 48 between them**. The old-browser outlier stays the only one with
+  JIT on top and 40 distinct.
+  - **THE YOUNG WINDOW IS 23-29 OF 48, NOT A CONSTANT 29.** Entries above quote "29 of 48 samples
+    in a 59-byte window" — that is the 09-09 21:26 reading, and the range across three young
+    ramps is 23 / 24 / 29. **Do not read 29 as the signature**; the signature is
+    `HandlerAdded`-dominant with a narrow spread, against JIT-dominant with a wide one.
+  - **JIT IS SECOND HERE AT 7 OF 48** (against 5 and 6 on the other two young ones), so the two
+    populations are ends of a range rather than two discrete states. **`n` is four and three of
+    them are young** — the age framing is still a LABEL, not an established variable, and trip
+    type remains equally consistent with all four points.
+- **THE RAMP MEM-DUMP IS `target-silent` FOR THE THIRD TIME.** The walk's target is pid 11912 and
+  the dump answered for seven others, six of which are in the walk's own process list — so the
+  timing was right and the ramping renderer alone did not answer, exactly as the readout's join
+  gloss predicts. **Nothing new: `dump-wedge-probe.mjs` settled off-box that a wedged renderer
+  contributes zero allocator dumps at every level. Do not spend another ramp on it.**
+- **THE RAM ARM SAT OUT AGAIN** — free RAM bottomed at **8,331 MB** against a 2,000 floor, which is
+  not close. And **the GPU process was idle again** (24 threads, 0 ms of a 1,200 ms window) beside
+  a renderer at 103% of a core; the readout prints its own *"CONSISTENT WITH, NOT PROOF"* caveat
+  and it still applies.
+- **AND THE ANSWER-LESS BURST BRANCH HAS A THIRD SIGHTING.** The same event's counter reads
+  **17,699 lifetime on `futurebookingstartsendsdates` with `no answer recorded`** — no 2xx, no
+  401, no `failed` — on a browser 165 s old with 16 distinct paths, i.e. the young-burst shape.
+  That is the fourth branch of `loopAnswerReading` for the third time, and it is still the only
+  branch that fires on that path.
+- **WHAT IT DOES NOT DO: name a creator.** It sharpens the question rather than answering it —
+  *what asks for 16,384 two-megabyte shared sections in one burst, before touching any of them?*
+
+###### AND ONE INSTRUMENT WAS CONSIDERED AND PREDICTED BLIND — DO NOT BUILD IT (2026-09-10)
+A section object can be open in more than one process, so enumerating handles system-wide
+(`NtQuerySystemInformation(SystemExtendedHandleInformation)`) and matching the `Object` pointers
+would say whether the browser or GPU process holds the same 16,384 sections. **It discriminates
+hard** — a peer holding them is IPC/mojo; nobody holding them means the renderer created 16k
+anonymous sections it never shared, which is not buffering at all — it needs **nothing from the
+wedged renderer**, and it collects handle metadata only, so it clears the standing ban on
+`ReadProcessMemory` and minidumps.
+- **PREDICTED READING: the `Object` pointers come back ZERO.** Windows' kernel-address-disclosure
+  mitigation zeroes them for medium-integrity callers, and **this box's processes are unelevated** —
+  the same elevation gap that made `stop-all` read `$null` for a whole generation on 2026-08-15.
+  That is the ~0 case the predict-first rule exists to stop.
+- **THE PRECONDITION IS ONE COMMAND, NOT AN INSTRUMENT:** enumerate handles for *our own* process
+  and report whether `Object` is non-zero. Build the matcher only if it is.
+- **Recorded because it is the obvious next idea**, and the point of the rule is that a session
+  should not spend a box update and a ramp discovering this.
+
 ##### A NUMERIC TEST FIXTURE PUTS A PHANTOM RELEASE IN FRONT OF THE KEEP-WARM (2026-09-10)
 The entry above records a loop stalled 150 s in the `auto-login` step with **no hold queued**, and
 calls the mechanism unestablished. **It is `npm test`, and the box printed the whole chain in

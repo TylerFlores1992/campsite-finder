@@ -39,7 +39,7 @@ Three things that will bite in the first ten minutes:
 |---|---|
 | master | `7333940` (#325) — **verify against `origin/master`, this line ages** |
 | mini-PC | `7333940` — box and master agree; the commit trigger below **has now FIRED** |
-| last ramp | **2026-09-10 17:53 UTC**, `trigger: "both"` — the commit arm's first firing. Ended by `bail:ramp` on a **57.5-min-old** browser; whole event inside ONE two-minute sample (commit 6,968 → 38,949 → 6,945 MB). **Read `bot_events` for `ramp-scan`, not the tail of the memory series** — a sub-four-minute ramp leaves one sample and rolls out of the default window within the hour, and this one was very nearly missed that way. **Two things it left open:**
+| last ramp | **2026-09-10 19:17 UTC — the commit arm fired DURING the burst**, the first walk ever taken before the private bytes climbed: 32,774 MB across 16,385 regions **at private 1,843 MB**. `target-silent` ramp dump for the third time (do not spend another ramp on it). Previously **17:53 UTC**, `trigger: "both"` — the commit arm's first firing. Ended by `bail:ramp` on a **57.5-min-old** browser; whole event inside ONE two-minute sample (commit 6,968 → 38,949 → 6,945 MB). **Read `bot_events` for `ramp-scan`, not the tail of the memory series** — a sub-four-minute ramp leaves one sample and rolls out of the default window within the hour, and this one was very nearly missed that way. **Two things it left open:**
 no `ramp` mem-dump landed despite a **150 s** stall (the dump's trigger is 90 s, so it was crossed
 a minute before the bail) — **still open**, and the discriminator is the `alloc trail: resident
 renderer armed` line at the ramping browser's launch, which is printed and was confirmed present
@@ -109,7 +109,12 @@ was in flight first. Full entry in CLAUDE.md.
 - **THE 32 GiB ARRIVES IN A BURST OF <=34 SECONDS** (2026-09-10), measured twice at sub-minute
   resolution off the `bot-keepalive` forced samples: commit goes +34,766 MB in 33 s and +29,001 MB
   in 34 s, while `rc_mb` is still at 1,688-1,924 MB. **The mapping and the private-byte climb are
-  two different curves and every instrument so far has watched the second one.** At 2 MiB a section
+  two different curves and every instrument so far has watched the second one.**
+  **AND ONE HAS NOW WATCHED THE FIRST (2026-09-10 19:17 UTC):** the commit arm fired *during* the
+  burst and the walk found **32,774 MB across 16,385 regions, at the cap, with private bytes at
+  1,843 MB.** So the mapping completes — and the 2^14 maximum is reached — **before a single one of
+  those pages is touched**; the climb is only the touching. The paged-pool cross-check holds there
+  too (66,564 KB / 16,382 = 4.06 KB, handles 17,827). At 2 MiB a section
   that is **at least** ~482 sections/second — **a LOWER bound, because 33-34 s is the gap between
   the two samples that bracket the step, not a measured duration.** So do not divide it out and
   reason about pacing: 2.07 ms a section is an upper bound, and a plain syscall loop finishing in
@@ -184,11 +189,15 @@ matches the disassembly with nothing left over. Full entry in `CLAUDE.md`; do no
   Full table in `CLAUDE.md`. Do not re-promote it on the strength of the 2 MiB match.
 - **One recorded conclusion is weakened, and a second is now split:** "RC's own JavaScript is not
   the loop and there is no fix on our side of the page" — the loop is native, but it is *driven* by
-  JS promise rejection. And **the spin is not always the same code**: `VMSTACK` has read three
-  ramps, and the two YOUNG-browser ones (2.6 and 2.75 min) show the tight `HandlerAdded` loop while
-  the one OLD-browser one (57.5 min, 2026-09-10 17:53) reads **40 distinct addresses of 48 with JIT
-  as the largest bucket**. Perfect correlation on three points. The naming stands; the
-  generalisation does not.
+  JS promise rejection. And **the spin is not always the same code**: `VMSTACK` has read **four**
+  ramps, and the three YOUNG-browser ones (2.6, 2.75 and 3 min) show the `HandlerAdded` loop on top
+  with a narrow spread while the one OLD-browser one (57.5 min, 2026-09-10 17:53) reads **40
+  distinct addresses of 48 with JIT as the largest bucket**. Correlation holds 4 for 4. The naming
+  stands; the generalisation does not.
+  - **THE YOUNG SIGNATURE IS 23-29 OF 48 IN THE 59-BYTE WINDOW, NOT A CONSTANT 29** (readings: 29 /
+    24 / 23), and JIT is a real second bucket in all three (5 / 6 / 7). **So the two populations are
+    ends of a range, not discrete states** — and with three of the four points young, "browser age"
+    is still a LABEL rather than an established variable; trip type fits every point equally.
 
 ### THE BRIEF FOR A SESSION THAT WANTS TO FIX IT
 
@@ -229,6 +238,12 @@ Look for something that satisfies **all four**, and treat any candidate meeting 
    13,550 / 14,321 / 15,494 / 16,213), and only the two lowest are commit-limited. So a candidate
    must explain a maximum of 2^14 **that often is not reached**, which is a weaker constraint than
    this criterion read before 2026-09-10 and should not be used to reject a candidate outright.
+5. **maps the WHOLE population in one burst, before touching any of it** — added 2026-09-10 and it
+   is the sharpest of the five. The commit arm fired mid-burst and the walk found **16,385 regions
+   / 32,774 MB already mapped with private bytes at 1,843 MB**, so the cap is reached in the burst
+   and the climb is only the touching. **Anything that maps incrementally as work arrives is out**,
+   which is the data pipe refuted from a second direction — one pipe per response body cannot
+   produce 16,384 mappings before the first byte is read.
 **CRITERION 4 IS THE ALLOCATOR'S NUMBER, NOT WINDOWS' — settled 2026-09-10, so do not spend a
 session re-raising it.** A 2 MiB section costs exactly 4 KB of paged pool (512 PTEs x 8 bytes,
 measured at 4.015-4.017 KB over a 1.23x range of counts), so *"caps at 16,384 sections"* and
@@ -268,6 +283,23 @@ rate; the long-standing candidate is a retry loop against a 401'd session, which
 - **Parking the resident page is still refused**, and for a reason unrelated to memory:
   `checkAndReport`'s localStorage rule would make the session verdict permanently inconclusive and
   silence `autocart.rc_session` and the phone alarm.
+
+**ROUTE C — ASK WHO ELSE HOLDS THE SECTIONS. CONSIDERED 2026-09-10 AND PREDICTED BLIND; DO NOT
+BUILD IT.** The idea is sound and the reason it fails is knowable in advance, which is the whole
+point of writing it down. A section object can be open in more than one process, so enumerating
+handles system-wide (`NtQuerySystemInformation(SystemExtendedHandleInformation)`) and matching the
+`Object` pointers would say whether the browser or GPU process holds the same 16,384 sections — and
+that discriminates hard: **a peer holding them is IPC/mojo; nobody holding them means the renderer
+created 16k anonymous sections it never shared, which is not buffering at all.** It needs nothing
+from the wedged renderer, and it collects handle metadata only, so it clears the standing ban on
+`ReadProcessMemory` and minidumps.
+- **PREDICTED READING: the `Object` pointers come back ZERO.** Windows' kernel-address-disclosure
+  mitigation zeroes them for medium-integrity callers, and **this box's processes are unelevated** —
+  that is the same elevation gap that made `stop-all` read `$null` for a whole generation on
+  2026-08-15. A ~0 reading is the case the predict-first rule says not to build for.
+- **IF IT IS EVER WANTED, THE CHEAP PRECONDITION IS ONE COMMAND, NOT AN INSTRUMENT:** enumerate
+  handles for *our own* process and report whether `Object` is non-zero. Only build the matcher if
+  it is.
 
 **AND AN HONEST THIRD ANSWER: there may be no fix we own.** If the driver is RC's own SPA, the
 options are "don't leave its page resident" (refused above) or "keep the session healthy so it does
