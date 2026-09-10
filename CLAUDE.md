@@ -5841,6 +5841,71 @@ on 08-16, a cookie-answered one on 08-21, and again on 09-07).
   costs a password submission from an address that has eaten a twelve-hour block. **The gating
   item is the BOX UPDATE, never the ramp.**
 
+
+#### A FRESH BROWSER IS 8x MORE LIKELY TO RAMP — and that is a forcing lever (2026-09-09)
+Asked whether the ramps we cannot explain line up with rec.gov carting. They mostly do not; what
+they line up with is **the browser being REPLACED**, and that is the strongest association this
+investigation has found from the memory series alone.
+```
+onsets preceded by a browser replacement within 6 min : 11/26  (42%)
+expected by chance (110 replacements x 7-min window)  :  1.4
+replacements that go on to ramp                       : 11/110 (10%)
+```
+- **THE 02:0x CLUSTER IS THIS, AND IT IS NOT A CLOCK.** Four ramps at 02:02/02:02/02:03/02:03
+  read as a scheduled trigger. The raw samples say otherwise — quiet for fifteen minutes, the
+  browser is replaced, and the NEW renderer is already at 1.9 GB in the next sample:
+  ```
+  09-01 01:59  rc  297  procs 9  pid 6596     <- quiet
+  09-01 02:01  rc  233  procs 7  pid 12984    <- REPLACED
+  09-01 02:01  rc 1893  procs 7  pid 1260     <- the new renderer, already ramping
+  ```
+  09-02 is the same shape. **09-03 had no replacement at 02:0x and no ramp.** The bot's update
+  window opens at 02:00 PT, so a pending update restarts the browser at 02:01 — the hour is the
+  restart's, not the leak's.
+- **IT FITS THE `MappedMemoryManager` CANDIDATE RATHER THAN DISPLACING IT.** A cold browser
+  loading RC's WebGL ArcGIS map is when the command buffer does the most work, and chunks are
+  taken and never reclaimed while the main thread spins.
+- **DIRECTION IS NOT ESTABLISHED — do not write one in.** The post-Okta recycle, the size guard,
+  a profile yield and a bail all replace a browser, and several are themselves downstream of an
+  Okta trip, so this may be "Okta trip -> recycle -> the NEXT trip ramps". The 02:0x cases are
+  the clean ones, because they follow fifteen quiet minutes rather than a ramp.
+- **NEITHER NECESSARY NOR SUFFICIENT.** 15 of 26 onsets had no replacement before them and 99 of
+  110 replacements cost nothing. It is a strong enrichment, not a mechanism.
+
+**THE PREDICTION, STATED BEFORE THE TEST: `restart-rc` replaces the browser on demand, so ~10
+restarts should produce a ramp.** That is a forcing lever costing **no test hold, no campsite, no
+password submission and no wait for Okta's cap** — a renewal re-mints from the `idx` cookie and
+is not a login. **`supervise.ps1` STOPS LOUDLY AFTER 5 EXITS IN 10 MINUTES**, which would leave
+the RC pair dead, so restarts must be paced at ~15 minutes; that also matches the ~11 minutes the
+session takes to repair itself. Run it only with no holds queued.
+
+#### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
+Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
+- **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall
+  within 15 min of a ramp; a **day-shift permutation** (which preserves hour-of-day on both
+  sides) put 0 of 18 shifts at or above that, so p ~ 0.05 — against five tests run that evening.
+  **And the family split forbids a direct mechanism**: every ramp is the `rc` family, `recgov`
+  reads 0 MB at ten of twelve ramp samples and its ordinary 138 MB baseline at the other two, and
+  rec.gov carting runs in a different Chromium, on a different profile, in a different process.
+  The one viable indirect story — contention making a marginal Okta trip slow, since duration
+  tracks cost six for six — **predicts long renewal trips near those carts and they are
+  ordinary**: 68-71 s against a median of 68,841 ms over 161 closes. One of the three also has a
+  browser replacement, so the cart may be acting through that rather than at all.
+- **THE rec.gov KEEPALIVE: NO ASSOCIATION, AND THE FIRST ANSWER WAS AN ARTIFACT.** `keepSessionsWarm`
+  opens a rec.gov Chromium every 30 minutes and the sampler marks it `source='bot-keepalive'`, so
+  it looked like the obvious common cause. An ANALYTIC base rate ("one pass every 30 min, so
+  nearest is uniform on [0,15]") gave 8 of 26 against 3.5 expected, p ~ 2.7% — **and it was wrong
+  by about 4x.** Keepalive samples arrive in BURSTS, median inter-sample gap **1 minute**, so the
+  null is nothing like that. Against an EMPIRICAL control (6,536 ordinary ticks outside any ramp)
+  the effect disappears, and at +/-5 min ramps sit BELOW the control rate (35% vs 41%).
+  **Compute a base rate from the data, never from the cadence a thing is supposed to run at.**
+- **A THIRD READING WAS CIRCULAR AND WAS DROPPED BEFORE IT WAS REPORTED.** "Browser age at onset"
+  read 0-2 minutes for all 26, which looks like a law. `max_pid` is the largest process by private
+  bytes, and the ramping renderer BECOMES the largest at the onset — a pid that did not exist a
+  minute earlier — so its first-seen IS the onset by construction. The column measured nothing.
+  Browser age is not recoverable from the memory series; `request-counts` carries it, at teardowns
+  and bails only.
+
 ### THE METHOD WAS THE PROBLEM, NOT THE LEAK (2026-09-08) — asked "why do we keep missing things?"
 The owner's question after four missed ramps, and it is answerable with counting rather than
 feeling. **The weeks did not go into the leak. They went into the TRIGGER.**
