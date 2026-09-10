@@ -1207,7 +1207,16 @@ function Notice({ children, tone = 'plain' }: { children: React.ReactNode; tone?
 function Shell({ children }: { children: React.ReactNode }) {
   const isNative = useIsNativeApp();
   return (
-    <main className="mx-auto w-full max-w-md px-5 pb-16 pt-6">
+    <main
+      // SAFE-AREA INSET. This screen is outside the (app) route group, so V2Nav —
+      // where every other screen's status-bar handling lives — never runs. Android 16
+      // IGNORES Capacitor's `overlaysWebView: false`, so the webview draws under the
+      // status bar and the control below lands in it, where taps go to the system and
+      // not to the page. Resolves to 0px on the web, so nothing outside the app moves.
+      // Rule and full mechanism: src/lib/safe-area-top.test.mts.
+      style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.5rem)" }}
+      className="mx-auto w-full max-w-md px-5 pb-16"
+    >
       <Link
         href={isNative ? '/search' : '/'}
         className="mb-5 inline-flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"

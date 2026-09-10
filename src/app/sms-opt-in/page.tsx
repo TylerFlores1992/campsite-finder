@@ -16,7 +16,16 @@ export const metadata = { title: 'SMS Alert Opt-In — CampHawk' };
  */
 export default function SmsOptInPage() {
   return (
-    <div className="max-w-md mx-auto px-4 py-10">
+    <div
+      // SAFE-AREA INSET. This screen is outside the (app) route group, so V2Nav —
+      // where every other screen's status-bar handling lives — never runs. Android 16
+      // IGNORES Capacitor's `overlaysWebView: false`, so the webview draws under the
+      // status bar and the control below lands in it, where taps go to the system and
+      // not to the page. Resolves to 0px on the web, so nothing outside the app moves.
+      // Rule and full mechanism: src/lib/safe-area-top.test.mts.
+      style={{ paddingTop: "calc(env(safe-area-inset-top) + 2.5rem)" }}
+      className="max-w-md mx-auto px-4 pb-10"
+    >
       <div className="mb-4"><Logo markSize={34} /></div>
       <h1 className="text-xl font-bold text-ch-ink mb-1">Text Alert Opt-In (optional)</h1>
       <p className="text-sm text-ch-muted mb-4">

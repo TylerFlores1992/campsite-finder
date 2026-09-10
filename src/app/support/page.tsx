@@ -28,7 +28,16 @@ export const metadata = {
  */
 export default function SupportPage() {
   return (
-    <div className="max-w-2xl mx-auto px-4 py-10 text-ch-ink">
+    <div
+      // SAFE-AREA INSET. This screen is outside the (app) route group, so V2Nav —
+      // where every other screen's status-bar handling lives — never runs. Android 16
+      // IGNORES Capacitor's `overlaysWebView: false`, so the webview draws under the
+      // status bar and the control below lands in it, where taps go to the system and
+      // not to the page. Resolves to 0px on the web, so nothing outside the app moves.
+      // Rule and full mechanism: src/lib/safe-area-top.test.mts.
+      style={{ paddingTop: "calc(env(safe-area-inset-top) + 2.5rem)" }}
+      className="max-w-2xl mx-auto px-4 pb-10 text-ch-ink"
+    >
       <Link href="/" className="inline-block mb-6">
         <Logo markSize={30} />
       </Link>
