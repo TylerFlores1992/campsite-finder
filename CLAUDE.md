@@ -6551,6 +6551,69 @@ into 2 MiB shared segments with a 16,384 cap** (fetch-by-path, since search cann
 the local harness pointed at a page that actually reproduces — which needs RC reachable from a
 browser, i.e. an allowlist entry, not a new probe.
 
+
+##### THE BURST RUNS UNTIL THE BOX SAYS NO — AND "CAUGHT MID-FILL" WAS WRONG (2026-09-10)
+The reading above says the count pins at 2^14 and calls the lower walks a fill in progress.
+**Half of that is right and the other half is not, and the correction is the sharper finding.**
+Every walk on file, with the OS line beside the count:
+```
+ commitLimit  spare(limit-used)  sections
+   38,784          1,078          13,325   <- NOT mid-fill: commit-limited
+   40,840            625          14,326   <- NOT mid-fill: commit-limited
+   43,935          1,127          15,663
+   44,960          1,176          15,499
+   44,960          1,177          16,219
+   45,513          1,526          16,385
+   45,995          1,014          16,386
+   47,024            291          16,386
+   47,030            457          16,387
+   49,082          1,124          16,387
+   50,119            425          16,387
+```
+- **THE CAP AND THE COMMIT LIMIT ARE SEPARABLE, AND THE CAP WINS 9 TIMES IN 12.** Computing the
+  headroom the burst actually had — `(commitLimit - the box's own pre-ramp baseline - the
+  renderer's private bytes) / 2 MiB` — against what it took:
+```
+   limit  baseline  private   could have taken   took     binding
+  50,119     7,348    4,587             19,092  16,387   CAP (2,705 spare)
+  49,082     7,163    3,528             19,195  16,387   CAP (2,808 spare)
+  47,030     7,101    3,328             18,300  16,387   CAP (1,913 spare)
+  45,513     7,050    3,289             17,587  16,385   CAP (1,202 spare)
+  44,960     7,054    4,219             16,843  15,499   CAP (1,344 spare)
+  43,935     8,675    3,050             16,105  15,663   COMMIT
+  40,840     7,108    3,021             15,355  14,326   COMMIT
+  38,784     6,793    2,981             14,505  13,325   COMMIT
+```
+  **On nine events there was room for 1,091-2,808 MORE sections and it stopped at 16,384 ± 3
+  anyway.** That is the doubt closed: 2^14 is a real cap and not an artifact of when the scan
+  fired or of how much commit the box happened to have. The three that fell short are exactly
+  the three lowest commit limits, and on those the burst simply ran out.
+- **"THE THREE LOWER READINGS ARE CONSISTENT WITH CATCHING A FILL IN PROGRESS" IS WITHDRAWN.**
+  They are the commit-limited three. That is a different fact with a different consequence: a
+  count from a commit-limited box is a FLOOR on what the allocator wanted, not a sample of its
+  progress.
+- **THE WALK-TIME `spare` IS 291-1,526 MB AND THAT IS THE *AFTERMATH*, NOT THE STOP.** Every
+  walk finds the box a few hundred MB from its limit — but the walk fires ~77 s after the burst,
+  and the private-byte climb in between is what eats the headroom. Reading the walk-time figure
+  as the reason the burst stopped is the mistake this table exists to prevent: at the moment it
+  stopped there was room for ~1,100-2,800 more sections in three quarters of the events.
+- **SO THE SEQUENCE IS THREE ACTS, NOT ONE RAMP.** A burst of <=34 s takes 16,384 sections (or
+  whatever commit allows); the private bytes then climb ~450-900 MB/min for ~2 minutes and walk
+  the box to the edge of its commit limit; then the bail fires.
+- **AND IT IS THE ACTUAL DANGER, stated plainly.** This is not "a leak that happens to be
+  large" — it is something that allocates until Windows will not commit another 2 MiB. Getting
+  to 291 MB of the commit limit is how `supervise.ps1` could not spawn a shell on 2026-08-12
+  and how both Scheduled Tasks went silent on 08-17. **The containment caps the ramp; it does
+  not stop the box being walked to the edge of its commit limit first.**
+- **DO NOT "FIX" THIS BY ENLARGING THE PAGEFILE.** On the evidence a bigger pagefile buys a
+  bigger burst up to 32 GiB and no further, which is more commit taken and nothing gained.
+  `fix-pagefile.ps1` exists and this is not a reason to run it.
+
+**ONE CANDIDATE ELIMINATED FROM SOURCE while checking the above.** `base::UnsafeSharedMemoryPool`
+is a pool of retained `UnsafeSharedMemoryRegion`s — one held handle each, mapped, reusable, which
+matches the shape — and its own header says **"Up-to 32 regions would be pooled"**. Thirty-two,
+not sixteen thousand. Ruled out.
+
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
 - **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall

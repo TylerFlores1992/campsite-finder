@@ -58,10 +58,21 @@ exact reading has sent people to the box twice over sessions that repaired thems
 **ESTABLISHED, and none of it needs re-deriving:**
 
 - The ramping renderer maps **~16,384 regions of 2 MiB = 32 GiB exactly**, one allocation base
-  each, all anonymous, all READWRITE, pagefile-backed and largely untouched. Nine walks: the top
-  cluster lands within **0.02% of 16,384** and the three lower readings are consistent with
-  catching a fill in progress. So it is a **ceiling**, not a runaway — "what has a 32 GiB budget?"
-  is a sharper question than "what leaks?".
+  each, all anonymous, all READWRITE, pagefile-backed and largely untouched.
+- **THE 2^14 CAP IS REAL AND SEPARABLE FROM THE COMMIT LIMIT** (settled 2026-09-10). Against the
+  headroom each burst actually had, **9 of 12 walks had room for 1,091-2,808 MORE sections and
+  stopped at 16,384 ± 3 anyway**; the 3 that fell short are exactly the 3 lowest commit limits.
+  That closes the live doubt that the count was an artifact of when the scan fired.
+  **"The three lower readings are consistent with catching a fill in progress" is WITHDRAWN** —
+  they are the commit-limited three, which makes such a count a FLOOR on what the allocator
+  wanted rather than a sample of its progress.
+- **THE WALK-TIME "a few hundred MB from the commit limit" IS THE AFTERMATH, NOT THE STOP.** The
+  walk fires ~77 s late and the private-byte climb eats the headroom in between. The sequence is
+  three acts: a <=34 s burst of 16,384 sections, then ~2 minutes of private climb at
+  450-900 MB/min that walks the box to the edge, then the bail.
+- **DO NOT enlarge the pagefile.** On this evidence that buys a bigger burst up to 32 GiB and
+  nothing else. And note the real danger is not the peak: it is that the box is walked to within
+  a few hundred MB of its commit limit, which is how `supervise.ps1` could not spawn on 08-12.
 - **THE 32 GiB ARRIVES IN A BURST OF <=34 SECONDS** (2026-09-10), measured twice at sub-minute
   resolution off the `bot-keepalive` forced samples: commit goes +34,766 MB in 33 s and +29,001 MB
   in 34 s, while `rc_mb` is still at 1,688-1,924 MB. **The mapping and the private-byte climb are
