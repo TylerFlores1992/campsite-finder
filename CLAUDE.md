@@ -5959,8 +5959,13 @@ browser being measured in the variable under test.
 
 #### AND IT RAMPED ON TRIAL ONE — THE COMMAND-BUFFER CANDIDATE IS REFUTED (2026-09-10 05:51 PT-UTC)
 The flags reached the box at 05:21:50Z and were confirmed live by an INDEPENDENT reading rather
-than by "the code is on disk" — `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed
-there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
+than by "the code is on disk" — `gpu-process` fell to **20-22 MB** and stayed there, against a
+prior distribution of **2,577 samples over three days whose minimum is 78 MB and whose median is
+111** (p05 95, p95 131). **Not one of those 2,577 readings is below 40 MB**, so the plateau is
+outside the whole range rather than merely low in it — which is a stronger statement than a range,
+and it is the one that makes this a confirmation instead of an impression.
+
+`restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
 ```
 05:49:53  rc   209 MB  pid  1692  renderer  101 MB  commit  7050/29035  gpu-process 20 MB
 05:51:53  rc  3452 MB  pid 13332  renderer 3234 MB  commit 44336/45513  gpu-process 20 MB
@@ -5980,6 +5985,27 @@ there. `restart-rc` replaced the browser at **05:49:51Z**. Two minutes later:
 - **THE GPU PROCESS DID NOT MOVE AT ANY POINT: 20 MB before, 20 MB during, 22 MB after.** It is
   not merely uninvolved, it is at the reduced post-flag value throughout, which is the same
   reading that proves the flags applied.
+- **AND THE REVERT CLOSES IT FROM THE OTHER SIDE — ONE SERIES, BOTH EDGES, A 5x SWING EACH WAY.**
+  The whole trial fits in ninety minutes of `chromium_memory_samples`, so the baseline is not
+  quoted from another day:
+  ```
+  05:21:23  rc 317 MB  gpu-process 119 MB   <- BEFORE, flags off
+  05:21:50  rc 236 MB  gpu-process  22 MB   <- flags ON (browser replaced)
+  05:51:53  rc 3452 MB gpu-process  20 MB   <- THE RAMP, flags still on
+  06:23:56  rc 167 MB  gpu-process  21 MB   <- still on, thirty quiet minutes
+  06:24:55  rc 246 MB  gpu-process  99 MB   <- flags OFF (browser replaced)
+  06:42:57  rc 325 MB  gpu-process 130 MB   <- settled back at the pre-trial baseline
+  ```
+  **The instrument moves 119 -> 20 -> 99+ as the flag goes on and off, and the ramp sits in the
+  middle of the low plateau.** That is what closes *"were the flags really applied during the
+  ramp?"*, which would otherwise rest on a single reading taken before it.
+- **`max_type` RETURNS TO `gpu-process` AT THE SAME INSTANT**, having been `renderer` or `browser`
+  for the whole trial — i.e. the GPU process is the largest in the family again, exactly as it was
+  at 05:11. A second column agreeing is worth more here than a bigger sample of the first.
+- **AND THE COMMIT LIMIT SHRANK BACK TO 17,150 MB AT 06:34**, having been 29,035 all trial and
+  45,513 during the ramp. That is Windows growing and then reclaiming the system-managed pagefile,
+  and it is the artifact the percentage readings in this file were warned about: **the ratio was
+  never measuring pressure — the absolute figures were.**
 - **STATED PRECISELY, BECAUSE THE OVER-CLAIM IS THE FAILURE MODE OF A GOOD FINDING.** What is
   established is that **removing the WebGL context does not stop the leak**, so
   `MappedMemoryManager` serving RC's ArcGIS map — the mechanism as proposed, and the one the
@@ -8947,16 +8973,19 @@ label is American and which ships to the **United States storefront only**.
 > **Read `CLAUDE.md` → "AND IT RAMPED ON TRIAL ONE" before touching anything GPU-related. The
 > experiment is FINISHED and its answer was negative — do not re-run it to "confirm".**
 >
-> **State: master `43c1d67` (#312 + #313 merged); the mini-PC is on `6f7cc57`, confirmed by its
+> **State: master `fdd99c1` (#312-#316 merged); the mini-PC is on `7875a6f`, confirmed by its
 > own `git rev-parse HEAD` through `bot-ask git-status` — NEVER `autocart.bot_version`, which
 > COALESCEs and can show a stale sha beside a live heartbeat.** 3/3 shards, 0 live holds.
+> **The box has `code-bytes` (#315) and does NOT need an update for it** — the gap to master is
+> the disassembly script and docs, which run here rather than there.
 >
 > **WHAT HAPPENED.** The flags went live at 05:21:50Z (confirmed independently: `gpu-process` fell
-> 80-126 MB -> 20-22 MB and stayed). `restart-rc` replaced the browser at 05:49:51Z. **It ramped
-> at 05:51:53Z** — ~35 GB of commit inside one two-minute tick, a renderer that did not exist a
-> minute earlier, and the walk on it reading **32,774 MB across 16,385 regions of 2 MiB, one
-> allocation base each, all anonymous, all READWRITE**, with the same native spin at
-> `chrome.dll+0x18096c6` / `+0x180968b`. **The GPU process never moved: 20 MB throughout.**
+> to 20-22 MB against a three-day minimum of 78, and back to 99-130 on the revert). `restart-rc`
+> replaced the browser at 05:49:51Z. **It ramped at 05:51:53Z** — ~35 GB of commit inside one
+> two-minute tick, a renderer that did not exist a minute earlier, and the walk on it reading
+> **32,774 MB across 16,385 regions of 2 MiB, one allocation base each, all anonymous, all
+> READWRITE**, with the same native spin at `chrome.dll+0x18096c6` / `+0x180968b`. **The GPU
+> process never moved: 20 MB throughout.**
 >
 > **SO THE ~20-TRIAL BAR WAS NEVER REACHED AND DID NOT NEED TO BE.** That bar exists to stop a
 > CURE being credited on silence; silence is not what arrived. One counterexample refutes, and

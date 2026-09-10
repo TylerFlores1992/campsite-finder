@@ -24,7 +24,9 @@
  * all, so no command-buffer client for the map) plus `--disable-gpu` (the belt, in case the
  * buffer that mattered was the compositor's). Both shipped together on 2026-09-10 and the flags
  * were confirmed live on the running browser by an INDEPENDENT reading rather than by "the code
- * is on disk": `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed there.
+ * is on disk": `gpu-process` fell to 20-22 MB and stayed there, against a prior distribution of
+ * 2,577 samples over three days with a MINIMUM of 78 MB — not one of them below 40. The revert
+ * then took it back to 99-130 MB, so the instrument moves both ways with the flag.
  *
  * **THE FIRST TRIAL RAMPED.** A browser launched at 05:49:51Z under both flags, and two minutes
  * later:

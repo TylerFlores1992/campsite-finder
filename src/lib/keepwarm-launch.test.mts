@@ -92,6 +92,17 @@ test('the anti-fingerprint posture is not collateral damage of this edit', () =>
   assert.ok(!/headless:\s*true/.test(c), 'headful is load-bearing — RC fingerprints headless');
 });
 
+test('the evidence that the flags APPLIED is recorded too — it is the precondition', () => {
+  // A ramp under flags that never took effect proves NOTHING, so "were they applied?" is not a
+  // detail of a finished experiment — it is the load-bearing half, and it is the half a later
+  // tidy-up would trim first. It is answered by an instrument nobody edited for the purpose:
+  // gpu-process fell to 20-22 MB against three days whose MINIMUM is 78, and the revert took it
+  // back to 99-130. Both directions, or the reading is a coincidence with a plausible story.
+  assert.ok(/78 MB/.test(MODULE), 'the pre-trial floor the plateau sits under must stay recorded');
+  assert.ok(/revert/i.test(MODULE), 'the revert is what makes it a two-sided reading');
+  assert.ok(/99-130/.test(MODULE), 'the swing BACK must stay recorded — one direction is weaker');
+});
+
 test('the REFUTATION is written down where the flags are, with its numbers', () => {
   // The module is kept for the evidence rather than the behaviour, so the evidence is the part
   // that must not be deleted. Without it the next reader meets a plausible untried hypothesis

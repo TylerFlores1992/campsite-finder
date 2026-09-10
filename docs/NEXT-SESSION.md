@@ -59,7 +59,8 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > **WHAT HAPPENED.** #312 took the command buffer away (`--disable-3d-apis` + `--disable-gpu`) and
 > the flags were confirmed live on the running browser by an INDEPENDENT reading rather than by
-> "the code is on disk": `gpu-process` fell from a steady 80-126 MB to 20-22 MB and stayed.
+> "the code is on disk": `gpu-process` fell to 20-22 MB against three days of samples whose
+> MINIMUM is 78 MB, and the revert took it back to 99-130 — it moves both ways with the flag.
 > `restart-rc` replaced the browser at 05:49:51Z. **It ramped at 05:51:53Z**, and the walk on that
 > renderer read **32,774 MB across 16,385 regions of 2 MiB, one allocation base each, all
 > anonymous, all READWRITE**, with the same native spin at `chrome.dll+0x18096c6` / `+0x180968b`.
