@@ -11627,6 +11627,34 @@ only when a human **asks**; this is the passive version.
 - **Every unknown is a warn, never an ok** — an old runner, no git on the box, or a shallow
   Vercel clone that cannot find the last bot-side commit. The detail names which evidence is
   missing.
+- **A COMMENT ARMS IT, AND WITH A HOLD QUEUED A COMMENT WOULD TURN IT RED (2026-09-10).**
+  `CH_BOT_CODE_AT` is `git log -1 --format=%cI -- scripts/auto-cart-bot`, so it moves for ANY
+  commit touching that path and has no notion of code versus prose. Observed live: the box sat
+  on `7875a6f` reporting *"it is MISSING bot-side changes"* against master, and the entire
+  difference was **a five-line comment** in `keepwarm-launch.mjs` recording the GPU trial's
+  evidence — `git diff` over the whole of `scripts/auto-cart-bot/` and `mini-pc/` is that one
+  hunk. The box's behaviour was already correct (`RC_KEEPWARM_DISABLE_GPU ?? '0'` is present at
+  `7875a6f`, so the flags default off there).
+  - **THE COST IS THE REMEDY IT INVITES.** The honest reading of "missing bot-side changes" is
+    to update the box — and an update **ends the RC session**, because the token lives in the
+    Chromium it closes. So a documentation edit can buy a destructive action that repairs
+    nothing. It is warn-only today; under the rule two bullets up, **`fail` needs missing
+    bot-side code AND a hold queued**, and a comment satisfies the first half — so the same
+    edit made the evening before a release reads as red at 07:30. Read in the source rather
+    than inferred: `missesBotCode` is `Date.parse(boxCommitAt) < Date.parse(botCodeAt)` and the
+    level is `holdsAhead > 0 ? 'fail' : 'warn'`. **And the red branch prints a claim a comment
+    cannot support** — *"with N hold(s) queued. The two halves can disagree at the release."*
+    Two halves cannot disagree over prose.
+  - **AND THIS REPO'S OWN DISCIPLINE IS WHAT ARMS IT.** Findings are written into the comment
+    beside the code deliberately; every time that happens in a bot-side file, this check fires.
+    The two habits are in direct tension and neither is wrong.
+  - **RECORDED, NOT FIXED, and the reason is the failure direction.** The tempting fix is to
+    compare content with comments stripped — which is a parser, in front of the one check that
+    says whether the box and the web agree about release-critical code, and a parser that
+    mis-reads a real change as cosmetic fails SILENTLY in the expensive direction. Changing the
+    severity rule is the same trade. Neither is a drive-by. **What is free is reading the diff
+    before acting on the warn:** `git diff <boxSha>..origin/master -- scripts/auto-cart-bot/
+    mini-pc/` answers in one command whether an update would change anything.
 - `COALESCE` on the UPDATE so an old runner cannot **erase** a commit a current one reported
   (stale + `beat_at` is readable; NULL is not), and the header is validated as 7–40 hex
   before storage — any holder of `AUTOCART_TOKEN` sets it and it renders on the admin page.
