@@ -6121,9 +6121,15 @@ pid=15284 tid=6460 main=True deltaMs=1234 samples=48
    count=2  chrome.dll+0x18096b1      count=1 chrome.dll+0x180969f
 42 of 48 samples inside a loaded module; chrome.dll is 149.0.7827.55
 ```
-- **THE JIT BRANCH IS CLOSED.** Six of forty-eight. RC's own JavaScript is not the loop, so there
+- ~~**THE JIT BRANCH IS CLOSED.** Six of forty-eight. RC's own JavaScript is not the loop, so there
   is no fix on our side of the page and no point looking for one. **The fix is Chromium-level —
-  a flag, or not using the feature.**
+  a flag, or not using the feature.**~~ **TRUE OF THIS RAMP AND NOT OF ALL OF THEM — the 09-10
+  17:53 ramp reads 40 distinct addresses of 48 with JIT as the largest single bucket.** Struck
+  rather than deleted: read as current it closes a fork on the strength of one reading, which is
+  what it did. The split is by BROWSER AGE and it is perfect on three points — see "THE COMMIT
+  TRIGGER FIRED, AND THE SPIN IS NOT ALWAYS `HandlerAdded`". **What survives is the reading of
+  THIS ramp**, which is a young-browser one: 42 of 48 in a loaded module, 29 of them in a 59-byte
+  window, and that is a native loop.
 - **THE HOT ADDRESSES SPAN 59 BYTES** (`0x180968b` to `0x18096c6`) and carry 29 of 48 samples.
   One small loop body, not a call graph. `chrome.dll 149.0.7827.55` symbolizes that offset
   offline and names the function; that is the next reading and it needs no ramp.
@@ -6524,6 +6530,146 @@ shared sections while the main thread does not yield.**
   is not a fingerprint" is exactly how `MappedMemoryManager` was over-credited.** Do not promote
   this without a reading that is not the number 2 MiB.
 
+##### THE COMMIT TRIGGER FIRED, AND THE SPIN IS NOT ALWAYS `HandlerAdded` (2026-09-10 17:53 UTC)
+A natural ramp arrived while a session was reading the box and was **very nearly missed** — the
+memory readout's default is the last 30 samples, which by then had rolled past it, so the session
+had already reported "no ramp in 13 hours", and it was found only by reading `VMTOP` out of
+`bot_events` for an unrelated question. **Read `bot_events` for `ramp-scan`, not the tail of the
+series** — a ramp lasting under four minutes leaves ONE sample and rolls out of the default window
+within the hour.
+```
+17:50:51  rc=  321 MB  pid 12784 gpu-process  commit  6,968 / 47,870  free 11,054
+17:52:52  rc=4,561 MB  pid  4224 renderer     commit 38,949 / 47,870  free  6,343   <- the ONLY sample
+17:54:52  rc=  275 MB  pid  4188 gpu-process  commit  6,945 / 47,870  free 10,983
+```
+- **THE COMMIT TRIGGER FIRED FOR THE FIRST TIME: `trigger: "both"`.** `commitUsedMb 38,949` against
+  `commitThresholdMb 9,000` and `rcMb 4,561` against `thresholdMb 3,000`, so both arms were true on
+  the same tick. It is the arm shipped for the case where the family figure alone might not cross
+  its bar, and it has now been exercised in anger rather than argued about.
+- **THE WHOLE EVENT FITS INSIDE ONE TWO-MINUTE SAMPLE.** Commit went **6,968 -> 38,949 -> 6,945**,
+  a ~32 GB step and back, in under four minutes — the shortest complete ramp on record, and exactly
+  the "<=34 s burst, then touch" model with the touching cut short.
+- **AND THE RAMP ARM ENDED IT: `bail:ramp`, `ageMs 3,450,474`.** The browser was **57.5 minutes
+  old**. The RAM arm could not have: free RAM bottomed at **6,343 MB** against a 2,000 MB floor,
+  another in a run this file last counted at 15+, and the arm behaving as designed rather than
+  failing.
+
+**THE FINDING: THE MAIN-THREAD SPIN IS NOT ALWAYS THE SAME CODE.** `VMSTACK` has now read three
+ramps, and they split cleanly on the browser-age populations this file already records:
+
+| ramp (UTC) | browser age | distinct paths | module/anonExec | spread | top sample |
+|---|---|---|---|---|---|
+| 09-10 04:26 | 2.75 min | 16 | 42 / 6 | 19 of 48 | `chrome.dll+0x180968b` x12 |
+| 09-10 05:52 | 2.6 min | 16 | 43 / 5 | 23 of 48 | `chrome.dll+0x18096c6` x11 |
+| **09-10 17:53** | **57.5 min** | **78** | **39 / 9** | **40 of 48** | **anon-exec (JIT) x9** |
+
+- **BOTH YOUNG-BROWSER RAMPS SPIN IN THE `HandlerAdded` NEIGHBOURHOOD; THE OLD-BROWSER ONE DOES
+  NOT.** 29 of 48 samples inside a 59-byte window becomes **40 distinct addresses out of 48**, with
+  the largest single bucket being **JIT-compiled code** rather than any native address.
+- **SO "THE JIT BRANCH IS CLOSED, SIX OF FORTY-EIGHT" DOES NOT GENERALISE.** That was one reading of
+  one ramp, and this file recorded it as settling the fork. It settles the YOUNG population.
+  `VMSTACK`'s own third documented outcome — *"samples spread over hundreds of addresses would mean
+  this is not a tight loop"* — is the branch that fired here, and it is the branch nothing had seen.
+- **IT IS NOT A CONTRADICTION OF THE NAMING, AND THAT DISTINCTION MATTERS.**
+  `blink::RejectedPromises::HandlerAdded` is still named, from the binary, confirmed in source, and
+  still what the young-browser ramps spin in. What is retired is the generalisation. The 09-10
+  correction already said *"the loop is DRIVEN by JavaScript promise rejection, so RC's SPA is the
+  workload after all"* — a thread mostly in JIT with a wide native spread is what that looks like
+  from the other end, so the two readings are consistent and only the summary was too strong.
+- **AND IT IS FURTHER EVIDENCE THE SPIN IS A SYMPTOM.** The identical 2 MiB signature arrives under
+  two completely different main-thread profiles, so whatever allocates is upstream of both.
+  `HandlerAdded` scans and erases; it allocates nothing. That was already true and is now visible
+  from a second direction.
+- **AND "BROWSER AGE" IS THE LABEL, NOT THE ESTABLISHED VARIABLE.** The 17:53 ramp is now known to
+  be an **Okta trip** (`Stalled in: auto-login`), while 05:52 was a `restart-rc` replacement
+  ramping on a COLD browser loading RC's home page. So the same three points are equally consistent
+  with the split being **trip type** — cold page load versus Okta navigation — and age is simply
+  correlated with it. **Do not build on the age framing**; what is measured is that two ramps of one
+  kind spin in a tight native loop and one of another kind does not.
+- **n=3, AND ONLY ONE OLD-BROWSER RAMP HAS A STACK AT ALL** — `VMSTACK` reached the box on 09-09
+  evening, so the two earlier old-browser ramps (85 min, 125 min) predate it. **The correlation is
+  perfect and it is three points.** The cheap confirmation is the next old-browser ramp; nothing
+  needs building.
+
+**THREE THINGS RODE ALONG FREE.**
+- **A THIRD "MIDDLE" EVENT, and a big one.** 13,550 mapped regions / 27,100 MB, against a commit
+  limit of 47,870 and a baseline near 7,000 — so there was room for roughly **19,000** and it
+  stopped **~5,400 short of 2^14 with headroom to spare.** That is the wrinkle recorded hours
+  earlier ("a middle population that neither constraint explains") gaining its third member and its
+  clearest one: neither the 2^14 cap nor commit exhaustion accounts for this stop.
+  **AND "WRINKLE" UNDERSTATES IT — THE SPLIT IS 6 TO 5.** Of the eleven walks that carry `VMMAP2M`,
+  **six** land at 16,381-16,383 and **five** stop short (13,320 / 13,550 / 14,321 / 15,494 /
+  16,213), of which only the two lowest are attributable to commit exhaustion. So stopping below
+  the cap is nearly half of all observed ramps, not an exception to it, and any account of the
+  2^14 maximum has to explain why it binds only about half the time.
+- **THE BURST/LEAK DECOUPLING, SIXTH SIGHTING.** `distinct=78` and a busiest path of **6 lifetime
+  requests** — a completely quiet counter beside 27 GB of mappings. The two are independent in both
+  directions and this should stop being re-litigated.
+- **THE WALK'S SIGNATURE HOLDS, ELEVENTH TIME.** 13,550 regions across **13,550 allocation bases**,
+  `protect=0x4` on 13,548 of them, 64 sampled and **all anonymous**, with the control's file-backed
+  positive control (`SortDefault.nls`) present as ever — and `PAGEFILE allocatedMB=31,744` against
+  **`currentMB=73, peakMB=73`**, i.e. 31.7 GB charged and 73 MB ever written. Untouched mappings.
+- **THE LOOP WAS STALLED 150 s IN THE `auto-login` STEP — AND THAT DOES NOT ESTABLISH A LOGIN.**
+  The first reading of this event said no trip was running, inferred from a 56-minute hole in
+  `tab-close` events (16:59:17 → 17:55:12) that brackets the whole ramp. **That inference is
+  worthless either way**, because a trip that is KILLED emits no `tab-close` — a gap in that stream
+  means a trip that did not FINISH, never that there was no trip. The log says
+  `17:53:58 Stalled in: auto-login (150s in that step)` and `17:54:06 the previous sign-in attempt
+  was killed before it reached a verdict — refunded`.
+  - **BUT `mark('auto-login')` PRECEDES `maybeAutoLogin` IN THE LOOP** (`rc-keepwarm.mjs`, the
+    `mark` on the line above the call), so the breadcrumb names the step ENTERED and a stand-down
+    reads identically to a sign-in. **A 150 s stall there is equally consistent with the FEED CALL
+    inside `maybeAutoLogin` hanging, with no Okta navigation at all.** Read in source rather than
+    inferred from the log, after the first draft of this entry asserted an Okta trip outright.
+  - **SO WHAT RAMPED IS STILL NOT ATTRIBUTED**, and the breadcrumb cannot attribute it. What would:
+    a `tab-close` (absent, because it was killed), or the alloc trail naming which registered
+    renderer grew — `[resident]`, `[renewal]`, `[auto-login]` or `[warmup]`. **That is a line the
+    bail already prints and the log window has already rolled past.**
+- **AND NO HOLD WAS QUEUED, WHICH IS A REAL QUESTION AND NOT A DETAIL.** `rc_hold_requests` has
+  **zero rows touched in twelve hours**, and the restarted process said so itself at 17:54:23
+  (`auto-login stood down: no hold is queued`) and at 17:54:24 for the warm-up. So something
+  entered the `auto-login` step at **17:51:28** with nothing to sign in for — and the 150 s figure
+  rules out a stale breadcrumb left by the 16:58 forced warm-up, which would have reported ~3,000 s.
+  **BOTH READINGS OF THAT ARE WORTH KNOWING AND THEY ARE DIFFERENT FAULTS.** If it navigated, an
+  unattended Okta trip with no release in view is exactly what the one-attempt-per-release rationing
+  exists to bound, from an address that has eaten a twelve-hour block. If it hung in the feed call,
+  then `maybeAutoLogin` can park the whole resident loop for minutes on a network read — which is
+  the shape that starves the profile and loses an 08:00 cart.
+  **NO MECHANISM IS WRITTEN IN.** Candidates nobody has separated: a hold visible to the bot and
+  already deleted server-side, a warm-up whose window was still open from the deleted hold, a step
+  marked on a path that does not check the gate, or an unbounded feed read inside the stand-down. **`tail-log rc-keepwarm` has already rolled
+  past the lines before 17:53:58**, so this event cannot answer it; the next one can, and the
+  reading to take is the log line immediately BEFORE the stall.
+- **NO RAMP MEM-DUMP, AND THE "read the trip durations" RULE DOES NOT EXPLAIN IT EITHER.**
+  The ramp arm needs a **120 s**
+  stall on top of the family threshold; `MEM_DUMP_STALL_MS` is **90 s**. The breadcrumb puts the
+  stall at **150 s**, so it passed 90 s a full minute before the bail and **the dump's own trigger
+  should have been reached then.** There is no `mem-dump` with
+  `phase: ramp` anywhere in the window; the 17:57:17 one is a `baseline` on the replacement browser.
+  - **BOTH CONSTANTS CHECKED IN SOURCE, because the whole argument rests on them:**
+    `MEM_DUMP_STALL_MS = 90_000`, `RAMP_STALL_MS = 120_000`, `MEM_DUMP_RAMP_MB = 1500` against the
+    bail's `RAMP_MB_DEFAULT = 3000`. At a 150 s stall and 4,561 MB **both of the dump's conditions
+    were met a minute before the bail's**, and the trigger is called FIRST in the timer,
+    unconditionally on stall. **Do NOT reach for lowering `MEM_DUMP_STALL_MS`** — 90 s was crossed.
+  - **AND THE SILENCE NARROWS IT TO TWO PATHS, BOTH READ IN SOURCE.** `maybeMemoryDump` opens with
+    `if (memDump.inFlight || !heapProbe) return;` — **a null `heapProbe` returns silently**, and
+    `attachHeapProbe` returns `null` on any failure with no log, so one failed CDP attach at launch
+    disables the dump for that browser's whole life with nothing said. The other is
+    `takeMemoryDump(...).then(...).catch(() => {})`: **a THROW is swallowed with no line and the
+    phase stays spent**, sitting directly beneath the comment insisting a refusal must be
+    *"NAMED, ALWAYS … a silence would merge them"*. That comment governs the `!r.ok` branch and
+    not the throw — the house shape, inside the fix written for its previous instance.
+  - **THE DISCRIMINATOR IS ALREADY IN THE LOG AND COSTS NOTHING.** `alloc trail: resident renderer
+    armed` is printed only when `heapProbe` is non-null, so its presence beside a dumpless ramp
+    rules the first path out and leaves the throw. **On this event that line is in the rolled
+    portion**, which is why the reading was lost — the new process printed it at 17:54:07, and that
+    is a different browser.
+  - **AND IT IS THE FIFTH CONSECUTIVE RAMP WITH NO ATTRIBUTION.** The only stored `ramp` dump
+    remains the VOID one from 09-07. **The keep-warm log is where the answer is** — a
+    `* holding the bail up to Ns` line says the grace was granted, and one of the two named
+    expiries says what became of it. `tail-log rc-keepwarm` rolls at 16,000 characters, so it is
+    worth reading BEFORE the next ramp pushes it out.
+
 ##### THE REJECTION COUNTER WOULD BE BLIND — PREDICTED BEFORE BUILDING IT (2026-09-10)
 The obvious successor to naming `HandlerAdded` is to count the page's rejection traffic on the
 resident page, in the shape `rc-request-count.mjs` already works (attach where `residentPage = page`,
@@ -6804,6 +6950,78 @@ out at 2^14 with no Chromium cap involved anywhere.
   with `VMMAP2M regions` on all ten walks. The walk has never had a second witness before.
 - **NO RAMP, NO BOX, NO NEW INSTRUMENT.** The hypothesis was raised and killed inside one query
   against stored rows, which is the shape Route A is supposed to have.
+
+##### THE 2 MiB UNIT NOW IDENTIFIES NOTHING — TWO OF THREE CANDIDATES DEAD, AND 16,384 IS NOT A CHROMIUM CONSTANT (2026-09-10)
+The record's next step for a rampless day is *"which subsystem maps 2 MiB sections and frees them
+from a task — and that is answered by reading source, not by another counter."* Taken, with a
+capability no earlier session had: `chromium.googlesource.com`, `source.chromium.org` and
+`searchfox` are all 000 at the proxy, and `mcp__github__search_code` **cannot enumerate** (its own
+control: `"2 * 1024 * 1024"` returned 3 files for a pattern that occurs everywhere). A **sparse
+partial clone** — `--depth 1 --filter=blob:none --sparse`, tip `ca4eadea`, **91 MB of git and 151 MB
+checked out** — makes an exhaustive `grep` possible instead. Searched: `base/memory`, `mojo`,
+`gpu/command_buffer`, `components/discardable_memory`, `services/network`, `content/browser/loader`,
+`third_party/blink/renderer/platform/loader`, `third_party/blink/renderer/core/fetch`.
+
+- **EXACTLY TWO 2 MiB CONSTANTS EXIST IN ALL OF IT**, and one is already refuted:
+
+  | candidate | 2 MiB? | status |
+  |---|---|---|
+  | `gpu::SharedMemoryLimits::mapped_memory_chunk_size` | yes, 2,097,152 exactly | **the proposed mechanism is REFUTED** — the GPU-off trial ramped on trial one |
+  | `base::DiscardableSharedMemory` segments | **NO — 4 MiB** on 64-bit Windows | out on size, now read in source |
+  | `network::kLargerDataPipeAllocationSize` | yes, 2,097,152 exactly | the only survivor on size |
+
+- **THE GPU ROW IS THE RECORD'S OWN WORDING AND NOT A DEGREE STRONGER.** What the trial refutes is
+  `MappedMemoryManager` serving RC's WebGL map — the mechanism as proposed, and the one the 2 MiB
+  identity was matched against. **`--disable-gpu` leaves a GPU process running, so a DIFFERENT
+  command-buffer client is not excluded by arithmetic alone**, and the baseline dump's own
+  `gpu/command_buffer_memory — 2 MB across 2 mappings` shows the allocator is present and small in
+  a healthy renderer. It is out as an explanation, not struck from the codebase.
+- **DISCARDABLE IS OUT BY SOURCE, NOT BY A SNIPPET.** `GetDefaultAllocationSize()` returns
+  `4 * kOneMegabyteInBytes` on every branch except 32-bit and low-end Fuchsia; the 1 MiB
+  low-end value is unreachable on this box. The record already weakened it "on the same
+  evidence"; it is now closed rather than weakened.
+- **AND THE COUNT IS NOT A CHROMIUM CONSTANT.** `16384` / `1 << 14` / `0x4000` across all of
+  those trees returns **nothing that governs a mapping**. Every hit, in full: a memory
+  ALIGNMENT (`kProtectedMemoryAlignment`), two BIT FLAGS (`SHARED_IMAGE_USAGE_SCANOUT_DCOMP_SURFACE`,
+  `kUniform4ui`), a D3D texture DIMENSION, two byte sizes (`kMaxPendingDatagramBytes` and
+  `max_transfer_buffer_size`, both 16 **MiB**, caught by the same pattern), a test fixture, and
+  `gpu/command_buffer/service/client_service_map.h`'s `kMaxFlatArraySize = 0x4000` — the
+  client↔service **id map**, service-side, not a renderer allocator. Separately, `kMax… = <number>`
+  across `mojo/` and `base/memory/` yields nothing above `kMaxStoredBuffers = 32` and
+  `kMaxAttachedHandles = 256`.
+- **SO ROUTE A's CRITERION 4 WILL NOT BE SATISFIED BY FINDING A `kMax… = 16384`.** Either the cap
+  lives outside the allocator families, or — the reading this session prefers and does not claim —
+  **16,384 is not a cap in Chromium at all**, and the number comes from the box rather than the
+  binary.
+- **THE SURVIVOR CANNOT SUPPLY THE COUNT, WHICH IS THE BIND.** A data pipe's ring buffer is one
+  shared region per in-flight response body, mapped in the renderer, anonymous, READWRITE — every
+  column of the walk — and `kMaxNumConsumedBytesInTask`'s own comment establishes the drain is a
+  **posted task** (*"When there are more bytes in the data pipe, they will be consumed in following
+  tasks"*), which is exactly the "anything whose release runs as a posted task accumulates here"
+  shape a wedged main thread produces. **And a full Okta trip is 112-239 responses.** Two orders of
+  magnitude short of 16,384, on an event (09-07 20:42) that carried the identical 32 GiB.
+  **THE 09-10 17:53 RAMP MAKES THAT ARITHMETIC MUCH SHARPER.** Its counter stored 78 distinct paths
+  with a busiest of **6 lifetime requests**, so the resident page made **at most ~468 requests in
+  the browser's whole 57.5-minute life** — a bound, not a total, since only the top ten rows are
+  stored. Even adding the uncounted tab trips (two renewals at ~130 responses each) puts the
+  renderer's whole traffic near 700 against **13,550 sections**. A pipe per response body cannot be
+  it, and this is the first event where the bound comes from the same scan as the section count
+  rather than from a different day.
+- **THEREFORE THE HONEST HEADLINE IS THE NEGATIVE: the 2 MiB unit is no longer evidence for
+  anything.** Of three exact-size matches, one is refuted by experiment, one by source, and the
+  third cannot produce the count. **This is the file's own rule paying out — "an exact match on a
+  round power of two is not a fingerprint" — and it should now be read as retiring the size as a
+  search key rather than as narrowing the field to the data pipe.** Do not promote the data pipe on
+  the strength of being last man standing; being last in a field of three that were all selected
+  BY the 2 MiB coincidence is not evidence.
+- **WHAT THIS DOES NOT TOUCH.** The spin (`blink::RejectedPromises::HandlerAdded`) is unaffected —
+  it is named, from the binary, and confirmed in source. So is the microtask-queue reading. What is
+  retired is one search key, not a finding.
+- **THE CLONE IS CHEAP AND WORTH RE-MAKING.** 91 MB with `--filter=blob:none --sparse`, and blobs
+  arrive only for the paths checked out, so widening the search is `git sparse-checkout add`. **Do
+  NOT clone it whole** — and do not reach for GitHub code search, which cannot enumerate. This is
+  the first session able to grep Chromium exhaustively; the negative above is the first thing that
+  capability bought.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
