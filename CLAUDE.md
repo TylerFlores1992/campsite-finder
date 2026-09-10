@@ -9063,9 +9063,14 @@ label is American and which ships to the **United States storefront only**.
 > - **Disassemble the hex HERE** — `objdump -D -b binary -m i386:x86-64 -M intel` is in the
 >   container and verified working. The window starts 64 bytes early on purpose: x86 is
 >   variable-length, so try alignments until the instruction stream is sane.
-> - It also returns the **PDB GUID + age**, which is the symbol-server key for this exact build —
+> - ~~It also returns the **PDB GUID + age**, which is the symbol-server key for this exact build —
 >   the thing a later session WITH egress needs, obtained now so the answer does not wait on the
->   proxy twice.
+>   proxy twice.~~ **STALE TWICE OVER, AND EGRESS WAS NEVER THE BLOCKER.** The GUID did not
+>   survive the trip — `scrub()` redacted it as `[hex]`, a 32-character hex run being
+>   indistinguishable from a token — and the symbol server, which IS reachable, **does not hold
+>   this build** (measured with a control; see directly below). So a later session with egress and
+>   the GUID in hand would still get `NoSuchKey`. Struck rather than deleted: read as current it
+>   promises that one missing field is all that stands between here and a function name.
 >
 > **`restart-rc` IS 2 FOR 2 AS A FORCING LEVER** (09-09 21:26 and this one), against a pooled 10%
 > base rate. n=2, so not a rate — but a forced restart makes a COLD browser loading RC's home
@@ -9089,6 +9094,58 @@ label is American and which ships to the **United States storefront only**.
 >   `builds/chromium/1228/chromium-win64.zip`, or add a **NAMED** read-only bot command dumping
 >   the bytes at RVA `0x180968b` from `chrome.dll` **ON DISK** — the shipped binary, not process
 >   memory, so it touches neither the `ReadProcessMemory` ban nor any session material.
+>
+> ##### THE SYMBOL SERVER ANSWERS, AND IT DOES NOT HAVE THIS BUILD (2026-09-10)
+>
+> The two routes above do not mention the one host that is reachable.
+> **`chromium-browser-symsrv.commondatastorage.googleapis.com` returns 200 at the proxy**, while
+> `msdl.microsoft.com`, `chromium.googlesource.com` and `source.chromium.org` are all **000**
+> alongside the four Playwright CDN hosts. So it is worth trying, it was tried, and the answer is
+> no: **our key 404s `NoSuchKey`.** The layout is
+> `chrome.dll/<TimeDateStamp %08X><SizeOfImage %x>/chrome.dll`, i.e. exactly the
+> `6A18CF41112d9000` that `code-bytes` already derived off the box — confirmed against real keys
+> in the bucket listing, so the 404 is not a malformed request.
+>
+> **IT IS A CONTROLLED NEGATIVE, WHICH IS THE ONLY KIND WORTH RECORDING.** A server that 404s
+> everything and a server that lacks this one build read identically without a control:
+> a key the listing says exists **range-fetches 206**, so fetching works; the bucket is **still
+> fed** (keys under the `6A` prefix modified 2026-05-10), so it is not an abandoned archive; and
+> it covers **our exact TimeDateStamp**.
+>
+> **THAT LAST ONE IS THE TRAP, AND IT IS A NEAR-MATCH RATHER THAN A MISMATCH.** `6A18CF41` is
+> present — three Chrome variants of it, and not one is ours:
+> ```
+> chrome.dll/6A18CF4111110000/chrome.dll     SizeOfImage 0x11110000
+> chrome.dll/6A18CF41e7e4000/chrome.dll                  0x0e7e4000
+> chrome.dll/6A18CF41fedf000/chrome.dll                  0x0fedf000
+> ours       6A18CF41112d9000                            0x112d9000   <- ABSENT
+> ```
+> **A different `SizeOfImage` is a different binary, so its PDB names different functions at the
+> same RVA.** Pulling `…11110000`'s symbols and reading `+0x18096c6` out of them returns a
+> confident function name **for the wrong image** — the "validated on the wrong platform" failure
+> this file has paid for three times, arriving as a 1.8 MB size difference behind a matching
+> timestamp instead of as an obvious mismatch. **Do not do it**, and do not read "our timestamp is
+> in the bucket" as "our build is in the bucket".
+>
+> **WHY it is absent is NOT established and does not need to be** — the likeliest reason is that
+> this bucket holds Google **Chrome** while the box runs Playwright's **Chromium**, which would
+> account for a same-second timestamp over a different image. Either way the symbolization route
+> is closed by measurement rather than by assumption, and the route that stayed open is the one
+> already taken: `code-bytes` off the shipped binary, disassembled by hand.
+>
+> **AND THE OTHER ROUTE IS REACHABLE, WHICH IS THE HALF WORTH ACTING ON.**
+> `chromium.googlesource.com` and `source.chromium.org` are 000, but **`raw.githubusercontent.com`
+> is 200** — controlled against a file in this repo, 200 with a real body, not a bare-root
+> redirect. So Chromium source is fetchable BY PATH through the GitHub mirror, and the remaining
+> lead this file already names — matching the disassembled fingerprint against real code — needs
+> no ramp, no box update and no symbols. **State it precisely or the search is for the wrong
+> struct:** the flag byte is on the ELEMENT (`elem+0x5c`), while the two non-zero checks are on
+> its POINTEE (`(*elem)+0x10` and `(*elem)+0x1c`), and the sampled comparison is
+> `**(elem+0x20)` against `*(*elem)`. `rsi` holds two containers — the scan reads its count at
+> `+0x24` and data at `+0x18`, the erase decrements `+0x14` and reads `+0x8`.
+> **NOT TAKEN HERE, DELIBERATELY.** It is a source-reading job, it reads a repository outside this
+> session's scope, and this file records three mechanisms guessed and each costing a session — so
+> it wants the owner's word, not an idle afternoon. What is recorded is only that the door opens.
 >
 > #### AND CI CAUGHT A REAL REGRESSION FROM THE EXTRACTION — THE ~28th INSTANCE
 >
