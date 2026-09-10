@@ -5889,7 +5889,13 @@ restart, not the ten the prediction budgeted for.
 21:23:58  restart-rc
 21:25  rc 2366  procs 8  pid 15284  commit 38596     <- new browser, ~35 GB commit in one tick
 peak 3913 MB, contained; 21:27 replaced, commit back to 7064
+21:26:52  request-counts  reason=bail:ramp  ageMs=165061   <- the RAMP arm, not a recycle
 ```
+- **THE BAIL CORROBORATES THE REPLACEMENT FINDING FROM A SECOND INSTRUMENT.** `ageMs=165061` puts
+  the browser at **165 seconds old** when the arm fired — dead centre in the 135-195s "young
+  browser" ramp population recorded above, measured by something that knows nothing about the
+  memory series. And "what ended it" is settled for this event rather than inferred: `bail:ramp`,
+  which is the question that has had three incompatible accounts in this file.
 - **ONE TRIAL IS NOT A RATE.** The measured base rate is 10% of replacements, so a first-try hit
   is luck as much as evidence. What it establishes is that the lever WORKS, not how often.
 - **AND IT COSTS NOTHING**: no test hold, no campsite, no password submission, no waiting on
