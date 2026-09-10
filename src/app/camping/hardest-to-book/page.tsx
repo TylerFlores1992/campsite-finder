@@ -102,7 +102,7 @@ export default async function HardestToBookPage() {
 
         <div className="mt-3 max-w-[70ch] space-y-3 text-ch-body leading-relaxed text-ch-ink-2">
           <p>
-            {`Some campgrounds are gone the moment their booking window opens. Refresh at the wrong second and a whole summer of Yosemite Valley is spoken for before you have finished typing. It is not a queue you can win by being organised — for these ${total > 0 ? total : ""} campgrounds, being early is not early enough.`}
+            {`Some campgrounds are gone the moment their booking window opens. Refresh at the wrong second and a whole summer of Yosemite Valley is spoken for before you have finished typing. It is not a queue you can win by being organized — for these ${total > 0 ? total : ""} campgrounds, being early is not early enough.`}
           </p>
           <p>
             {"What does work is being there when somebody gives one back. Cancellations happen constantly — plans change, weather turns, someone holds three weekends and keeps one — and the site drops back into the booking system with no announcement, often in the middle of the night. Nearly every one of them is taken within minutes by whoever happened to be looking."}

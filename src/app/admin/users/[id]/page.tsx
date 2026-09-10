@@ -74,7 +74,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
           <Row label="Last seen" value={fmtDateTime(user.last_seen_at)} hint="Last authenticated page load" />
           <Row label="Finished onboarding" value={fmtDate(user.onboarded_at)} />
           <Row label="Beta tester" value={user.is_beta ? 'yes' : 'no'} />
-          <Row label="Favourites" value={String(favorites)} />
+          <Row label="Favorites" value={String(favorites)} />
           <Row label="Push tokens" value={String(pushTokens)} hint="Devices registered for push" />
         </Panel>
 

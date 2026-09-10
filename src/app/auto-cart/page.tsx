@@ -199,12 +199,12 @@ export default function AutoCartHelpPage() {
               Minnesota, Missouri, Nevada, Ohio, Virginia and Wyoming alongside California —
               and{' '}<strong>only ReserveCalifornia gets holds</strong>. For the others your
               alert carries a direct booking link: tap it on your phone and finish there. We
-              would rather say so than offer a button we cannot honour.
+              would rather say so than offer a button we cannot honor.
             </li>
             <li>
               <strong>No standing setting on California, on purpose.</strong>{' '}A hold takes a
               real campsite off the market for everybody else watching it. That is not
-              something to authorise weeks ahead in a settings screen, so it is authorised one
+              something to authorize weeks ahead in a settings screen, so it is authorized one
               release at a time, by you, the night before.
             </li>
             <li>
