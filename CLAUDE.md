@@ -7407,6 +7407,168 @@ checked out** — makes an exhaustive `grep` possible instead. Searched: `base/m
   the first session able to grep Chromium exhaustively; the negative above is the first thing that
   capability bought.
 
+#### THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`, AND THE LEAK IS REPRODUCED (2026-09-11)
+
+Asked to run Route A — reason-then-fetch-by-path against Chromium source — and to probe everything
+that could produce a result. **The ceiling is named from source with exact arithmetic, the allocation
+family is proved, and the mechanism is REPRODUCED locally with two single-variable controls.** No
+ramp, no box update, no instrument was needed for any of it.
+
+**THE CONSTANT.** `base/memory/shared_memory_security_policy.cc`:
+```cpp
+// 32 GB of mappings ought to be enough for anybody.
+constexpr size_t kTotalMappedSizeLimit = 32ULL * 1024 * 1024 * 1024;   // 34,359,738,368
+...
+if (total_mapped_size >= kTotalMappedSizeLimit) { return false; }      // >=, not >
+```
+A per-process atomic budget on **total currently-mapped shared memory**, added to stop an attacker
+spraying the address space to defeat ASLR (its header cites Project Zero's *Virtually Unlimited
+Memory*). `34,359,738,368 / 2 MiB = 16,384 exactly`, and because the check is `>=` the mapping that
+would land on the limit is refused — so **the maximum reachable pure-2 MiB count is 16,383.**
+
+- **THE MEASURED POPULATION IS 16,381-16,383 AND NEVER ABOVE**, six capped walks. The 1-3 shortfall
+  is the renderer's OTHER budget-counted shared mappings: `AlignWithPageSize` rounds to the Windows
+  **allocation granularity (64 KiB)**, so a handful of small shared mappings costs 64 KiB each, and
+  the arithmetic puts the residual at **0-6 MiB** across the six. Exactly the right magnitude and
+  exactly the right direction. Nothing else in the widened checkout is 32 GiB — one grep, one hit.
+- **IT IS COMMIT-INDEPENDENT**, which is why nine of twelve events stopped with 1,091-2,808 sections
+  of headroom. **And it answers the "middle population" wrinkle more simply than that entry does:**
+  a cap is a CEILING, not a target — an event whose driver ran out of work stops below it. Labelled
+  a candidate, but it needs no second constraint.
+- **THE REFUSAL IS SILENT.** `MapAt` returns `std::nullopt` — no log, no CHECK, no crash. That is why
+  nothing anywhere reports hitting it.
+
+**SO THE SECTIONS ARE `base::SharedMemoryMapping`s, AND THAT IS THE STRONGER FINGERPRINT.** Only two
+callers charge this budget (`PlatformSharedMemoryRegion::MapAt` and `ChannelLinux`, which is Linux
+only), so anything stopping at exactly this number went through `base`'s shared memory. **A raw
+`MapViewOfFile` would not stop there at all** — the stopping point IS the evidence of the code path.
+Note how much stronger that is than the 2 MiB coincidence this file spent weeks on: 2 MiB is a
+common granularity, whereas 32 GiB with a `>=` producing a maximum of 16,383, matched to within
+0.01% on six independent walks, is one constant in one function.
+
+**AND NO PEER HOLDS THEM — the walk's own `CHROME` lines said so and nobody had read them.**
+Every process of the 09-11 05:28 generation:
+```
+pid=12984 browser     privateMB=240   pagedPoolKB=1167   handles=1224
+pid=4884  gpu-process privateMB=110   pagedPoolKB=1256   handles=832
+pid=8976  utility     privateMB=29    pagedPoolKB=991    handles=391
+pid=9180  renderer    privateMB=76    pagedPoolKB=798    handles=401
+pid=14676 renderer    privateMB=2408  pagedPoolKB=58731  handles=14721   <- TARGET
+```
+Excess paged pool `57,953 KB / 14,433 regions = 4.015 KB` — the prototype-PTE cost of a 2 MiB
+section — so **one section, one handle, one mapping, in ONE process.** That eliminates every
+candidate needing a peer: **ipcz `NodeLinkMemory` expansion is out** (`RequestBlockCapacity` shares
+each new buffer with the remote node, which maps it — and it is otherwise a good fit, since
+`8 blocks x 256 KiB` rounded to `kBlockAllocatorPageSize` is exactly 2 MiB); **discardable is out**
+(the browser's manager retains every segment); **GPU transfer is out twice over.**
+
+**THE SIZE GREP IS CLEAN, WHICH IS ITSELF THE LESSON.** Across `base mojo gpu components content
+services third_party/blink third_party/ipcz media cc skia ipc`, the only fixed 2 MiB SIZE constants are
+`mapped_memory_chunk_size` (refuted by the GPU-off trial), `kLargerDataPipeAllocationSize`, and
+ipcz's soft cap — which is not a buffer size. **So a 2 MiB allocation is either one of those or
+COMPUTED, and a size grep is blind to computed sizes.** ipcz is the worked example.
+
+##### REPRODUCED LOCALLY, WITH CONTROLS — a wedged main thread plus undrained responses
+**`scripts/leak-repro.mjs`** drives the container's own Chromium and counts 2 MiB shared mappings by
+reading **`/proc/<pid>/maps` from OUTSIDE the process** — the one property every CDP instrument
+lacks, and the reason three of them got silence. The cap constant is identical on Linux.
+
+| candidate | 2 MiB shared mappings in the renderer |
+|---|---|
+| idle control | **0** |
+| `promise-spin` — the recorded microtask wedge, no fetches | **0** |
+| `fetch-fail` — tight fetch loop, connection refused | **0** |
+| `fetch-ok` — fetch and drain the body | **0-1** |
+| `fetch-nodrain` — fetch, retain the Response, never read the body | 13 -> 31, climbing |
+| **`wedge-and-fetch` — microtask loop that issues fetches and never yields to the task queue** | **12 -> 800 in 30 s, linear** |
+
+and pushed harder, with the per-process breakdown taken live:
+```
+pid=2738 renderer 2MiB_shared=3208 (6.3 GiB)   <- the wedged renderer
+pid=2696 utility  2MiB_shared=6                <- the network service, which CREATES them
+browser processes                    0
+```
+**That is the production peer asymmetry reproduced exactly** — 14,721 handles in the renderer against
+1,224 in the browser and 180-391 in the utilities.
+
+- **BOTH SINGLE-VARIABLE CONTROLS ARE FLAT.** Wedging alone does nothing; fetching alone does
+  nothing. **Only the two together.** That is what makes this a controlled comparison rather than an
+  observation, and it is the first time this leak has been reproduced at all.
+- **THE CAP ITSELF WAS NOT REACHED LOCALLY.** The run was stopped at 3,208 because the container was
+  at 14.3 GB of 16 GB — the retained `Response` objects, not the mappings. **So the 16,383 plateau is
+  proved from source and matched against six production walks, and is NOT directly observed here.**
+  Say it that way.
+- **AND IT IS A DIFFERENT BUILD ON A DIFFERENT PLATFORM — say that too.** The container runs
+  Chromium **141.0.7390.37 on Linux**; the box runs **149.0.7827.55 on Windows**, where the
+  sections are pagefile-backed rather than memfd. **That is the exact shape that burned the native
+  sampler twice** (validated in the dev container, absent in production), so what the repro
+  establishes is the MECHANISM and not the production event. It transfers on the two things that
+  matter — `kTotalMappedSizeLimit` and `kLargerDataPipeAllocationSize` are both cross-platform and
+  both long-standing — and the production event is still carried by the cap arithmetic, the peer
+  handle counts and the source chain, not by this run.
+
+##### THE SOURCE CHAIN, READ RATHER THAN INFERRED
+1. `services/network/url_loader.cc:1221`, inside **`ContinueOnResponseStarted`** — a data pipe of
+   `GetDataPipeDefaultAllocationSize(kLargerSizeIfPossible)` = **2 MiB**, created **when the response
+   starts**, in the network service. **Not at request time** — so an unanswered request costs
+   nothing, which is why the 09-08 event's 69,060 answer-less asks produced no pipes and why the
+   burst/leak decoupling is real.
+2. `mojo/core/ipcz_driver/data_pipe.cc:155` — `CreatePair` creates ONE region and **maps BOTH ends in
+   the creating process**, then one end is sent away and its mapping goes with it. That is why the
+   network service holds only its handful of in-flight producers.
+3. `DataPipe::Deserialize` — the receiver **maps on arrival, on the IO thread**, before the main
+   thread ever sees the message. **So a wedged main thread does not prevent the mapping; it only
+   prevents the release.**
+4. `mojo_url_loader_client.cc` — `DeferredOnReceiveResponse` holds the consumer handle in an
+   **unbounded** `deferred_messages_` vector. There is no back-pressure between the pipe arriving and
+   the main thread running.
+5. `kLimitForRendererSideResourceScheduler = 1024` — a renderer may have 1,024 requests outstanding,
+   so the rate is structurally available.
+6. **The size is compile-time**, not a Finch flag: `GetDataPipeDefaultAllocationSize` only drops to
+   512 KiB on ChromeOS and 32-bit. **There is no runtime lever to shrink it.**
+
+##### WHAT THIS DOES NOT ESTABLISH — the production count, and it is an INSTRUMENT gap
+One pipe per response means ~14,433 answered responses in that renderer inside the burst. The
+resident page's counter read **20 lifetime requests** over the 09-11 browser's 611 minutes, and a
+full Okta trip traces 112-239 responses. **The arithmetic does not close.**
+- **`requestCounter.attach(page)` is on the RESIDENT page alone.** Subframes ride the same event, but
+  **dedicated workers, service workers and the throwaway tabs do not** — and `withNetworkTrace` is
+  equally page-scoped. So both counters are blind to most of what the renderer does.
+- **That is a named gap, not a refutation of the mechanism**, and it is the next thing worth closing.
+  **Do not read "20 requests" as "20 responses in that renderer".**
+- **AND THE RATE IS NOT HYPOTHETICAL — it is in `request-counts` already.** The burst-carrying
+  ramps read `recent` of **45,369 and 49,356 in the last 120 s** on
+  `rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates` — i.e. about
+  **380-410 asks per second on the resident page**, which is the ~425/s the leak needs. So the
+  driver exists and is measured; what is not established is how many of those are ANSWERED.
+  **Their `statuses` map is `{}`**, which the readout glosses as nothing coming back — and an
+  empty status map over 78,171 asks is as much a question about the instrument as about RC.
+- **THE QUIET RAMPS ARE THE REAL COUNTER-EXAMPLE, NOT THE BUSY ONES.** 09-11 05:28 (79 distinct,
+  top path 20 lifetime) and 09-10 17:53 (78 distinct, top 6) ramped with no burst at all. Those
+  are where the page-scoped blind spot has to be doing the work, and it is the one place this
+  account is still carried by an instrument gap rather than by a reading.
+- **AND THE GAP HAS A ONE-LINE FIX, CHECKED IN PLAYWRIGHT'S OWN TYPES RATHER THAN ASSUMED.**
+  `request.serviceWorker()` and *"Requests originated in a Service Worker do not have a frame"*
+  say what the scoping is: **service-worker requests are reported on the CONTEXT, not the PAGE**,
+  and `page.on('request')` is frame-scoped. So moving `requestCounter.attach()` from
+  `page.on('request')` to **`context.on('request')`** closes the service-worker gap AND the
+  throwaway-tab gap at once, because a context event covers every page in it. Subframes already
+  ride the page event, as that module's header records. **Dedicated workers are NOT settled** —
+  Playwright's `Worker` class has no request event either way — so do not claim that half.
+
+##### WHAT IT CHANGES, AND WHAT TO STOP DOING
+- **The damage is hard-capped by Chromium at 32 GiB of commit**, known rather than hoped. The box's
+  ~47 GB peak is ~7 GB baseline plus the cap plus slack. The sections are **never touched** (working
+  set tracks private bytes, and the pagefile in use is 73 MB against 31.7 GB charged), which is
+  exactly why the RAM arm has sat out fifteen-plus ramps: **it watches the one resource that is not
+  running out.**
+- **STOP CITING "the sections are NOT base shared memory".** That verdict came from the 09-07 VOID
+  dump of a healthy REPLACEMENT browser; all four ramp dumps are `target-silent`, so `shared_memory`
+  has never been read for a ramping renderer. The cap proves it IS base shared memory.
+- **The fix is not ours to make.** No flag shrinks the pipe, the drain is a posted task, and the
+  wedge is RC's own promise loop. **The containment we already have is the remedy** — and it is now
+  a bounded problem rather than an open-ended one.
+
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
 - **rec.gov CARTING: MARGINAL, AND NOT SIGNIFICANT AFTER CORRECTION.** 3 of 9 cart episodes fall
@@ -10202,6 +10364,55 @@ label is American and which ships to the **United States storefront only**.
 
 ## Open / next session
 
+> ### 2026-09-11 — THE LEAK IS EXPLAINED AND REPRODUCED. STOP HUNTING THE ALLOCATOR.
+>
+> **Read `CLAUDE.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`" before doing
+> anything memory-related. Every open leak question above it is either answered or superseded.**
+>
+> **THREE THINGS ARE NOW PROVED, and none of them needed a ramp, a box update or an instrument.**
+> 1. **The 32 GiB ceiling is `base::SharedMemorySecurityPolicy::kTotalMappedSizeLimit`** — a
+>    per-process budget on total mapped shared memory, `>=` so the maximum pure-2 MiB count is
+>    **16,383**, against a measured 16,381-16,383 on six walks with the 1-3 residual explained to
+>    within 0-6 MiB. One grep, one hit in the whole checkout.
+> 2. **Therefore the sections are `base::SharedMemoryMapping`s** — only two callers charge that
+>    budget, so stopping at exactly that number IS the fingerprint of the code path. Far stronger
+>    than the 2 MiB coincidence, which this file already retired as a search key.
+> 3. **No peer process holds them** — the walk's own `CHROME` lines, which nobody had read:
+>    14,721 handles in the target renderer, **1,224 in the browser**, 180-832 everywhere else,
+>    and 4.015 KB of paged pool per section. That eliminates ipcz, discardable and the GPU path.
+>
+> **AND IT IS REPRODUCED, WITH BOTH CONTROLS FLAT.** `node scripts/leak-repro.mjs wedge-and-fetch
+> 30` — a microtask loop that issues fetches and never yields to the task queue — climbs 12 → 800
+> 2 MiB shared mappings in thirty seconds, with the network service at **6** and the browser at
+> **0**, which is the production peer asymmetry exactly. Wedging alone: **0**. Fetching and
+> draining: **0**. Only the two together. **First reproduction this leak has ever had.**
+>
+> **THE CHAIN, READ IN SOURCE:** `URLLoader::ContinueOnResponseStarted` makes a 2 MiB pipe per
+> RESPONSE (not per request — which is why 69,060 answer-less asks cost nothing and why the
+> burst/leak decoupling is real); `DataPipe::Deserialize` maps the consumer **on the IO thread**
+> the moment it arrives; the drain is a **posted task**. So a wedged main thread cannot stop the
+> mapping, only the release — and `deferred_messages_` has no bound.
+>
+> **WHAT IS STILL OPEN, AND IT IS AN INSTRUMENT GAP RATHER THAN A DOUBT.** One pipe per response
+> needs ~14,433 responses in that renderer inside the burst; the resident page's counter read
+> **20 lifetime requests**. `requestCounter.attach(page)` is on the RESIDENT page alone and
+> `withNetworkTrace` is equally page-scoped, so **dedicated workers, service workers and the
+> throwaway tabs are invisible to both**. Closing that is the next cheap thing. **Do not read
+> "20 requests" as "20 responses in that renderer."**
+>
+> **THINGS TO STOP DOING.** Stop hunting a 2 MiB constant (the size grep is clean; ipcz proves a
+> 2 MiB allocation can be COMPUTED). Stop citing *"the sections are NOT base shared memory"* —
+> that came from the 09-07 VOID dump of a healthy replacement browser, and all four ramp dumps
+> are `target-silent`. Stop spending ramps on the memory dump: a wedged renderer contributes zero
+> allocator dumps at every level, measured off-box.
+>
+> **AND THERE IS NO FIX ON OUR SIDE, WHICH IS WORTH SAYING PLAINLY.** The pipe size is
+> compile-time (512 KiB only on ChromeOS and 32-bit — no Finch flag), the drain is Chromium's,
+> and the wedge is RC's own promise loop. **What changed is that the damage is now known to be
+> hard-capped by Chromium at 32 GiB of commit, in memory that is never touched** — which is
+> exactly why the RAM arm has sat out fifteen-plus ramps: it watches the one resource that is
+> not running out. The containment already shipped is the remedy; this was an open-ended risk
+> and is now a bounded one.
 > ### 2026-09-10 — THE TRIAL RAN AND THE COMMAND-BUFFER CANDIDATE IS REFUTED
 >
 > **Read `CLAUDE.md` → "AND IT RAMPED ON TRIAL ONE" before touching anything GPU-related. The

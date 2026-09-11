@@ -33,11 +33,11 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — 2026-09-11 12:00 UTC
+## 1. State — 2026-09-11 (leak session)
 
 | | |
 |---|---|
-| master | `a68a6d2` (#332) — **verify against `origin/master`, this line ages** |
+| master | `39db718` (#333) — **verify against `origin/master`, this line ages** |
 | mini-PC | **`29555e0`** — it updated itself overnight in the quiet window, so the box is one commit behind master and the gap is **docs only**; no update is owed. Read it with `bot-ask git-status`, never `autocart.bot_version`. |
 | last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
 | **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
@@ -67,260 +67,76 @@ was in flight first. Full entry in CLAUDE.md.
 
 ---
 
-## 2. The leak — where it actually stands
+## 2. The leak — SOLVED IN OUTLINE, 2026-09-11. Read this before touching anything memory-related.
 
-**Nothing is assigned. There is one lead and it needs your word before it is taken.**
+**`CLAUDE.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`, AND THE LEAK IS
+REPRODUCED" is the full account.** Everything in this section is a pointer to it.
 
-**ESTABLISHED, and none of it needs re-deriving:**
+**PROVED, none of it needing a ramp, a box update or a new instrument:**
 
-- The ramping renderer maps **~16,384 regions of 2 MiB = 32 GiB exactly**, one allocation base
-  each, all anonymous, all READWRITE, pagefile-backed and largely untouched.
-- **THE 2^14 CAP IS REAL AND SEPARABLE FROM THE COMMIT LIMIT** (settled 2026-09-10). For the
-  walks that reach it, the headroom the burst actually had leaves room for **1,091-2,808 MORE
-  sections** and it stops at 16,384 ± 3 anyway — so the count is not an artifact of when the scan
-  fired. **"The lower readings are consistent with catching a fill in progress" is WITHDRAWN for
-  the two LOWEST**, which are commit-limited: for those, the count is a FLOOR on what the
-  allocator wanted rather than a sample of its progress.
-- **BUT IT DOES NOT BIND EVERY TIME, AND SAYING "the ones that fell short are exactly the
-  commit-limited ones" OVER-CORRECTS.** Of the eleven walks carrying `VMMAP2M`, **six land at the
-  cap and five stop short** (13,320 / 13,550 / 14,321 / 15,494 / 16,213), and **only the two
-  lowest are commit-limited** — the 15,494 event is labelled `CAP (1,344 spare)` in that same
-  table while stopping 885 short, and 16,213 stopped 171 short with headroom. **A middle
-  population exists that neither constraint explains**, it is nearly half of all observed ramps,
-  and nothing settles it. **READ THE COLUMN LABEL BEFORE QUOTING ANY OF THESE NUMBERS**: the
-  16,385-16,387 figures are the HISTOGRAM (`VMHIST d`), the 16,381-16,383 ones are the mapped
-  population (`VMMAP2M`), and they are four apart. Criterion 4 in §5 carries the same split —
-  **if you change one, change both**; they disagreed inside this file for a day.
-- **THE WALK-TIME "a few hundred MB from the commit limit" IS THE AFTERMATH, NOT THE STOP.** The
-  walk fires ~77 s late and the private-byte climb eats the headroom in between. The sequence is
-  three acts: a <=34 s burst of 16,384 sections, then ~2 minutes of private climb at
-  450-900 MB/min that walks the box to the edge, then the bail.
-- **DO NOT enlarge the pagefile.** On this evidence that buys a bigger burst up to 32 GiB and
-  nothing else. And note the real danger is not the peak: it is that the box is walked to within
-  a few hundred MB of its commit limit, which is how `supervise.ps1` could not spawn on 08-12.
-- **THE 32 GiB ARRIVES IN A BURST OF <=34 SECONDS** (2026-09-10), measured twice at sub-minute
-  resolution off the `bot-keepalive` forced samples: commit goes +34,766 MB in 33 s and +29,001 MB
-  in 34 s, while `rc_mb` is still at 1,688-1,924 MB. **The mapping and the private-byte climb are
-  two different curves and every instrument so far has watched the second one.**
-  **AND ONE HAS NOW WATCHED THE FIRST (2026-09-10 19:17 UTC):** the commit arm fired *during* the
-  burst and the walk found **32,774 MB across 16,385 regions, at the cap, with private bytes at
-  1,843 MB.** So the mapping completes — and the 2^14 maximum is reached — **before a single one of
-  those pages is touched**; the climb is only the touching. The paged-pool cross-check holds there
-  too (66,564 KB / 16,382 = 4.06 KB, handles 17,827). At 2 MiB a section
-  that is **at least** ~482 sections/second — **a LOWER bound, because 33-34 s is the gap between
-  the two samples that bracket the step, not a measured duration.** So do not divide it out and
-  reason about pacing: 2.07 ms a section is an upper bound, and a plain syscall loop finishing in
-  two seconds fits the same data. It is not one-per-request and not one-per-frame. **So the question is
-  "what tries to allocate 32 GiB of shared memory in a burst, in 2 MiB units, stopping at exactly
-  16,384", not "what leaks 2 MiB at a time".**
-- **THE RAMP SCAN NOW FIRES ON COMMIT AS WELL AS ON `rcMb`, AND IT IS LIVE ON THE BOX** (#325,
-  `RAMP_SCAN_COMMIT_MB = 9000`). The old trigger read *private bytes*, which is the second curve —
-  backtested against every stored burst it fired **60-162 s late on 11 of 19 and never early**, i.e.
-  it was watching the aftermath by construction. **A second trigger, not a replacement**: `rcMb`
-  still fires alone, and the readout names which one did (`trigger rc` / `trigger commit` /
-  `trigger both`). **Nothing has exercised it on a real burst yet** — the first natural ramp does.
-  A `ramp-scan` row whose `trigger` is `commitUsedMb` with `rcMb` still in the hundreds is the
-  reading that says it worked.
-- **The mapping is essentially UNTOUCHED** — working set 2,965 MB against private 2,979 MB, so
-  26.7 GB of `commit/mapped` is barely resident. It also carries **~1 retained handle** and
-  **~4.0 KB of paged pool** per section (deltas against the same scan's own control), so the owner
-  holds the region object, not just the view, and these are ~16k distinct kernel section objects.
-- Its **main thread spins at 100% of a core** while a control renderer in the same scan burns 0 ms
-  — which is why three instruments on three different CDP calls all got silence. CDP is serviced
-  on that thread.
-- **"Spinning" is precisely "the microtask queue never empties"** (2026-09-10). `HandlerAdded` *is*
-  being called, so promises are settling and microtasks are draining — while **posted tasks never
-  run**. The event loop never advances to the next task. That is the mechanism behind every silent
-  instrument, and behind anything whose release path is a posted task.
-- **VMSTACK put the loop in native code**, 42 of 48 samples inside `chrome.dll` — which
-  distinguishes native from JIT code, and **not** what drives it. It is `HandlerAdded`, driven by
-  the page's promise rejections (below).
-- The **RAM arm has not fired since August** — 15+ consecutive ramps, because untouched commit
-  never lowers free RAM, so it watches the one resource that is not running out. (It *did* fire,
-  three times on 08-18/19, with its own `RUNAWAY` line; "never fired" is wrong and gets quoted.)
-  What ends a ramp now is `bail:ramp`, 3-35 s after the scan. Containment is holding at
-  **3.4-4.6 GB** against 8-9 GB untreated.
+- **The ceiling is `base::SharedMemorySecurityPolicy::kTotalMappedSizeLimit`** —
+  `32ULL * 1024 * 1024 * 1024`, a per-process atomic budget on total *mapped* shared memory,
+  added to stop address-space spraying. `32 GiB / 2 MiB = 16,384` and the check is `>=`, so the
+  **maximum pure-2 MiB count is 16,383**, against a measured **16,381-16,383** on six walks — the
+  1-3 residual being the renderer's other budget-counted shared mappings (0-6 MiB, the right
+  magnitude and the right direction). One grep over the whole checkout, one hit.
+- **So the sections are `base::SharedMemoryMapping`s.** Only two callers charge that budget, so
+  **stopping at exactly that number is the fingerprint of the code path** — much stronger evidence
+  than the 2 MiB size, which this repo already retired as a search key.
+- **No peer process holds them.** The walk's own `CHROME` lines, never read until now: 14,721
+  handles in the target renderer against **1,224 in the browser** and 180-832 in every other
+  process, with 4.015 KB of paged pool per section. **ipcz `NodeLinkMemory`, discardable memory
+  and the GPU transfer path are all eliminated by that alone**, because each needs a peer to map.
+- **The "middle population" wants no second constraint.** A cap is a ceiling, not a target: an
+  event whose driver ran out of work stops below it. (Labelled a candidate; it needs nothing.)
 
-**REFUTED — do not re-run these:**
+**REPRODUCED, with both single-variable controls flat** — `node scripts/leak-repro.mjs`:
 
-- **The command buffer / `MappedMemoryManager`.** The GPU-off trial ramped on trial one with the
-  identical 32 GiB signature and a GPU process flat at 20 MB. One counterexample refutes; it came
-  with the whole walk attached. The 2 MiB match was a coincidence — 2 MiB is a very common
-  granularity.
-  **AND THE BASELINE 2 MiB SECTION HAS NOW BEEN IDENTIFIED AS `gpu/mapped_memory`, WHICH CLOSES
-  A SHORTCUT RATHER THAN REOPENING THE CANDIDATE** (2026-09-10). The dump cannot be read during a
-  ramp but succeeds on a healthy renderer in ~350 ms, so the tempting move is to read the owner
-  of a healthy renderer's 2 MiB section. Done: `2-4M count=1` and `gpu/mapped_memory 2MB count=1`
-  match exactly. **But the GPU-off trial's own baseline dump has no `2-4M` bucket and no `gpu`
-  root at all, and that browser still ramped to 16,385 regions** — so the baseline section and
-  the ramp's sections are different things sharing a size, and the healthy renderer cannot
-  identify the ramp's allocator.
-- **Symbols.** The one reachable symbol server 404s our exact key, controlled three ways. Its
-  near-neighbours share our TimeDateStamp with a different `SizeOfImage`, so borrowing one would
-  name the wrong function confidently.
-- **A rejection counter on the resident page** (2026-09-10, refuted *before* building it). The DOM
-  `unhandledrejection` event is dispatched from `ProcessQueueNow`, which `ProcessQueue()` **posts
-  as a task** — so it, and `page.on('pageerror')`, go silent during exactly the event they would be
-  built for. Predicted reading ~0.
-- **`RejectedPromises` as the memory.** `reported_as_errors_` is capped at 1,000
-  (`kMaxReportedHandlersPendingResolution`), so it cannot grow without limit — consistent with the
-  heap trail at 8-11 MB flat.
+| candidate | 2 MiB shared mappings in the renderer |
+|---|---|
+| idle, and the pure microtask wedge | **0** |
+| fetch with no response (connection refused) | **0** |
+| fetch and drain the body | **0-1** |
+| **`wedge-and-fetch`** — a microtask loop issuing fetches, never yielding to the task queue | **12 → 800 in 30 s, linear** |
 
-**THE SPINNING FUNCTION IS NAMED (2026-09-10):** `blink::RejectedPromises::HandlerAdded`,
-`third_party/blink/renderer/bindings/core/v8/rejected_promises.cc`, line 222. Confirmed four ways —
-the `FROM_HERE` file and function strings and the line number are **in the binary**, and the source
-matches the disassembly with nothing left over. Full entry in `CLAUDE.md`; do not re-derive it.
+and pushed harder, live: renderer **3,208** (6.3 GiB), network service **6**, browser **0** —
+**the production peer asymmetry, exactly.** It reads `/proc/<pid>/maps` from OUTSIDE the process,
+which is the property every CDP instrument lacks and the reason three of them got silence.
 
-- **It is the SPIN, not the mapping.** `HandlerAdded` scans and erases; it allocates nothing but one
-  `BindState` per match. The 32 GiB still has no mechanism.
-- **So the question is now: what accumulates as 2 MiB pagefile-backed shared sections while a main
-  thread that never yields fails to drain it?** That is sharper than "what leaks?".
-- **The 2 MiB data pipe is DROPPED (2026-09-10), not merely unpromoted.** Pairing every walk with
-  its own request counter gives requests spanning **717x** (109 -> 78,188) against sections spanning
-  **1.23x**, with the two *smallest* request counts producing two of the *largest* section counts.
-  Full table in `CLAUDE.md`. Do not re-promote it on the strength of the 2 MiB match.
-- **One recorded conclusion is weakened, and a second is now split:** "RC's own JavaScript is not
-  the loop and there is no fix on our side of the page" — the loop is native, but it is *driven* by
-  JS promise rejection. And **the spin is not always the same code**: `VMSTACK` has read **four**
-  ramps, and the three YOUNG-browser ones (2.6, 2.75 and 3 min) show the `HandlerAdded` loop on top
-  with a narrow spread while the one OLD-browser one (57.5 min, 2026-09-10 17:53) reads **40
-  distinct addresses of 48 with JIT as the largest bucket**. Correlation holds 4 for 4. The naming
-  stands; the generalisation does not.
-  - **THE YOUNG SIGNATURE IS 23-29 OF 48 IN THE 59-BYTE WINDOW, NOT A CONSTANT 29** (readings: 29 /
-    24 / 23), and JIT is a real second bucket in all three (5 / 6 / 7). **So the two populations are
-    ends of a range, not discrete states** — and with three of the four points young, "browser age"
-    is still a LABEL rather than an established variable; trip type fits every point equally.
+**THE CHAIN, read in source:** `URLLoader::ContinueOnResponseStarted` makes a 2 MiB pipe per
+RESPONSE — **not per request**, which is why 69,060 answer-less asks cost nothing and why the
+burst/leak decoupling is real; `DataPipe::Deserialize` maps the consumer **on the IO thread** the
+moment it arrives; the drain is a **posted task**; `deferred_messages_` is unbounded. **A wedged
+main thread cannot stop the mapping, only the release.**
 
-### THE BRIEF FOR A SESSION THAT WANTS TO FIX IT
+**STILL OPEN, and it is an instrument gap rather than a doubt.** One pipe per response needs
+~14,433 responses in that renderer inside the burst, and the resident page's counter read **20
+lifetime requests**. `requestCounter.attach(page)` is on the RESIDENT page alone and
+`withNetworkTrace` is equally page-scoped, so **dedicated workers, service workers and the
+throwaway tabs are invisible to both**. **Do not read "20 requests" as "20 responses in that
+renderer."** Closing that is the next cheap thing, and it is the only leak work left.
 
-**There is exactly one unanswered question: what maps the 2 MiB sections, and why are they never
-released.** Everything else above is settled. Two routes, and **both need the owner's word before
-starting** — this project's record is three mechanisms guessed at a session's cost each.
+**STOP DOING THESE:**
 
-**ROUTE A — name the allocator from source.** This is the method that named the spin on 2026-09-10,
-and it needs **no ramp, no box update and no symbols**.
+- **Hunting a 2 MiB constant.** The size grep over the whole checkout is clean; ipcz is the worked
+  example of a 2 MiB allocation that is COMPUTED, and a size grep is blind to those.
+- **Citing "the sections are NOT base shared memory".** That came from the 09-07 VOID dump of a
+  healthy *replacement* browser; all four ramp dumps are `target-silent`, so `shared_memory` has
+  never been read for a ramping renderer, and the cap proves it is base shared memory.
+- **Spending a ramp on the memory dump.** A wedged renderer contributes ZERO allocator dumps at
+  every level — settled off-box by `dump-wedge-probe.mjs`.
+- **Forcing a ramp.** It is 3-in-6, spends the warm-up's one turn per Okta lifetime, and costs a
+  password submission from an address that has eaten a twelve-hour block. There is nothing left
+  that a ramp answers.
+- **Enlarging the pagefile, lowering `LOW_RAM_MB`, lowering `MEM_DUMP_STALL_MS`, parking the
+  resident page, building Track B.** Each is refused for a recorded reason in `CLAUDE.md`.
 
-> **GREP IT LOCALLY — DO NOT USE GITHUB CODE SEARCH, WHICH CANNOT ENUMERATE.** Its own control:
-> `"2 * 1024 * 1024"` returns 3 files for a pattern that occurs everywhere. Chromium's own code
-> search hosts are all 000 at the proxy. **A sparse partial clone is 91 MB and takes one command:**
-> `git clone --depth 1 --filter=blob:none --sparse https://github.com/chromium/chromium
-> /home/user/chromium/chromium`, then `git sparse-checkout set <dirs>` — blobs arrive only for the
-> paths checked out, so widening the search is `sparse-checkout add`. **Do NOT clone it whole.**
-> `raw.githubusercontent.com` (200) still serves single files by path when that is all you need.
->
-> **THE FIRST SWEEP IS DONE AND IT IS A NEGATIVE (2026-09-10).** Across `base/memory`, `mojo`,
-> `gpu/command_buffer`, `components/discardable_memory`, `services/network`, `content/browser/loader`
-> and blink's loader/fetch: **exactly two 2 MiB constants exist** — `mapped_memory_chunk_size`
-> (**refuted**, the GPU-off trial ramped anyway) and `kLargerDataPipeAllocationSize` (the only
-> survivor on size, and it **cannot supply the count**: a full Okta trip is 112-239 responses).
-> Discardable is out **by source**, not by a snippet: `GetDefaultAllocationSize()` returns 4 MiB on
-> every branch this box can reach. **And `16384`/`1 << 14`/`0x4000` governs no mapping anywhere in
-> that tree.** So criterion 4 will not be met by finding a `kMax… = 16384`, and **the 2 MiB unit has
-> stopped being evidence for anything** — three exact-size matches, one refuted by experiment, one
-> by source, one that cannot produce the count. Full ledger in `CLAUDE.md`.
-
-Look for something that satisfies **all four**, and treat any candidate meeting fewer as unproven:
-1. maps **exactly 2 MiB** pagefile-backed anonymous shared sections,
-2. **one section per object** (the walk sees one allocation base per region),
-3. is **released on the main thread or from a posted task** — that is what makes a wedged event
-   loop retain them,
-4. plausibly **caps at exactly 16,384** — the mapped count lands 1 to 3 SHORT of 2^14 (16,381 to
-   16,383) and **never reaches or exceeds it**. **But the cap binds only about half the time:** of
-   the eleven walks carrying `VMMAP2M`, six land at the cap and **five stop short** (13,320 /
-   13,550 / 14,321 / 15,494 / 16,213), and only the two lowest are commit-limited. So a candidate
-   must explain a maximum of 2^14 **that often is not reached**, which is a weaker constraint than
-   this criterion read before 2026-09-10 and should not be used to reject a candidate outright.
-5. **maps the WHOLE population in one burst, before touching any of it** — added 2026-09-10 and it
-   is the sharpest of the five. The commit arm fired mid-burst and the walk found **16,385 regions
-   / 32,774 MB already mapped with private bytes at 1,843 MB**, so the cap is reached in the burst
-   and the climb is only the touching. **Anything that maps incrementally as work arrives is out**,
-   which is the data pipe refuted from a second direction — one pipe per response body cannot
-   produce 16,384 mappings before the first byte is read.
-**CRITERION 4 IS THE ALLOCATOR'S NUMBER, NOT WINDOWS' — settled 2026-09-10, so do not spend a
-session re-raising it.** A 2 MiB section costs exactly 4 KB of paged pool (512 PTEs x 8 bytes,
-measured at 4.015-4.017 KB over a 1.23x range of counts), so *"caps at 16,384 sections"* and
-*"caps at 64 MiB of paged pool"* are the same sentence in different units — and a Windows quota
-would produce 2^14 with no Chromium constant involved. Killed off stored rows two ways: over the
-six capped walks the COUNT is the tighter quantity (±0.012% against the byte total's ±0.045%),
-and the rank correlation is POSITIVE where a binding byte ceiling predicts a flat pool with the
-count varying inversely. Full entry in `CLAUDE.md`.
-**AND READ `VMMAP2M`, NOT `VMHIST d` — they are NOT the same population, settled 2026-09-10.**
-`VMMAP2M` filters `MEM_MAPPED` on top of the size band; the histogram counts every committed
-region in it. The gap is a near-constant 4-6 (3 on the CONTROL), so it is a baseline renderer
-property and not part of the ramp. **The 16,385-16,387 figures quoted in several entries are the
-histogram**, which is why the cap looked like it sat just ABOVE 2^14; the mapped population sits
-just below and never reaches it. That direction is the useful half — approached-from-below is the
-signature of a hard maximum of 16,384, where slightly-above invites "16,384 plus a few" and is a
-different search.
-**There is no standing candidate — the data pipe was dropped on 2026-09-10.** Two limits on the
-method, both measured: every real code-search host is **000 at the proxy**, and
-`mcp__github__search_code` over `repo:chromium/chromium` works **only for unique identifiers** (a
-control on `kLargerDataPipeAllocationSize` returned it; `"2 * 1024 * 1024"` returned 3 files). **So
-Route A is reason-then-fetch-by-path and cannot enumerate.** The burst reframing below is what makes
-a fresh hunt worth anything: look for something that **chunks a large size into 2 MiB shared
-segments and caps at 16,384**, not for something that leaks one at a time.
-
-**ROUTE B — stop the spin instead of the allocator.** The only route that could fix this without
-naming what allocates, and the only one plausibly on our side. If the main thread yields, posted
-tasks run and anything waiting on one drains. The driver is RC's SPA settling promises at enormous
-rate; the long-standing candidate is a retry loop against a 401'd session, which the RDR burst
-(**69,060 asks, zero answers of any kind**) is the shape of.
-- **THE CHEAP FIRST READING IS NOT AVAILABLE — checked 2026-09-10, and the suspicion was right.**
-  `rc_runner_heartbeat` is a **single row**; 047's `session_since`/`session_live_since` are two
-  columns updated in place, and 047's own header says the transition "is overwritten by the next
-  confirmation of it". `BOT_EVENT_KINDS` is only `ramp-scan`, `tab-close`, `request-counts`,
-  `mem-dump` — nothing carries a session verdict. **So there is no time series and the ramp/session
-  coincidence cannot be asked retrospectively.** Taking it means recording session state alongside
-  ramps first, i.e. building a fifth instrument.
-- **Parking the resident page is still refused**, and for a reason unrelated to memory:
-  `checkAndReport`'s localStorage rule would make the session verdict permanently inconclusive and
-  silence `autocart.rc_session` and the phone alarm.
-
-**ROUTE C — ASK WHO ELSE HOLDS THE SECTIONS. CONSIDERED 2026-09-10 AND PREDICTED BLIND; DO NOT
-BUILD IT.** The idea is sound and the reason it fails is knowable in advance, which is the whole
-point of writing it down. A section object can be open in more than one process, so enumerating
-handles system-wide (`NtQuerySystemInformation(SystemExtendedHandleInformation)`) and matching the
-`Object` pointers would say whether the browser or GPU process holds the same 16,384 sections — and
-that discriminates hard: **a peer holding them is IPC/mojo; nobody holding them means the renderer
-created 16k anonymous sections it never shared, which is not buffering at all.** It needs nothing
-from the wedged renderer, and it collects handle metadata only, so it clears the standing ban on
-`ReadProcessMemory` and minidumps.
-- **PREDICTED READING: the `Object` pointers come back ZERO.** Windows' kernel-address-disclosure
-  mitigation zeroes them for medium-integrity callers, and **this box's processes are unelevated** —
-  that is the same elevation gap that made `stop-all` read `$null` for a whole generation on
-  2026-08-15. A ~0 reading is the case the predict-first rule says not to build for.
-- **IF IT IS EVER WANTED, THE CHEAP PRECONDITION IS ONE COMMAND, NOT AN INSTRUMENT:** enumerate
-  handles for *our own* process and report whether `Object` is non-zero. Only build the matcher if
-  it is.
-
-**AND AN HONEST THIRD ANSWER: there may be no fix we own.** If the driver is RC's own SPA, the
-options are "don't leave its page resident" (refused above) or "keep the session healthy so it does
-not loop" — both product decisions rather than bug fixes. **Containment already works**: `bail:ramp`
-caps ramps at 3.4-4.6 GB against 8-9 GB untreated and the box never goes dark. Saying so is a
-legitimate outcome; quietly building a fifth instrument is not.
-
-### Do not do these, each for a recorded reason
-
-- **Do not force a ramp out of impatience, and separate the two numbers before quoting either.**
-  **Landing in the `okta=GONE` cell is a GATE and it is reliable** — four for four since #296 added
-  the token gate. **Ramping once you are there is a COIN**: of the five ordered attempts two ramped,
-  and of the seven `okta=GONE` password trips on record three did. Forcing also spends the warm-up's
-  one turn per Okta lifetime and a password submission from an address that has eaten a twelve-hour
-  block. Natural ramps arrive every **2.3-18.6 h** (median ~5.4) and every instrument is armed.
-  **A forced attempt was spent on 2026-09-10 16:58 and missed** (16 s, no ramp), so that Okta
-  lifetime's turn is gone and the next GONE window is ~12 h out.
-- **Do not lower `LOW_RAM_MB`** — that killed a working repair on 08-19.
-- **Do not lower `MEM_DUMP_STALL_MS`** — 90 s was measured against 133 tab-closes, and a wedged
-  renderer contributes zero allocator dumps anyway, so it would fire more often and learn nothing.
-- **Do not build Track B** — the renewal's Okta trip is measured flat at −4 MB.
-- **Do not park the resident page** — refused by `checkAndReport`'s localStorage rule, which would
-  silence `autocart.rc_session` and the phone alarm.
-- **Do not rebuild the heap trail, Track A, the RAM arm, or the dump's ownership graph.** Each is
-  blind to this allocation for a reason that was knowable before it was built — `JSHeapUsedSize`
-  excludes external memory; the sampling profiler reads 1-74 MB against 8-9 GB; untouched commit
-  never lowers free RAM; and a wedged renderer contributes zero allocator dumps at every level.
-
----
+**AND THERE IS NO FIX ON OUR SIDE — say it plainly.** The pipe size is compile-time (512 KiB only
+on ChromeOS and 32-bit; no Finch flag), the drain is Chromium's, and the wedge is RC's own promise
+loop. **What changed is that the damage is now known to be hard-capped by Chromium at 32 GiB of
+commit, in memory that is never touched** — which is exactly why the RAM arm has sat out
+fifteen-plus ramps: it watches the one resource that is not running out. The containment already
+shipped is the remedy, and an open-ended risk is now a bounded one.
 
 ## 3. Other things open — all detail is in `CLAUDE.md`
 

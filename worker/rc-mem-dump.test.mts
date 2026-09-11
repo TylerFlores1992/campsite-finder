@@ -566,10 +566,22 @@ test('the dump call after the arm survives, and it is REACHABLE', () => {
 // and the import somebody "fixes" to match the neighbours.
 
 test('the leak probes parse and keep their deliberate playwright-core import', () => {
-  const probes = ['ramp-arm-probe.mjs', 'mapped-memory-repro.mjs', 'mem-dump-probe.mjs', 'alloc-trail-probe.mjs'];
+  // PATHS, not bare names. `scripts/leak-repro.mjs` is deliberately NOT under
+  // `scripts/auto-cart-bot/`: `CH_BOT_CODE_AT` is `git log -1 -- scripts/auto-cart-bot`, so a
+  // file there makes `autocart.bot_version` report the box as missing bot-side code — and the
+  // honest response to that warn is a box update, which ends the RC session. A probe that can
+  // never run on the box must not arm it. One guard covers both directories rather than two
+  // guards drifting apart.
+  const probes = [
+    'scripts/auto-cart-bot/ramp-arm-probe.mjs',
+    'scripts/auto-cart-bot/mapped-memory-repro.mjs',
+    'scripts/auto-cart-bot/mem-dump-probe.mjs',
+    'scripts/auto-cart-bot/alloc-trail-probe.mjs',
+    'scripts/leak-repro.mjs',
+  ];
   let checked = 0;
   for (const name of probes) {
-    const url = new URL(`../scripts/auto-cart-bot/${name}`, import.meta.url);
+    const url = new URL(`../${name}`, import.meta.url);
     const src = readFileSync(url, 'utf8');
     // `playwright-core` is the repo's devDependency; the box has the full package. A probe
     // switched to bare `playwright` stops running in the one place it is useful, and the
