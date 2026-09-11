@@ -37,28 +37,21 @@ Three things that will bite in the first ten minutes:
 
 | | |
 |---|---|
-| master | `e29ba72` (#334) — **verify against `origin/master`, this line ages** |
-| mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11) — it updated itself overnight in the quiet window. It is **two commits behind** master and `git diff a68a6d2..origin/master -- scripts/auto-cart-bot/ mini-pc/` is **EMPTY** — the gap is docs, one worker TEST, and `scripts/leak-repro.mjs`, which is deliberately NOT under `scripts/auto-cart-bot/` so it cannot arm `CH_BOT_CODE_AT`. **No update is owed**, and an update ends the RC session. Read it with `bot-ask git-status`, never `autocart.bot_version`. |
+| master | `a592e21` (#336) — **verify against `origin/master`, this line ages** |
+| mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11). **A BOT-SIDE UPDATE IS NOW GENUINELY OWED — #336 changed `ramp-bail.mjs`, `ramp-arm-probe.mjs` and `bot-commands.mjs`** — so `autocart.bot_version` correctly reads *"MISSING bot-side changes"*. **That is EXPECTED and is not a fault, and it needs NO action: the box updates itself in the 02:00-05:00 PT quiet window, which is how it took `a68a6d2` overnight on 09-11.** Do NOT press "Update now" — a forced update ends the RC session for nothing. Confirm arrival with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
 | last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
 | **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
-| health | `session_ok` **false** at 11:54 — *"no token at all — signed out; okta session STILL ALIVE"* — which is the **ordinary between-releases state** with no hold queued: the token lives ~1h and `maybeAutoLogin` restores it at T−30. Okta alive to 16:59 UTC. **Not a fault, and the printed remedy (`rc-login.bat`) would kill the Chromium the token lives in.** |
-| fleet | 3/3 shards held, 12 watches |
+| health | 16 of 19 ok, **and all three warns are the documented-benign set**: `autocart.rc_session` (RC rejects the token — the ordinary between-releases state, the token lives ~1h and `maybeAutoLogin` restores it at T−30), `autocart.bot_version` (the box has not picked up #336 yet — see the mini-PC row), and `autocart.rc_login` (a rehearsal STAND-DOWN, not a failure). **Above all do not run `rc-login.bat`** — it force-kills the Chromium the token lives in, and that reading has sent people to the box twice over sessions that repaired themselves. |
+| fleet | 3/3 shards held, 12 watches, heartbeat 5s — checked after #336's worker deploy |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
-| **the leak** | **DIAGNOSED AND CONTAINED, NOT FIXED.** 6 onsets in the 48h to 09-11, `bail:ramp` on all 6, peak `rc_mb` 4,661 MB (was 8-9 GB), free RAM never under 5,140 MB. **The residual is COMMIT** — 46,807 MB used of a 47,870 MB limit at peak, 665 MB of headroom at the tightest, and nothing is gated on commit. §2 has the four options. |
+| **the leak** | **DIAGNOSED AND CONTAINED, NOT FIXED.** 6 onsets in the 48h to 09-11, `bail:ramp` on all 6, peak `rc_mb` 4,661 MB (was 8-9 GB), free RAM never under 5,140 MB. **The residual is COMMIT**, and as of #336 **option A is BUILT and option B is ANSWERED AND OFF** — §2.2. What is left is a named, measured, NOT-STARTED piece of work: §2.5. |
 | migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
 
-**The one warn is `autocart.bot_version`, and it is the benign branch of it** — its own detail
-reads *"No bot-side code in the gap"*, i.e. the web is ahead of the box and nothing bot-side is
-missing. Checked rather than inferred: `git diff <boxSha>..origin/master --
-scripts/auto-cart-bot/ mini-pc/` is EMPTY. **Do not spend a box update on it**; an update ends
-the RC session.
-
-**Two OTHER warns are equally ordinary and each has a destructive-looking remedy — do not act on
-either.** `autocart.rc_session` reading dead between releases is the RC token's ~1h life, and
-`maybeAutoLogin` restores it at T−30 of a real release; **above all do not run `rc-login.bat`**,
-which force-kills the Chromium the token lives in — that reading has sent people to the box twice
-over sessions that repaired themselves. `autocart.rc_login` standing down inside its own
-once-per-20h gate is a stand-down, not a failure.
+**ALL THREE WARNS ARE ORDINARY AND EACH HAS A DESTRUCTIVE-LOOKING REMEDY — do not act on any of
+them.** `autocart.bot_version` says *"MISSING bot-side changes"* because #336 is bot-side and the
+box has not reached its quiet window yet; it clears by itself. `autocart.rc_session` reading dead
+between releases is the RC token's ~1h life. `autocart.rc_login` standing down inside its own
+once-per-20h gate is a stand-down, not a failure. **Above all do not run `rc-login.bat`.**
 
 **AND DO NOT READ A RED `autocart.rc_session` WITHIN A FEW MINUTES OF A MERGE AS A REAL DEAD
 SESSION.** A numeric `carted` test fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT`, so
@@ -133,7 +126,7 @@ burst/leak decoupling is real; `DataPipe::Deserialize` maps the consumer **on th
 moment it arrives; the drain is a **posted task**; `deferred_messages_` is unbounded. **A wedged
 main thread cannot stop the mapping, only the release.**
 
-### 2.2 THE WORK THAT IS LEFT — the commit residual
+### 2.2 THE COMMIT RESIDUAL — A BUILT, B ANSWERED AND OFF, C and D open (§2.5 is what is left)
 
 **Every arm this repo has built watches free RAM or the rc family's private bytes. The burst
 spends neither.** So the one resource that actually runs low during a ramp is the one nothing is
@@ -152,8 +145,9 @@ PAGEFILE  C:\pagefile.sys — 31.0 GB allocated, peak 0.0 GB, SYSTEM MANAGED
 **`peak 0.0 GB` is the confirmation the 32 GiB is never touched** — 31 GB charged and essentially
 nothing ever written to disk. It also means a larger pagefile would cost disk, not I/O.
 
-**FOUR OPTIONS, none taken. Full reasoning, predicted readings and counter-arguments are in
-`CLAUDE.md` → "THE RESIDUAL IS COMMIT, AND NOTHING WATCHES IT". In brief:**
+**FOUR OPTIONS. A is BUILT (#336) and B is ANSWERED AND OFF as of 2026-09-11; C and D stand.**
+Full reasoning is in `CLAUDE.md` → "THE RESIDUAL IS COMMIT, AND NOTHING WATCHES IT" and
+"THE COMMIT RESIDUAL: THE PAGEFILE TRACKS, AND OPTION B IS OFF". In brief:
 
 - **A — a COMMIT trigger on the bail arm. BUILT 2026-09-11.** `writeLatestMemory` dropped
   `commitUsedMb`/`commitLimitMb`; they now go through the file and `rampBailDecision` carries a
@@ -200,9 +194,12 @@ Bot-side.
   needs one.
 - **Lowering `LOW_RAM_MB`, lowering `MEM_DUMP_STALL_MS`, parking the resident page, building
   Track B.** Each is refused for a recorded reason in `CLAUDE.md`.
-- **Enlarging the pagefile is no longer a flat no** — but it is option B above, with a
-  precondition, not a recommendation. Do not run `fix-pagefile.ps1 -Apply` on the strength of
-  this line alone.
+- **Enlarging the pagefile. The precondition was settled on 2026-09-11 and the answer is
+  TRACKING, so this is a flat no again** — for a measured reason rather than the retired one.
+  The limit grows on essentially every sample and never stalls while used climbs (+30,902 MB in
+  33 s, finishing 1,456 MB ahead, against a ≤34 s burst), and **Windows has already done it by
+  itself**: a constant 47,870 MB since 09-10 12:40 UTC across 913 samples. **Do not run
+  `fix-pagefile.ps1 -Apply`** — it costs a REBOOT and with it the RC session.
 
 **AND THERE IS NO FIX ON OUR SIDE OF THE ALLOCATION — say it plainly.** The pipe size is
 compile-time (512 KiB only on ChromeOS and 32-bit; no Finch flag), the drain is Chromium's, and
@@ -211,6 +208,42 @@ by Chromium at 32 GiB of commit, in memory that is never touched — which is ex
 arm has sat out fifteen-plus ramps: **it watches the one resource that is not running out.** That
 makes an open-ended risk a **bounded** one. **It does not make it a closed one** — §2.2 is the
 work that is left.
+
+### 2.5 THE NAMED NEXT PIECE OF WORK — **NOT STARTED, and it wants the owner's word**
+
+**A is aftermath and cannot be anything else.** At the sample where the commit trigger first
+fires the commit is already 35,794-48,444 MB — the ~32 GiB is charged in ≤34 s and nothing that
+reads a two-minute file can catch it. **What actually decides the exposure is how often we
+navigate to Okta**, and that is measured:
+
+```
+renewal trips     229 over 164.6h = 33.4/day
+gap bands         backoff(30m) 123 · minGap(10m) 69 · alive(~60m) 7 · other 29
+failure bands     192 of 228 = 84%
+onsets            18 over the same window = 2.62/day
+RAMP RATE         18 onsets / 229 trips = 1 in 12.7
+```
+
+**229 attempts bought 7 successes**, so a repair costs ~33 attempts, and 12.7 attempts cost one
+32 GiB burst — **each successful repair costs about 2.6 ramps.**
+
+**`RENEW_BACKOFF_GAP_MS` is flat at 30 minutes and never escalates**, against a condition the
+module's own comment calls persistent (*"when that cookie is gone every attempt will fail
+identically until a human signs in"*). Escalating 30 → 60 → 120 → 240 takes failure attempts from
+~28/day to **~10/day**, total trips 33.4 → ~15/day, and ramps **2.62 → ~1.2/day**. The release
+path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly rehearsal.
+
+- **THE DESIGN WRINKLE THAT MUST BE HANDLED, not discovered later:** a `maybeAutoLogin` success
+  does **not** call `recordRenewal`, so `failures` stays high — a fresh lapse would then start at
+  the escalated gap instead of at `minGap`. The counter needs resetting when a live token is
+  observed, or the escalation quietly delays the first attempt of a new episode.
+- **WHY IT IS NOT DONE:** `planRenewal` is bot-side, it is what repairs a session between
+  releases, and the SPA's silent re-mint is an OBSERVATION of RC's behaviour rather than a
+  guarantee. `CLAUDE.md` says in as many words not to drive-by a change to it. **It wants the
+  owner's word.**
+- **AND EVEN THIS IS A REDUCTION IN FREQUENCY, NOT A CURE.** Every remaining ramp still charges
+  the full 32 GiB. The pipe size is compile-time with no Finch flag, the drain is Chromium's, and
+  the wedge is RC's own promise loop — **frequency is the only variable we own.**
 
 ## 3. Other things open — all detail is in `CLAUDE.md`
 
