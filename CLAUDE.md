@@ -7469,7 +7469,7 @@ ipcz's soft cap — which is not a buffer size. **So a 2 MiB allocation is eithe
 COMPUTED, and a size grep is blind to computed sizes.** ipcz is the worked example.
 
 ##### REPRODUCED LOCALLY, WITH CONTROLS — a wedged main thread plus undrained responses
-`scratchpad/repro/probe.mjs` drives the container's own Chromium and counts 2 MiB shared mappings by
+**`scripts/leak-repro.mjs`** drives the container's own Chromium and counts 2 MiB shared mappings by
 reading **`/proc/<pid>/maps` from OUTSIDE the process** — the one property every CDP instrument
 lacks, and the reason three of them got silence. The cap constant is identical on Linux.
 
@@ -7498,6 +7498,14 @@ browser processes                    0
   at 14.3 GB of 16 GB — the retained `Response` objects, not the mappings. **So the 16,383 plateau is
   proved from source and matched against six production walks, and is NOT directly observed here.**
   Say it that way.
+- **AND IT IS A DIFFERENT BUILD ON A DIFFERENT PLATFORM — say that too.** The container runs
+  Chromium **141.0.7390.37 on Linux**; the box runs **149.0.7827.55 on Windows**, where the
+  sections are pagefile-backed rather than memfd. **That is the exact shape that burned the native
+  sampler twice** (validated in the dev container, absent in production), so what the repro
+  establishes is the MECHANISM and not the production event. It transfers on the two things that
+  matter — `kTotalMappedSizeLimit` and `kLargerDataPipeAllocationSize` are both cross-platform and
+  both long-standing — and the production event is still carried by the cap arithmetic, the peer
+  handle counts and the source chain, not by this run.
 
 ##### THE SOURCE CHAIN, READ RATHER THAN INFERRED
 1. `services/network/url_loader.cc:1221`, inside **`ContinueOnResponseStarted`** — a data pipe of
