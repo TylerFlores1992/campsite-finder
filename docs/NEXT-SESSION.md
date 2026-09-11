@@ -37,13 +37,14 @@ Three things that will bite in the first ten minutes:
 
 | | |
 |---|---|
-| master | `39db718` (#333) — **verify against `origin/master`, this line ages** |
-| mini-PC | **`29555e0`** — it updated itself overnight in the quiet window, so the box is one commit behind master and the gap is **docs only**; no update is owed. Read it with `bot-ask git-status`, never `autocart.bot_version`. |
+| master | `e29ba72` (#334) — **verify against `origin/master`, this line ages** |
+| mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11) — it updated itself overnight in the quiet window. It is **two commits behind** master and `git diff a68a6d2..origin/master -- scripts/auto-cart-bot/ mini-pc/` is **EMPTY** — the gap is docs, one worker TEST, and `scripts/leak-repro.mjs`, which is deliberately NOT under `scripts/auto-cart-bot/` so it cannot arm `CH_BOT_CODE_AT`. **No update is owed**, and an update ends the RC session. Read it with `bot-ask git-status`, never `autocart.bot_version`. |
 | last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
 | **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
 | health | `session_ok` **false** at 11:54 — *"no token at all — signed out; okta session STILL ALIVE"* — which is the **ordinary between-releases state** with no hold queued: the token lives ~1h and `maybeAutoLogin` restores it at T−30. Okta alive to 16:59 UTC. **Not a fault, and the printed remedy (`rc-login.bat`) would kill the Chromium the token lives in.** |
 | fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
+| **the leak** | **DIAGNOSED AND CONTAINED, NOT FIXED.** 6 onsets in the 48h to 09-11, `bail:ramp` on all 6, peak `rc_mb` 4,661 MB (was 8-9 GB), free RAM never under 5,140 MB. **The residual is COMMIT** — 46,807 MB used of a 47,870 MB limit at peak, 665 MB of headroom at the tightest, and nothing is gated on commit. §2 has the four options. |
 | migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
 
 **The one warn is `autocart.bot_version`, and it is the benign branch of it** — its own detail
@@ -67,12 +68,33 @@ was in flight first. Full entry in CLAUDE.md.
 
 ---
 
-## 2. The leak — SOLVED IN OUTLINE, 2026-09-11. Read this before touching anything memory-related.
+## 2. The leak — DIAGNOSED AND CONTAINED. **IT IS NOT FIXED.** Read before touching anything memory-related.
 
-**`CLAUDE.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`, AND THE LEAK IS
-REPRODUCED" is the full account.** Everything in this section is a pointer to it.
+**`CLAUDE.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`" and the block directly
+beneath it, "THE RESIDUAL IS COMMIT, AND NOTHING WATCHES IT", are the full account.** Everything
+here is a pointer to them.
 
-**PROVED, none of it needing a ramp, a box update or a new instrument:**
+### 2.0 Where it actually stands
+
+**It still happens every few hours. The containment catches every one. What is left is a COMMIT
+risk, and nothing anywhere is gated on commit.** Off the box's own series, the 48 hours to
+2026-09-11 (1,628 samples):
+
+| | |
+|---|---|
+| onsets (rc family crossing 1500 MB) | **6** — most recent 10.4h before the reading |
+| peak `rc_mb` | **4,661 MB** — it was 8,000-9,400 MB before the bail arm existed |
+| peak COMMIT used | **46,807 MB** of a 47,870 MB limit |
+| tightest COMMIT headroom | **665 MB** — 09-10 04:26, used 40,175 / 40,840 |
+| minimum free RAM | **5,140 MB** — the RAM arm's floor is 2,000, so it *cannot* fire |
+| `bail:ramp` fired on | **6 of 6**, ~2 minutes after each onset |
+
+**The private-byte climb is genuinely cut short every time, and that is the containment working —
+it is why the peak roughly halved.** The **~32 GiB MAPPING is untouched by any of it**: the burst
+completes in **≤34 seconds**, faster than any arm can react to, and Chromium's own ceiling is what
+stops it going further. **Do not read "contained" as "cured".**
+
+### 2.1 PROVED — none of it needing a ramp, a box update or a new instrument
 
 - **The ceiling is `base::SharedMemorySecurityPolicy::kTotalMappedSizeLimit`** —
   `32ULL * 1024 * 1024 * 1024`, a per-process atomic budget on total *mapped* shared memory,
@@ -102,6 +124,8 @@ REPRODUCED" is the full account.** Everything in this section is a pointer to it
 and pushed harder, live: renderer **3,208** (6.3 GiB), network service **6**, browser **0** —
 **the production peer asymmetry, exactly.** It reads `/proc/<pid>/maps` from OUTSIDE the process,
 which is the property every CDP instrument lacks and the reason three of them got silence.
+**Caveat kept deliberately: that is Chromium 141 on Linux (memfd) against the box's 149 on Windows
+(pagefile-backed).** It establishes the MECHANISM, not the production event.
 
 **THE CHAIN, read in source:** `URLLoader::ContinueOnResponseStarted` makes a 2 MiB pipe per
 RESPONSE — **not per request**, which is why 69,060 answer-less asks cost nothing and why the
@@ -109,14 +133,59 @@ burst/leak decoupling is real; `DataPipe::Deserialize` maps the consumer **on th
 moment it arrives; the drain is a **posted task**; `deferred_messages_` is unbounded. **A wedged
 main thread cannot stop the mapping, only the release.**
 
-**STILL OPEN, and it is an instrument gap rather than a doubt.** One pipe per response needs
-~14,433 responses in that renderer inside the burst, and the resident page's counter read **20
-lifetime requests**. `requestCounter.attach(page)` is on the RESIDENT page alone and
-`withNetworkTrace` is equally page-scoped, so **dedicated workers, service workers and the
-throwaway tabs are invisible to both**. **Do not read "20 requests" as "20 responses in that
-renderer."** Closing that is the next cheap thing, and it is the only leak work left.
+### 2.2 THE WORK THAT IS LEFT — the commit residual
 
-**STOP DOING THESE:**
+**Every arm this repo has built watches free RAM or the rc family's private bytes. The burst
+spends neither.** So the one resource that actually runs low during a ramp is the one nothing is
+gated on — and commit exhaustion is the **only** failure this box has had that needed a human
+(2026-08-12, `supervise.ps1` could not start a shell and the machine was power-cycled by hand;
+08-17, both Scheduled Tasks stopped together).
+
+**The box, read 2026-09-11 16:15 UTC with `bot-ask memory`:**
+
+```
+RAM       15.7 GB total, 10.4 GB free
+COMMIT     7.0 GB used of 46.7 GB limit   (idle)
+PAGEFILE  C:\pagefile.sys — 31.0 GB allocated, peak 0.0 GB, SYSTEM MANAGED
+```
+
+**`peak 0.0 GB` is the confirmation the 32 GiB is never touched** — 31 GB charged and essentially
+nothing ever written to disk. It also means a larger pagefile would cost disk, not I/O.
+
+**FOUR OPTIONS, none taken. Full reasoning, predicted readings and counter-arguments are in
+`CLAUDE.md` → "THE RESIDUAL IS COMMIT, AND NOTHING WATCHES IT". In brief:**
+
+- **A — give the bail arm a COMMIT trigger.** Cheapest; the plumbing is one field short.
+  `memory-sample.mjs` already computes `commitUsedMb`/`commitLimitMb` and `writeLatestMemory`
+  drops them. **Predicted reading, stated before building: not a no-op** — on 09-10 19:16 commit
+  read 44,354 MB while `rc_mb` was 1,869, under the 3000 bar, so it would have fired a sampler
+  tick earlier on at least one of six events. **It cannot prevent the mapping.** Bot-side, so it
+  arms the `bot_version` warn and wants a box update. Keep BOTH-CONDITIONS.
+- **B — stop the pagefile having to grow mid-burst** (`mini-pc\fix-pagefile.ps1`, needs a REBOOT,
+  which ends the RC session). **`CLAUDE.md` currently says do not, and that objection's premise is
+  now retired** by the ceiling finding — the burst is capped independently of the pagefile.
+  **But settle this first: is 665 MB of spare PRESSURE or TRACKING?** Every observed spare sits
+  665-1,072 MB ahead of used across four different limits, which is the signature of a
+  system-managed pagefile growing exactly as much as it needs. **If it is tracking, B buys
+  nothing.**
+- **C — stop the wedge.** The only option addressing the cause. **The recorded counter-argument is
+  strong**: a browser replacement is 8x enriched before a ramp, so recycling more often may make
+  it worse. Parking the resident page stays refused (it would silence `autocart.rc_session` and
+  the phone alarm). Genuinely unexplored: a *leading indicator* of the wedge.
+- **D — do nothing, deliberately.** A real option: 6 for 6 on the bail, free RAM never under
+  5.1 GB, the mapping hard-capped, and **no human needed since 2026-08-17.**
+
+### 2.3 A SECOND OPEN ITEM, and it is an instrument gap rather than a doubt
+
+One pipe per response needs ~14,433 responses in that renderer inside the burst, and the resident
+page's counter read **20 lifetime requests**. `requestCounter.attach(page)` is on the RESIDENT
+page alone and `withNetworkTrace` is equally page-scoped, so **dedicated workers, service workers
+and the throwaway tabs are invisible to both**. **Do not read "20 requests" as "20 responses in
+that renderer."** The one-line fix is `context.on('request')`, which closes the service-worker and
+throwaway-tab halves at once; **dedicated workers are NOT settled**, so do not widen the claim.
+Bot-side.
+
+### 2.4 STOP DOING THESE
 
 - **Hunting a 2 MiB constant.** The size grep over the whole checkout is clean; ipcz is the worked
   example of a 2 MiB allocation that is COMPUTED, and a size grep is blind to those.
@@ -126,17 +195,21 @@ renderer."** Closing that is the next cheap thing, and it is the only leak work 
 - **Spending a ramp on the memory dump.** A wedged renderer contributes ZERO allocator dumps at
   every level — settled off-box by `dump-wedge-probe.mjs`.
 - **Forcing a ramp.** It is 3-in-6, spends the warm-up's one turn per Okta lifetime, and costs a
-  password submission from an address that has eaten a twelve-hour block. There is nothing left
-  that a ramp answers.
-- **Enlarging the pagefile, lowering `LOW_RAM_MB`, lowering `MEM_DUMP_STALL_MS`, parking the
-  resident page, building Track B.** Each is refused for a recorded reason in `CLAUDE.md`.
+  password submission from an address that has eaten a twelve-hour block. Nothing outstanding
+  needs one.
+- **Lowering `LOW_RAM_MB`, lowering `MEM_DUMP_STALL_MS`, parking the resident page, building
+  Track B.** Each is refused for a recorded reason in `CLAUDE.md`.
+- **Enlarging the pagefile is no longer a flat no** — but it is option B above, with a
+  precondition, not a recommendation. Do not run `fix-pagefile.ps1 -Apply` on the strength of
+  this line alone.
 
-**AND THERE IS NO FIX ON OUR SIDE — say it plainly.** The pipe size is compile-time (512 KiB only
-on ChromeOS and 32-bit; no Finch flag), the drain is Chromium's, and the wedge is RC's own promise
-loop. **What changed is that the damage is now known to be hard-capped by Chromium at 32 GiB of
-commit, in memory that is never touched** — which is exactly why the RAM arm has sat out
-fifteen-plus ramps: it watches the one resource that is not running out. The containment already
-shipped is the remedy, and an open-ended risk is now a bounded one.
+**AND THERE IS NO FIX ON OUR SIDE OF THE ALLOCATION — say it plainly.** The pipe size is
+compile-time (512 KiB only on ChromeOS and 32-bit; no Finch flag), the drain is Chromium's, and
+the wedge is RC's own promise loop. What changed is that the damage is now known to be hard-capped
+by Chromium at 32 GiB of commit, in memory that is never touched — which is exactly why the RAM
+arm has sat out fifteen-plus ramps: **it watches the one resource that is not running out.** That
+makes an open-ended risk a **bounded** one. **It does not make it a closed one** — §2.2 is the
+work that is left.
 
 ## 3. Other things open — all detail is in `CLAUDE.md`
 
