@@ -155,19 +155,20 @@ nothing ever written to disk. It also means a larger pagefile would cost disk, n
 **FOUR OPTIONS, none taken. Full reasoning, predicted readings and counter-arguments are in
 `CLAUDE.md` → "THE RESIDUAL IS COMMIT, AND NOTHING WATCHES IT". In brief:**
 
-- **A — give the bail arm a COMMIT trigger.** Cheapest; the plumbing is one field short.
-  `memory-sample.mjs` already computes `commitUsedMb`/`commitLimitMb` and `writeLatestMemory`
-  drops them. **Predicted reading, stated before building: not a no-op** — on 09-10 19:16 commit
-  read 44,354 MB while `rc_mb` was 1,869, under the 3000 bar, so it would have fired a sampler
-  tick earlier on at least one of six events. **It cannot prevent the mapping.** Bot-side, so it
-  arms the `bot_version` warn and wants a box update. Keep BOTH-CONDITIONS.
-- **B — stop the pagefile having to grow mid-burst** (`mini-pc\fix-pagefile.ps1`, needs a REBOOT,
-  which ends the RC session). **`CLAUDE.md` currently says do not, and that objection's premise is
-  now retired** by the ceiling finding — the burst is capped independently of the pagefile.
-  **But settle this first: is 665 MB of spare PRESSURE or TRACKING?** Every observed spare sits
-  665-1,072 MB ahead of used across four different limits, which is the signature of a
-  system-managed pagefile growing exactly as much as it needs. **If it is tracking, B buys
-  nothing.**
+- **A — a COMMIT trigger on the bail arm. BUILT 2026-09-11.** `writeLatestMemory` dropped
+  `commitUsedMb`/`commitLimitMb`; they now go through the file and `rampBailDecision` carries a
+  second bar on condition B, `RAMP_SCAN_COMMIT_MB` **imported** so the two arms cannot disagree
+  about which event they see. Backtested over 19 onsets: **earlier on 11 by a median 77 s, never
+  later, median 1,984 MB off the peak commit**. **It cannot touch the burst** — at the sample
+  where it first fires the commit is already 35,794-48,444 MB. Bot-side; it rides the quiet
+  window, so **no forced update and no RC session spent**.
+- **B — the pagefile. ANSWERED AND OFF.** The precondition is **TRACKING**: the limit grows on
+  essentially every sample and never stalls while used climbs — fastest **+30,902 MB in 33 s**,
+  finishing 1,456 MB ahead, against a burst of <=34 s. And **Windows has already done B by
+  itself**: the limit has been a constant **47,870 MB since 2026-09-10 12:40 UTC across 913
+  samples**, so a burst needs no growth at all and idle headroom is 40,902 MB. **Do not spend a
+  reboot.** The settle is not durable — a reboot resets it — which is a reason not to reboot
+  rather than a reason to.
 - **C — stop the wedge.** The only option addressing the cause. **The recorded counter-argument is
   strong**: a browser replacement is 8x enriched before a ramp, so recycling more often may make
   it worse. Parking the resident page stays refused (it would silence `autocart.rc_session` and

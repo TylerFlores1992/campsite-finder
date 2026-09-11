@@ -478,7 +478,7 @@ import {
   writeLatestMemory, readLatestMemory, rampBailDecision, rampBailLine, MEMORY_LATEST_FILE,
   RAMP_STALL_MS_DEFAULT, RAMP_MB_DEFAULT, RAMP_READING_MAX_AGE_MS_DEFAULT,
 } from '../scripts/auto-cart-bot/ramp-bail.mjs';
-import { RAMP_SCAN_MB } from '../scripts/auto-cart-bot/ramp-scan.mjs';
+import { RAMP_SCAN_MB, RAMP_SCAN_COMMIT_MB } from '../scripts/auto-cart-bot/ramp-scan.mjs';
 import { SAMPLE_EVERY_MS } from '../scripts/auto-cart-bot/memory-sample.mjs';
 
 const BOT_SRC = readFileSync('scripts/auto-cart-bot/bot.mjs', 'utf8');
@@ -503,7 +503,67 @@ test('RAMP: it fires only when the LOOP IS STALLED and the family is over the ba
   assert.equal(rampBailDecision({ ...base, stalledMs: 5_000, memory: known(2900) }).fire, false);
   const d = rampBailDecision({ ...base, stalledMs: 130_000, memory: known(3500, 40_000) });
   assert.deepEqual([d.stalledMs, d.rcMb, d.readingAgeMs], [130_000, 3500, 40_000]);
-  assert.match(rampBailLine(d), /✗ RAMP — the loop has not advanced in 130s, rc family 3500 MB \(reading 40s old\)/);
+  assert.match(rampBailLine(d), /✗ RAMP — the loop has not advanced in 130s, rc family 3500 MB/);
+  assert.match(rampBailLine(d), /\(reading 40s old, trigger rcMb\)/,
+    'the line names WHICH bar fired: commit alone means it fired a tick earlier than rc could');
+});
+
+// ── THE COMMIT TRIGGER ────────────────────────────────────────────────────────────────────
+// `rc_mb` is private bytes and the ~32 GiB mapping is charged to COMMIT in <=34 seconds while
+// private bytes are still under 2 GB. Backtested over 19 onsets to 2026-09-11: earlier on 11
+// of them by a median 77s, NEVER later, median 1,984 MB off the peak commit.
+
+test('RAMP: commit is a SECOND bar on condition B, and the stall still gates it', () => {
+  const base = { stallMs: 120_000, thresholdMb: 3000, commitThresholdMb: 9000 };
+  const m = (rcMb: number, commitUsedMb: number | null) =>
+    ({ known: true, rcMb, commitUsedMb, ageMs: 30_000, at: 0, maxPid: 1, maxType: 'renderer' });
+
+  // The case the whole trigger exists for: 2026-09-10 04:25:09 — rc 2,366 under the bar with
+  // commit already at 38,596, one sampler tick before rc crossed.
+  const early = rampBailDecision({ ...base, stalledMs: 130_000, memory: m(2366, 38_596) });
+  assert.equal(early.fire, true, 'commit over its bar with rc under its own is exactly the tick this buys');
+  assert.equal(early.trigger, 'commitUsedMb');
+  assert.equal(rampBailDecision({ ...base, stalledMs: 130_000, memory: m(3500, 38_596) }).trigger, 'both');
+  assert.equal(rampBailDecision({ ...base, stalledMs: 130_000, memory: m(3500, 7000) }).trigger, 'rcMb',
+    'rcMb still fires on its own — commit is a whole-box figure the owner\'s desktop shares');
+
+  // BOTH-CONDITIONS SURVIVES. A whole-box figure is only safe to act on because the 120s stall
+  // is very nearly diagnostic by itself: over 133 recorded tab-closes the longest trip is
+  // 71,552 ms and not one exceeds 90,000.
+  assert.equal(rampBailDecision({ ...base, stalledMs: 5_000, memory: m(2366, 38_596) }).fire, false,
+    'commit alone, with the loop advancing, is the owner using their own desktop');
+});
+
+test('RAMP: an absent commit figure is UNKNOWN and never fires — the older-box case', () => {
+  const base = { stallMs: 120_000, thresholdMb: 3000, commitThresholdMb: 9000 };
+  // A box on a build older than this writes no commit field at all, and the arm must behave
+  // exactly as it did: rc alone. The negated form `!(commit < bar)` would fire on EVERY tick
+  // of such a box — the trap ramp-scan.mjs names at its own commit trigger.
+  for (const absent of [null, undefined]) {
+    const d = rampBailDecision({ ...base, stalledMs: 130_000, memory: { known: true, rcMb: 2366, commitUsedMb: absent, ageMs: 30_000, at: 0 } });
+    assert.equal(d.fire, false, `commit ${String(absent)} must not fire`);
+    assert.equal(d.commitUsedMb, null, 'absent is null, never 0 — a 0 reading would say the box is idle');
+    assert.match(d.why, /commit not reported/);
+  }
+  // ...and rc alone still works on that same box.
+  assert.equal(rampBailDecision({ ...base, stalledMs: 130_000, memory: { known: true, rcMb: 3500, ageMs: 30_000, at: 0 } }).fire, true);
+});
+
+test('RAMP: the commit bar is ONE definition, shared with the scan, never a second copy', () => {
+  // The two arms must not disagree about which EVENT they see — the rule that already pins
+  // RAMP_SCAN_MB and RAMP_MB equal. 9000 was backtested by ramp-scan.mjs over every recorded
+  // event (median commit 7,213 MB over 6,266 samples; only THREE fall between 9,000 and
+  // 12,000), so a second copy here would be an untested number wearing a tested one's clothes.
+  assert.match(rbCode, /import \{ RAMP_SCAN_COMMIT_MB \} from '\.\/ramp-scan\.mjs'/,
+    'imported, not copied');
+  assert.match(rbCode, /commitThresholdMb = RAMP_SCAN_COMMIT_MB/,
+    'and it is the DEFAULT, so a caller that passes nothing still gets the backtested bar');
+  assert.equal(/RC_KEEPWARM_RAMP_COMMIT_MB|commitThresholdMb:/.test(code), false,
+    'rc-keepwarm must NOT introduce a commit bar of its own — one env var governs both arms');
+  assert.equal(rampBailDecision({
+    stallMs: 120_000, thresholdMb: 3000, stalledMs: 130_000,
+    memory: { known: true, rcMb: 100, commitUsedMb: RAMP_SCAN_COMMIT_MB, ageMs: 0, at: 0 },
+  }).fire, true, 'the default bar is live with no caller argument at all');
 });
 
 test('RAMP: condition A is the LOOP, never the renderer — the swap that made this arm fire at all', () => {
@@ -545,6 +605,11 @@ test('RAMP: the file round-trips, is written atomically, and goes UNKNOWN when s
     const r = readLatestMemory(file, { now, maxAgeMs: 300_000 });
     assert.deepEqual({ known: r.known, rcMb: r.rcMb, ageMs: r.ageMs, maxPid: r.maxPid, maxType: r.maxType },
       { known: true, rcMb: 3624, ageMs: 60_000, maxPid: 2648, maxType: 'renderer' });
+    // THE COMMIT FIGURES MUST SURVIVE THE ROUND TRIP. `memory-sample.mjs` has computed them
+    // all along and this writer dropped them, which is the entire reason the bail arm could
+    // not see the one number that moves during the burst.
+    assert.deepEqual([r.commitUsedMb, r.commitLimitMb], [46000, null],
+      'carried through when present, null when absent — never 0');
     t += 300_000;
     const stale = readLatestMemory(file, { now, maxAgeMs: 300_000 });
     assert.equal(stale.known, false);
