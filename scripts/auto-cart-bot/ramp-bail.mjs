@@ -136,7 +136,7 @@ export function writeLatestMemory(file, sample, { now = () => Date.now(), log = 
  * peak, and the bail needs 120s of stall on top, so nothing real is lost.
  * @param {string} file
  * @param {{ now?: () => number, maxAgeMs?: number, notBefore?: number|null }} [opts]
- * @returns {{ known: boolean, why?: string, at?: number, ageMs?: number, rcMb?: number|null, maxPid?: unknown, maxType?: unknown }}
+ * @returns {{ known: boolean, why?: string, at?: number, ageMs?: number, rcMb?: number|null, commitUsedMb?: number|null, commitLimitMb?: number|null, maxPid?: unknown, maxType?: unknown }}
  */
 export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP_READING_MAX_AGE_MS_DEFAULT, notBefore = null } = {}) {
   let raw;
@@ -170,15 +170,17 @@ export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP
  * @param {{
  *   stalledMs: number|null|undefined,
  *   memory: ReturnType<typeof readLatestMemory>,
- *   stallMs?: number, thresholdMb?: number,
+ *   stallMs?: number, thresholdMb?: number, commitThresholdMb?: number,
  * }} input
- * @returns {{ fire: boolean, stalledMs: number|null, rcMb: number|null, readingAgeMs: number|null, why: string }}
+ * @returns {{ fire: boolean, stalledMs: number|null, rcMb: number|null, commitUsedMb: number|null,
+ *   trigger: 'rcMb'|'commitUsedMb'|'both'|null, readingAgeMs: number|null, why: string }}
  */
 export function rampBailDecision({
   stalledMs, memory,
   stallMs = RAMP_STALL_MS_DEFAULT, thresholdMb = RAMP_MB_DEFAULT,
   commitThresholdMb = RAMP_SCAN_COMMIT_MB,
 }) {
+  /** @type {{ fire: boolean, stalledMs: number|null, rcMb: number|null, commitUsedMb: number|null, trigger: 'rcMb'|'commitUsedMb'|'both'|null, readingAgeMs: number|null, why: string }} */
   const out = { fire: false, stalledMs: null, rcMb: null, commitUsedMb: null, trigger: null, readingAgeMs: null, why: '' };
   // Condition A — the loop's own stall. NEVER UNKNOWN: `lastTick` is a local number the
   // timer sets, so unlike the CDP silence this replaced there is no "we could not tell".

@@ -84,6 +84,27 @@ try {
   }
   pass(`the arm fires on forged inputs (${Math.round(memory.rcMb)} MB, 139s stalled) — 09-08 07:47 reproduced without a ramp`);
 
+  // ── 1b. THE COMMIT TRIGGER, ON THE REAL 2026-09-10 04:25 READING ─────────────────────────
+  // rc 2,366 MB — UNDER the 3000 bar — with commit already at 38,596 MB, one sampler tick
+  // before rc crossed. That tick is the whole thing the second bar buys, and it is forgeable
+  // exactly like the rest: no ramp, no box, no waiting 2.3-18.6 hours for one.
+  writeLatestMemory(MEM_FILE, { rcMb: 2366, maxPid: 15284, maxType: 'renderer', commitUsedMb: 38596, commitLimitMb: 39810 });
+  const early = rampBailDecision({ stalledMs: 139_000, memory: readLatestMemory(MEM_FILE, { notBefore: browserLifeSince }) });
+  if (early.fire && early.trigger === 'commitUsedMb') {
+    pass('the COMMIT bar fires with rc under its own — 09-10 04:25:09 reproduced, a tick earlier than rcMb could');
+  } else {
+    fail(`the commit bar did not fire on the 09-10 04:25 reading (fire=${early.fire}, trigger=${early.trigger}): ${early.why}`);
+  }
+  // AND A BOX OLDER THAN THIS WRITES NO COMMIT FIELD AT ALL. It must behave exactly as it did
+  // — the negated form `!(commit < bar)` would fire on every tick of such a box.
+  writeLatestMemory(MEM_FILE, { rcMb: 2366, maxPid: 15284, maxType: 'renderer' });
+  const older = rampBailDecision({ stalledMs: 139_000, memory: readLatestMemory(MEM_FILE, { notBefore: browserLifeSince }) });
+  if (!older.fire && older.commitUsedMb === null) {
+    pass('an absent commit figure is UNKNOWN and stands down — the un-updated box is unchanged');
+  } else {
+    fail(`an absent commit figure fired or was coerced (fire=${older.fire}, commitUsedMb=${older.commitUsedMb})`);
+  }
+
   // ── 2. THE REAL SEQUENCE, TICK BY TICK ───────────────────────────────────────────────────
   const memDump = { ramp: false, inFlight: false, landed: false, graceUntil: null };
   let reportResolved = false;
