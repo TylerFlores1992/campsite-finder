@@ -271,7 +271,19 @@ export const COMMANDS = {
       "if ($pf.Count -eq 0) { 'PAGEFILE none in use' };",
       '$st = @(Get-CimInstance Win32_PageFileSetting);',
       "foreach ($s in $st) { 'PAGEFILE setting {0} - initial {1} MB, max {2} MB' -f $s.Name, $s.InitialSize, $s.MaximumSize };",
-      "if ($st.Count -eq 0) { 'PAGEFILE setting - system managed (Windows grows it lazily, which is what loses a burst)' };",
+      // "WINDOWS GROWS IT LAZILY, WHICH IS WHAT LOSES A BURST" WAS A MECHANISM THIS LINE
+      // ASSERTED AND THE SERIES REFUTES (2026-09-11). Traced at sample resolution over every
+      // recorded burst, the limit grows on essentially every sample and NEVER ONCE stalls
+      // while used climbs: the fastest is +30,902 MB in 33 seconds (55,650 MB/min), finishing
+      // 1,456 MB AHEAD of demand, and the burst itself is <=34 s. The 665-1,456 MB of spare is
+      // the LEAD Windows keeps while growing, not the distance to a wall - and the wall is the
+      // pagefile's own maximum, which is not readable here at all (Win32_PageFileSetting has
+      // no rows when system-managed, which is why this branch exists).
+      //
+      // IT MATTERS BECAUSE THIS SENTENCE IS THE ONE THAT SENDS SOMEBODY TO fix-pagefile.ps1
+      // -Apply, which costs a REBOOT and with it the RC session - the token lives in the
+      // Chromium a reboot closes. Do not spend that on this reading.
+      "if ($st.Count -eq 0) { 'PAGEFILE setting - system managed (it GROWS to meet a burst: measured +30,902 MB in 33s, staying ahead)' };",
       "$ours = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)' });",
       '$sum = 0; foreach ($o in $ours) { $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue; if ($q) { $sum += $q.PrivateMemorySize64 } };',
       "'OURS     {0} chrome.exe on our profiles, {1:N1} GB private total' -f $ours.Count, ($sum/1GB);",

@@ -10384,6 +10384,136 @@ label is American and which ships to the **United States storefront only**.
 
 ## Open / next session
 
+### THE COMMIT RESIDUAL: THE PAGEFILE TRACKS, AND OPTION B IS OFF (2026-09-11)
+
+The four options under "THE RESIDUAL IS COMMIT" turn on one precondition — **is 665 MB of spare
+PRESSURE or TRACKING?** Settled from `chromium_memory_samples` alone, and the answer is
+**TRACKING**, decisively enough to retire option B.
+
+- **THE LIMIT GROWS ON ESSENTIALLY EVERY SAMPLE OF EVERY BURST AND NEVER ONCE STALLS WHILE USED
+  CLIMBS.** Traced at sample resolution over four events; the shape is the same every time:
+  ```
+  09-10 04:23:08   used  7,108   limit 17,150   head 10,042
+  09-10 04:25:09   used 38,596   limit 39,810   head  1,214   <- limit GREW
+  09-10 04:26:09   used 40,175   limit 40,840   head    665   <- limit GREW
+  09-10 04:26:45   used 40,882   limit 41,871   head    989   <- limit GREW
+  ```
+  The two "limit FLAT" samples in the whole corpus (08-31 04:17:35, 09-04 22:27:46) both still
+  had positive headroom and the limit grew again on the next sample.
+- **THE FASTEST GROWTH IS +30,902 MB IN 33 SECONDS (55,650 MB/min), FINISHING 1,456 MB AHEAD** —
+  and three separate events show ~28-31 GB inside a single ~33 s sample interval, each ending
+  1,000-1,456 MB ahead. **The burst is <=34 s. Windows keeps pace with exactly that, measured.**
+  So the handover's *"if growth ever fails to keep pace with a <=34-second burst, that IS the
+  2026-08-12 failure"* has its answer: it does not fail, on any recorded event.
+- **SO THE 665 MB IS THE LEAD WINDOWS KEEPS WHILE GROWING, NOT THE DISTANCE TO A WALL.** The real
+  margin is to the pagefile's own maximum — and **that maximum is not readable here at all**:
+  `Win32_PageFileSetting` has no rows when system-managed, which is why `bot-ask memory` has a
+  branch for it. The documented rule is 3x RAM, which on 15.7 GB would put the ceiling near
+  62.8 GB against a peak used of 46,807 — **inference, not a measurement; do not quote it as one.**
+- **AND THE LIMIT HAS REACHED 60,432 MB, not the 47.9 GB every earlier entry lists.** The
+  handover's four limits (36.7 / 39.8 / 45.5 / 47.9 GB) are a slice of a range that runs to 59 GiB.
+  Quoting the top of a sampled range as the top of the range is how the margin looked thin.
+- **THE INSTRUMENT'S OWN SENTENCE ASSERTED THE REFUTED MECHANISM, AND IT IS THE EXPENSIVE ONE.**
+  `bot-ask memory` printed *"system managed (Windows grows it lazily, which is what loses a
+  burst)"* — a mechanism written into the diagnostic, contradicted by the series it sits beside,
+  **and the single sentence most likely to send somebody to `fix-pagefile.ps1 -Apply`, which costs
+  a REBOOT and with it the RC session.** Corrected in `bot-commands.mjs` with the measurement.
+  Same family as the tidy-story-as-fact failures this file records; this one was in the tool.
+
+#### AND WINDOWS HAS ALREADY DONE OPTION B BY ITSELF — THE PAGEFILE SETTLED (2026-09-11)
+**Since 2026-09-10 12:40 UTC the commit limit has been a CONSTANT 47,870 MB across 913 samples**
+— one distinct value, no oscillation, no shrink-back — where before it swung between 17,150 idle
+and 55,788 during a burst, several times a day.
+- **So the pagefile now sits at 31 GB permanently and a burst needs NO growth at all.** Idle
+  headroom is **40,902 MB** instead of 10,042, and the two ramps since the settle ran at
+  1,063 MB and 6,182 MB of spare without the limit moving once.
+- **That is precisely what a fixed pre-allocated pagefile would buy, delivered for free and
+  without a reboot.** It is the second independent reason B is off.
+- **WHY IT SETTLED IS NOT ESTABLISHED — do not write a mechanism in.** What matters is the
+  consequence: **it is NOT durable.** A reboot resets the pagefile to its small initial size and
+  the oscillation resumes, so this is a reason not to spend a reboot rather than a permanent fix.
+
+#### THE BAIL ARM HAS A COMMIT TRIGGER NOW (option A) — and what it CANNOT do
+`writeLatestMemory` dropped `commitUsedMb`/`commitLimitMb`, which `memory-sample.mjs` had
+computed all along — so the bail arm, in a different process whose timer must never spawn
+PowerShell, had no way to see the one figure that moves during the burst. Two fields through the
+file, one condition, one log line.
+- **BACKTESTED OVER THE 19 ONSETS IN THE SEVEN DAYS TO 09-11: earlier on 11 of them by a median
+  77 s (max 162 s), NEVER later, taking a median 1,984 MB off the peak commit (max 7,009).** On
+  the 48 h to 09-11 it caps the peak at 44,354 MB instead of 46,807, i.e. the tightest headroom
+  against the settled 47,870 limit goes **1,063 -> 3,516 MB**. That independently reproduces
+  `ramp-scan.mjs`'s own recorded backtest of the same bar ("earlier on 11 of them by 60-162 s,
+  never later"), from a different direction.
+- **THE BAR IS IMPORTED, NEVER COPIED.** `RAMP_SCAN_COMMIT_MB` (9000) is already backtested over
+  6,266 samples — median commit 7,213 MB, only THREE between 9,000 and 12,000 — and the two arms
+  must not disagree about which EVENT they see, the rule that already pins `RAMP_SCAN_MB` and
+  `RAMP_MB` equal. `ramp-scan.mjs` has no top-level side effects, so importing it starts nothing.
+  A guard fails if `rc-keepwarm` grows a commit bar of its own.
+- **WHAT IT CANNOT DO, AND THE HONEST HEADLINE: at the sample where it first fires, commit is
+  ALREADY 35,794-48,444 MB — the mapping is complete.** The full ~32 GiB step is present at the
+  FIRST elevated sample on every event, while `rc_mb` is still 1,688-3,452. **Nothing that reads
+  a file another process writes every two minutes can ever catch the burst.** A is one sampler
+  tick less of the private-byte tail, and that is all it is.
+- **BOTH-CONDITIONS SURVIVES, AND THE STALL IS WHAT MAKES A WHOLE-BOX FIGURE SAFE TO ACT ON.**
+  Commit is shared with the owner's own desktop, so commit alone could be about something that is
+  not Chromium — but across 133 recorded tab-closes the longest trip is 71,552 ms and not one
+  exceeds 90,000, so a 120-second stall is very nearly diagnostic of a ramp by itself.
+- **ABSENT IS UNKNOWN AND MUST NOT FIRE.** A box on an older build writes no commit field, and
+  the negated form `!(commit < bar)` would fire on EVERY tick of one — the trap `ramp-scan.mjs`
+  names at its own commit trigger. Defended twice (the writer normalises to null, and JSON cannot
+  carry a NaN), which is why the naive mutations SURVIVE and the two that remove either defence
+  are caught. **A surviving mutation is not always a weak guard; check whether a second defence
+  is what absorbed it.**
+- **THE DUMP PATH IS UNTOUCHED, checked rather than assumed.** The 90 s stall trigger already
+  forces `maybeMemoryDump(null, 'ramp')` before every arm, and the bail needs 120 s — so the dump
+  is always requested first and a second bar on the bail cannot race it.
+- **EXERCISED OFF-BOX, WITH NO RAMP.** `ramp-arm-probe.mjs` replays the real 09-10 04:25:09
+  reading (rc 2,366 under the bar, commit 38,596 over it) against a real Chromium and asserts the
+  trigger, plus the older-box case. Nine mutations, each verified to APPLY and to fail.
+- **`tsconfig.worker.json` CAUGHT WHAT THE SUITE COULD NOT.** The JSDoc `@returns` on
+  `readLatestMemory`/`rampBailDecision` is what TypeScript reads, so the new fields were invisible
+  to the type checker until it was updated — eight errors the tests were perfectly happy with.
+- **IT COSTS NO FORCED BOX UPDATE, WHICH IS MOST OF WHY IT WAS WORTH DOING.** It is bot-side, so
+  it arms `CH_BOT_CODE_AT` and the `autocart.bot_version` warn — **and the box updates itself in
+  the 02:00-05:00 PT quiet window**, which is how it took `a68a6d2` overnight on 09-11. So this
+  lands free and **no RC session is spent**. Do not press "Update now" for it; confirm arrival
+  with `bot-ask git-status`, never `autocart.bot_version`.
+
+#### THE REAL LEVER IS THE NUMBER OF OKTA TRIPS, AND IT IS ARITHMETIC (2026-09-11)
+A is aftermath. What actually decides how often the box takes a 32 GiB commit charge is how often
+we navigate to Okta, and that is measured:
+
+    renewal trips        229 over 164.6h = 33.4/day
+    gap bands            backoff(30m) 123 · minGap(10m) 69 · alive(~60m) 7 · other 29
+    failure-band gaps    192 of 228 = 84%
+    onsets               18 over the same window = 2.62/day
+    RAMP RATE            18 onsets / 229 trips = 1 in 12.7
+
+- **EACH SUCCESSFUL REPAIR COSTS ABOUT 2.6 RAMPS.** 229 attempts bought **7** successes, so a
+  repair costs ~33 attempts, and 12.7 attempts cost one 32 GiB burst. That is the trade, stated
+  as a ratio rather than as a feeling.
+- **THE BACKOFF IS FLAT AND NEVER ESCALATES.** `RENEW_BACKOFF_GAP_MS` is 30 min after 3 failures
+  and stays 30 min for ever, so a persistent failure — which is what it is, by the module's own
+  comment: *"when that cookie is gone every attempt will fail identically"* — is retried ~28
+  times a day indefinitely. Escalating 30 -> 60 -> 120 -> 240 takes that to **10/day**, i.e.
+  total trips 33.4 -> ~15/day and ramps **2.62 -> ~1.2/day**.
+- **NOT BUILT, AND IT IS NOT A DRIVE-BY.** `planRenewal` is bot-side, it is what repairs a
+  session between releases, and the SPA's silent re-mint is an OBSERVATION of RC's behaviour
+  rather than a guarantee. **One real cost to design around:** a `maybeAutoLogin` success does
+  not call `recordRenewal`, so `failures` stays high — a fresh lapse would then start at the
+  escalated gap rather than at `minGap`. The counter needs resetting when a live token is
+  observed, or the escalation quietly delays the first attempt of a new episode.
+- **AND EVEN THAT IS A REDUCTION IN FREQUENCY, NOT A CURE.** Every remaining ramp still charges
+  the full 32 GiB in <=34 s. There is no lever on our side of the allocation; the only thing that
+  changes per-event cost is Chromium's, and it is compile-time.
+
+#### `exec_select` SILENTLY RETURNS A SCALAR FOR A BARE COLUMN ALIAS
+`SELECT taken_at::text t, round(commit_used_mb) u` comes back as the bare string
+`"2026-09-11 17:10:58"` instead of a row object, while the same query with `AS t` / `AS u`
+returns `{t, u}`. Valid Postgres either way; the wrapper is what differs. **The failure is a row
+count that looks right with every field `undefined`** — which reads as the query having returned
+nothing useful rather than as a syntax preference. **Always `AS` in a `query()` call.**
+
 > ### 2026-09-11 — THE LEAK IS DIAGNOSED AND CONTAINED. IT IS **NOT FIXED**.
 >
 > **STATUS IN ONE LINE: it still happens every few hours, the containment catches every one, and
@@ -10474,7 +10604,11 @@ label is American and which ships to the **United States storefront only**.
 >
 > **FOUR OPTIONS. None is taken; three of them are decisions rather than tidy-ups.**
 >
-> **A — GIVE THE BAIL ARM A COMMIT TRIGGER. Cheapest, and the plumbing is one field short.**
+> **A — GIVE THE BAIL ARM A COMMIT TRIGGER.** ~~Cheapest, and the plumbing is one field
+> short.~~ **BUILT 2026-09-11 — see "THE BAIL ARM HAS A COMMIT TRIGGER NOW" above for the
+> backtest (earlier on 11 of 19 onsets, median 77 s, median 1,984 MB off the peak) and for
+> what it CANNOT do (the mapping is already complete at the sample where it first fires).**
+> The original reasoning, which still stands:
 > `memory-sample.mjs` ALREADY computes `commitUsedMb` and `commitLimitMb`; `writeLatestMemory`
 > (`ramp-bail.mjs`) **drops them**, persisting only `at`, `rcMb`, `maxPid`, `maxType` — so the
 > bail's timer, which must never spawn PowerShell, has no commit figure to read.
@@ -10492,7 +10626,18 @@ label is American and which ships to the **United States storefront only**.
 >   desktop. Pair it with the stall the way the rc arm is paired, or it is the cry-wolf failure
 >   this file has fixed three times.
 >
-> **B — STOP THE PAGEFILE HAVING TO GROW DURING THE BURST.** `mini-pc\fix-pagefile.ps1` exists,
+> **~~B — STOP THE PAGEFILE HAVING TO GROW DURING THE BURST.~~ ANSWERED AND OFF, 2026-09-11.**
+> **The precondition below is settled and it is TRACKING**: the limit grows on essentially
+> every sample and never stalls while used climbs, the fastest being **+30,902 MB in 33
+> seconds** finishing 1,456 MB ahead — against a burst of <=34 s. And **Windows has already
+> done B by itself**: the limit has been a constant 47,870 MB since 2026-09-10 12:40 UTC
+> across 913 samples, so a burst now needs no growth at all. **Do not spend a reboot on
+> it.** The one thing that survives: the settle is NOT durable — a reboot resets it. Full
+> account in "THE COMMIT RESIDUAL: THE PAGEFILE TRACKS, AND OPTION B IS OFF" above. The
+> original entry follows, kept because its reasoning about the precondition is how the
+> question got asked:
+>
+> **B (original).** `mini-pc\fix-pagefile.ps1` exists,
 > reports by default, writes only with `-Apply`, turns automatic management off FIRST and reads
 > the setting back. **The change is not live until a REBOOT, which ends the RC session.**
 > - **CLAUDE.md CURRENTLY SAYS DO NOT** — *"a bigger pagefile buys a bigger burst up to 32 GiB and
