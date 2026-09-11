@@ -33,12 +33,12 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — 2026-09-10 21:55 UTC
+## 1. State — 2026-09-10 22:20 UTC
 
 | | |
 |---|---|
-| master | `7333940` (#325) — **verify against `origin/master`, this line ages** |
-| mini-PC | `7333940` — box and master agree; the commit trigger below **has now FIRED** |
+| master | `29555e0` (#331) — **verify against `origin/master`, this line ages** |
+| mini-PC | `7333940` (#325) — the gap to master is **docs only**, so no box update is owed; the commit trigger below **has FIRED** |
 | last ramp | **2026-09-10 19:17 UTC — the commit arm fired DURING the burst**, the first walk ever taken before the private bytes climbed: 32,774 MB across 16,385 regions **at private 1,843 MB**. `target-silent` ramp dump for the third time (do not spend another ramp on it). Previously **17:53 UTC**, `trigger: "both"` — the commit arm's first firing. Ended by `bail:ramp` on a **57.5-min-old** browser; whole event inside ONE two-minute sample (commit 6,968 → 38,949 → 6,945 MB). **Read `bot_events` for `ramp-scan`, not the tail of the memory series** — a sub-four-minute ramp leaves one sample and rolls out of the default window within the hour, and this one was very nearly missed that way. **Two things it left open:**
 no `ramp` mem-dump landed despite a **150 s** stall (the dump's trigger is 90 s, so it was crossed
 a minute before the bail) — **still open**, and the discriminator is the `alloc trail: resident
@@ -49,7 +49,7 @@ numeric `carted` fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT` and
 the keep-warm. Read live at 19:35:40; see CLAUDE.md → "A NUMERIC TEST FIXTURE PUTS A PHANTOM
 RELEASE IN FRONT OF THE KEEP-WARM". **It explains the STEP, not the stall.** On the next ramp,
 read `tail-log rc-keepwarm` BEFORE anything else. |
-| **quiet since** | **`bot_events` has had NOTHING since 19:31:28** — 2h22m against a `tab-close` every ~31 min before it. **That is the HEALTHY regime, not a dead box.** `session_live_since` reads **20:32:09**, an hour after the last renewal trip and with no renewal in between, so RC's SPA re-minted silently; `planRenewal` then stands down while the token is alive, which removes the reason for the next trip and sustains itself. **Every renewal runs in a throwaway tab and every tab close emits `tab-close`, so no event is positive evidence no trip ran.** An empty `bot-events-readout` therefore reads exactly like a wedge — **the discriminator is one health read** (`autocart.rc_session` carries `checked Ns ago`). `chromium_memory_samples` keeps arriving either way and settles nothing: it is posted by `bot.mjs`, not the keep-warm. See CLAUDE.md → "AND `bot_events` GOES SILENT FOR HOURS WHEN THE SESSION IS HEALTHY". |
+| **quiet since** | **`bot_events` has had NOTHING since 19:31:28** — 2h22m at the first read and **still unbroken at 22:17 (2h46m)**, against a `tab-close` every ~31 min before it. **That is the HEALTHY regime, not a dead box.** `session_live_since` reads **20:32:09**, an hour after the last renewal trip and with no renewal in between, so RC's SPA re-minted silently; `planRenewal` then stands down while the token is alive, which removes the reason for the next trip and sustains itself. **Every renewal runs in a throwaway tab and every tab close emits `tab-close`, so no event is positive evidence no trip ran.** An empty `bot-events-readout` therefore reads exactly like a wedge — **the discriminator is one health read** (`autocart.rc_session` carries `checked Ns ago`). `chromium_memory_samples` keeps arriving either way and settles nothing: it is posted by `bot.mjs`, not the keep-warm. See CLAUDE.md → "AND `bot_events` GOES SILENT FOR HOURS WHEN THE SESSION IS HEALTHY". **AND THE GAPS BETWEEN THOSE `tab-close` ROWS READ `planRenewal` RETROSPECTIVELY** — each stand-down branch has its own cadence (10 / 30 min against a ~60 min token), and over 191 renewal-to-renewal gaps **163 sit in a failure cadence against 7 in the alive band: 96% of the gaps that land on a recognisable branch**, chronic across every day the table covers. |
 | health | **18 of 19 ok** at 21:53 (`rc_session` live, token 39m, `okta=ALIVE`); the one warn is `bot_version`, the ordinary web-ahead-of-box gap, and its own detail says *"No bot-side code in the gap"* |
 | fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
@@ -337,6 +337,24 @@ legitimate outcome; quietly building a fifth instrument is not.
   deployed and web-side, but `env()` is 0 in headless Chromium and this container cannot reach the
   live site, so **nothing has seen it on a phone.** Open `/claim` or `/privacy` on the Pixel; the
   CampHawk mark should clear the clock. Ten seconds.
+- **THE RENEWAL HAS FAILED 96% OF THE TIME FOR SIX DAYS, AND `planRenewal` IS DELIBERATELY
+  UNTOUCHED.** Of 191 renewal-to-renewal `tab-close` gaps, **163 sit in a failure cadence and 7 in
+  the alive band** — chronic, not an episode, so the 08-22 entry's *"20 attempts in a row have
+  failed"* is the steady state rather than a moment. (**Filter to `label = 'renewal'`**, and note
+  that 89% is a different quantity — the share landing on a named branch at all, which the first
+  draft of the entry nearly published as the failure rate.) **It costs the session nothing** (RC's
+  SPA re-mints silently) **and it is not free**: ~33 Okta navigations a day, at least ~28
+  accomplishing nothing, from the address that has eaten a twelve-hour block — and an Okta navigation is the leak's own established trigger. **Do not
+  drive-by a change to it**: it is bot-side, it is what repairs a session between releases, and
+  the SPA's re-mint is an observation of RC's behaviour rather than a guarantee. It wants the
+  owner's word and the overnight reading below.
+- **THE OVERNIGHT READING IS NOW A ONE-QUERY JOB, AND NOBODY HAS TAKEN IT IN THREE WEEKS.** The
+  08-18 entry asks whether the SPA's self-renewal still holds after an overnight; answering it
+  used to mean reading a log that rolls at 16,000 characters. **It does not any more — the gap
+  between the last `tab-close` and the next one, over a night, IS the answer.** A gap of many
+  hours with `autocart.rc_session` healthy throughout is the SPA carrying the session unaided; a
+  gap that closes back to 10-30 minutes is our renewal resuming and failing. Both are in
+  `bot_events`, retrospectively, whenever somebody looks.
 - **THE APP/STORE SURFACE IS THE SIDE LANE'S AS OF 2026-09-10** (owner's call, recorded in
   `docs/LANES.md`): `docs/APP-STORE.md`, `docs/PLAY-STORE.md`, `docs/STOREKIT-PLAN.md`, both store
   consoles and RevenueCat's. **A main-lane session should not pick these up** — read

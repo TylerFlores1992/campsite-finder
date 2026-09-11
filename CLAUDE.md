@@ -6082,11 +6082,114 @@ for the six hours before it — **two hours and twenty-two minutes of complete s
   established — so one of the pair is of uncertain provenance. **Quote it as a floor candidate,
   not a measurement.** Third window, third number; the standing instruction to quote the range
   rather than a headline is what this reinforces.
+- **STILL UNBROKEN AT 22:17 — 2h46m, RE-READ RATHER THAN ASSUMED.** The 2h22m above is what the
+  first read saw; the newest `bot_events` row is still 19:31:28 three quarters of an hour later.
+  **That is the regime holding, not a second finding**, and it is the same reading the overnight
+  question wants — just not yet across a night.
 - **NO RAMP IN THE 2.6h OF SILENCE, WHICH IS CONSISTENT AND IS NOT EVIDENCE.** No renewal means no
   Okta navigation means no trigger, which fits the ESTABLISHED finding — but 2.6h sits inside the
   ordinary range, so it discriminates nothing on its own. **The reading that would matter is the
   same pattern holding across an overnight**, which is what the 08-18 entry asked for and still
   nobody has.
+
+###### `tab-close` GAPS READ `planRenewal` RETROSPECTIVELY — AND THE RENEWAL FAILS 96% OF THE TIME (2026-09-10)
+Found while checking why the events above stopped, and the instrument matters more than the day.
+**Each of `planRenewal`'s stand-down branches has its own cadence, and `bot_events` has recorded
+every trip's wall clock since migration 075 — so the GAPS between consecutive `tab-close` rows say
+which branch the schedule sat in, hours or days after the fact, with no log and nothing from the
+box.** Nobody had ever read them.
+```
+floor    RENEW_FLOOR_MS      5m  |  backoff  RENEW_BACKOFF_GAP_MS  30m, after 3 failures
+minGap   RENEW_MIN_GAP_MS   10m  |  alive    stands down for the token's ~60m life
+```
+- **FILTER TO `label = 'renewal'` FIRST, AND THAT IS NOT A DETAIL.** `tab-close` has three
+  emitters — **198 `renewal`, 4 `warmup`, 1 `auto-login` of 203 rows** — so an unfiltered series
+  measures the gap from a warm-up to a renewal as though it were a schedule decision, and carries
+  five gaps that are not schedule decisions at all. Re-deriving this without the filter gave a
+  different population (196 gaps, 6 in the alive band). **It is NOT what produced the correction
+  below** — that run changed the bands as well, so the two are not separated, and saying "the
+  filter flipped the verdict" would be a tidy story rather than a measurement.
+- **THE BANDS ARE SEPARABLE, WHICH IS WHAT MAKES IT AN INSTRUMENT AND NOT A STORY.** The
+  distribution over **191 renewal-to-renewal gaps under four hours** is starkly bimodal, and the
+  two modes sit on the two failure cadences plus one trip (~68s):
+  ```
+  minGap band   9.5-15m   63        alive band  55-75m    7
+  backoff band   29-35m  100        neither              21
+  ```
+- **AND THE SHORT BANDS ARE FAILURES BY THE CODE, NOT BY INFERENCE.** Every branch below `alive`
+  is reached only once that first check has FAILED — i.e. the token is null or lapsed at the
+  moment of the poll. For a gap of 10 or 30 minutes against a **60-minute** token that can only
+  mean the previous attempt did not mint one. (`minGap` and `backoff` additionally require
+  `token === state.lastToken`, so those two are explicit.) **Only the alive band requires a token
+  that was really minted.**
+- **SO: 163 of 191 gaps sit in a failure cadence and SEVEN in the alive band — 85% of all gaps,
+  and 96% of the gaps that land on a recognisable branch at all.** It is CHRONIC rather than an
+  episode: every day the table covers, and **every day carrying more than ten attempts succeeds
+  8% of the time or less** (2% · 0% · 7% · 4% · 8%):
+  ```
+  09-05   4 fail /  0 ok   <- 6 gaps only; the box picked the instrument up partway through
+  09-06  44 fail /  1 ok      09-08  27 / 2      09-10  35 / 3
+  09-07  28 fail /  0 ok      09-09  25 / 1
+  ```
+- **THE FIRST DRAFT OF THIS ENTRY PUT 89% IN THE HEADING, AND 89% IS A DIFFERENT QUANTITY.**
+  170 of 191 gaps land on a NAMED branch — 89% — and that number is about how well the instrument
+  attributes, not about how often the renewal fails. **It was one edit from being published as the
+  failure rate**, in the heading and in two files, which would have understated a 96% failure as
+  an 89% one *and* silently discarded the "21 gaps this cannot explain" caveat by folding them in.
+  Caught by re-deriving the figures before committing them rather than by re-reading the draft.
+  **Two numbers of the same size describing different denominators is the house shape** — the
+  same trap as `status = 'sent'`, one layer up.
+- **THAT REVISES TWO THINGS IN THIS FILE.** The 08-22 entry records *"THE RENEWAL HAS FAILED 20
+  TIMES RUNNING AND IS IN BACKOFF"* as a moment worth noting; **it is the steady state.** And the
+  five 31.5-minute gaps that opened this investigation today — 14:08 → 16:45, the backoff to
+  within four seconds five times running, with `okta=GONE(404)` independently read at 16:58 **at
+  the end of that window** — are **one ordinary instance of it, not an event.** Do not write them
+  up as one. (The Okta reading is evidence about 16:58; it covers the preceding six hours only by
+  continuity, since an Okta session does not come back on its own.)
+- **IT COSTS THE SESSION NOTHING — AND IT IS NOT FREE.** The session is healthy and the token
+  keeps being re-minted, none of it ours: the entry above shows the SPA doing it silently while
+  our renewal has stopped running at all. **But 198 trips in six days is ~33 Okta navigations a
+  day, at least ~28 of them accomplishing nothing** (163 failures over the six days is the
+  FLOOR — the 21 unattributed gaps could go either way), from the residential address that has
+  eaten a
+  twelve-hour block — and an Okta navigation is the leak's own ESTABLISHED trigger. So the two
+  standing costs of this are anti-bot exposure and the ramps.
+  - **THAT PUTS NUMBERS UNDER A READING THIS FILE ALREADY HAS.** 2026-08-15: *"the automation
+    answer is: DON'T RENEW THE TOKEN, re-run the bootstrap"* — argued then from two hand-read log
+    lines, and now with a six-day denominator behind it.
+  - **NOT ACTED ON, AND NOT A DRIVE-BY.** `planRenewal` is bot-side, it is what repairs a session
+    between releases, and the SPA's re-mint is an OBSERVATION of RC's behaviour rather than a
+    guarantee — the 08-18 entry's own caveat (*"two cycles is not a regime"*) has still never been
+    answered across an overnight. Removing our renewal on the strength of the SPA covering for it
+    is a decision with a measurement behind it, not a tidy-up.
+- **WHAT IT DOES NOT SAY: WHY they fail.** `tab-close` carries `tripMs`, `closeMs`, `hung` and
+  `ramMb` and **no verdict**, so which attempt succeeded and which did not is recoverable only as
+  a band, never as a reason. Today's 12m08 gap at 16:57 is the sharp edge of that: it precedes the
+  forced warm-up by one minute and is already `minGap` rather than backoff, so the failure counter
+  had dropped below three before anything was forced — **and nothing in these events can say what
+  reset it.** Do not narrate it. **The 21 unattributed gaps are the same limit**: 4-8 minutes
+  (under the floor, so not a schedule decision at all), 15-28, 40-55, and 80-233 — each is a
+  question this table cannot answer, and folding them into either verdict is the thing the
+  correction above nearly did.
+- **THE FORCED WARM-UP FILED AS "MISSED" IS THEREFORE NOT CLEANLY CREDITABLE EITHER**, and it
+  still did what the 09-07 entry records: it established an Okta session (`OK Okta session
+  established`, 15.6s, 413 MB, no ramp), which is the resource the backoff's own comment says the
+  failures are about — *"when that cookie is gone every attempt will fail identically until a
+  human signs in."* Consistent with removing the cause; **not proof**, because the counter had
+  already reset.
+- **ONE FREE BOUND ON THE LEAK RIDES ALONG: 198 renewal trips against 17 onsets**, both counted
+  over the same window (`bot_events` starts 2026-09-04 22:33, and the onset bar is the sampler's
+  own 1,500 MB) — so a renewal trip ramps **at most about one time in twelve.** First
+  quantification of "most trips are cheap", and a BOUND rather than a rate **in a known
+  direction**: `auto-login` and `warmup` navigate to Okta as well, so some of those 17 are not
+  renewals, which can only make the true figure rarer.
+- **AND IT MAKES THE OVERNIGHT READING A ONE-QUERY JOB, WHICH IS WHY IT HAS NEVER BEEN TAKEN.**
+  The 08-18 entry asks for "the same pattern still holding after an overnight" and nobody has
+  answered it in three weeks, because answering it used to mean reading a log that rolls at 16,000
+  characters. It does not any more: **the gap between the last `tab-close` and the next one, over
+  a night, IS the answer** — a gap of many hours with `autocart.rc_session` healthy throughout is
+  the SPA carrying the session unaided, and a gap that closes back to 10-30 minutes is our renewal
+  resuming and failing. Both are in `bot_events`, retrospectively, whenever somebody looks.
 
 #### WHEN A RAMP CAN BE FORCED, MEASURED RATHER THAN ESTIMATED (2026-09-09)
 The recipe needs **Okta GONE *and* the RC token dead**, and the binding half is Okta's ABSOLUTE
