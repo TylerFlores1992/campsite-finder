@@ -7261,9 +7261,20 @@ Every walk on file, with the OS line beside the count:
   to 291 MB of the commit limit is how `supervise.ps1` could not spawn a shell on 2026-08-12
   and how both Scheduled Tasks went silent on 08-17. **The containment caps the ramp; it does
   not stop the box being walked to the edge of its commit limit first.**
-- **DO NOT "FIX" THIS BY ENLARGING THE PAGEFILE.** On the evidence a bigger pagefile buys a
-  bigger burst up to 32 GiB and no further, which is more commit taken and nothing gained.
-  `fix-pagefile.ps1` exists and this is not a reason to run it.
+- ~~**DO NOT "FIX" THIS BY ENLARGING THE PAGEFILE.** On the evidence a bigger pagefile buys a
+  bigger burst up to 32 GiB and no further, which is more commit taken and nothing gained.~~
+  **THE PREMISE WAS RETIRED THE NEXT DAY AND THE CONCLUSION IS NOW UNSUPPORTED (2026-09-11).**
+  Struck rather than deleted, because "it buys a bigger burst" is exactly the sentence a later
+  reader quotes as a refusal. The burst is capped by **Chromium** at 32 GiB — one constant, one
+  function, independent of the pagefile — so a larger limit **cannot** buy a larger burst. What a
+  larger limit would buy is headroom for everything else on the box while one is in flight, which
+  is not nothing: commit exhaustion is the only failure this box has had that needed a human.
+  **It is still NOT a recommendation, and it has a precondition nobody has settled:** every
+  observed spare sits **665-1,072 MB ahead of used across four different limits** (36.7 / 39.8 /
+  45.5 / 47.9 GB), which is the signature of a system-managed pagefile growing exactly as much as
+  it needs — i.e. Windows keeping up — rather than of a box about to run out. **If that is
+  tracking rather than pressure, enlarging it buys nothing after all.** Separate the two before
+  running `fix-pagefile.ps1 -Apply`; it needs a REBOOT, which ends the RC session.
 
 **ONE CANDIDATE ELIMINATED FROM SOURCE while checking the above.** `base::UnsafeSharedMemoryPool`
 is a pool of retained `UnsafeSharedMemoryRegion`s — one held handle each, mapped, reusable, which
@@ -7566,8 +7577,17 @@ full Okta trip traces 112-239 responses. **The arithmetic does not close.**
   dump of a healthy REPLACEMENT browser; all four ramp dumps are `target-silent`, so `shared_memory`
   has never been read for a ramping renderer. The cap proves it IS base shared memory.
 - **The fix is not ours to make.** No flag shrinks the pipe, the drain is a posted task, and the
-  wedge is RC's own promise loop. **The containment we already have is the remedy** — and it is now
-  a bounded problem rather than an open-ended one.
+  wedge is RC's own promise loop. **The containment we already have is what bounds it** — and it is
+  now a bounded problem rather than an open-ended one.
+- **BUT "CONTAINED" IS NOT "CURED", AND THE RESIDUAL IS COMMIT (measured 2026-09-11).** Six onsets
+  in the following 48 hours, `bail:ramp` on all six, peak `rc_mb` down to **4,661 MB** from 8-9 GB
+  — so the containment really does cut the private-byte climb every time. **It does not touch the
+  mapping**, which completes in ≤34s: COMMIT still reached **46,807 MB of a 47,870 MB limit**, with
+  **665 MB** of headroom at the tightest. Free RAM never fell below 5,140 MB, so the arm that
+  watches RAM structurally cannot help. **Nothing anywhere is gated on commit**, and commit
+  exhaustion is the only failure this box has had that needed a human. Four options, with their
+  predicted readings and counter-arguments, are under **"THE RESIDUAL IS COMMIT, AND NOTHING
+  WATCHES IT"** in the Open block.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
@@ -10364,12 +10384,28 @@ label is American and which ships to the **United States storefront only**.
 
 ## Open / next session
 
-> ### 2026-09-11 — THE LEAK IS EXPLAINED AND REPRODUCED. STOP HUNTING THE ALLOCATOR.
+> ### 2026-09-11 — THE LEAK IS DIAGNOSED AND CONTAINED. IT IS **NOT FIXED**.
+>
+> **STATUS IN ONE LINE: it still happens every few hours, the containment catches every one, and
+> what is left is a COMMIT risk rather than a RAM one.** Measured off the box's own series on
+> 2026-09-11, over the preceding 48 hours (1,628 samples):
+> ```
+> onsets (rc family crossing 1500 MB)   6        most recent 10.4h before the reading
+> peak rc_mb                        4,661 MB     8,000-9,400 MB before the bail arm existed
+> peak COMMIT used                 46,807 MB     of a 47,870 MB limit
+> tightest COMMIT headroom            665 MB     09-10 04:26, used 40,175 / 40,840
+> minimum free RAM                  5,140 MB     the RAM arm's floor is 2,000 — it cannot fire
+> bail:ramp fired on                  6 of 6     ~2 minutes after each onset
+> ```
+> **THE PRIVATE-BYTE CLIMB IS GENUINELY CUT SHORT, EVERY TIME** — that is the containment working
+> and it is why the peak roughly halved. **The ~32 GiB MAPPING is untouched by any of it**: it
+> arrives in ≤34 seconds, faster than any arm can react to, and Chromium's own ceiling is what
+> stops it going further. **Do not read "contained" as "cured".**
 >
 > **Read `CLAUDE.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`" before doing
 > anything memory-related. Every open leak question above it is either answered or superseded.**
 >
-> **THREE THINGS ARE NOW PROVED, and none of them needed a ramp, a box update or an instrument.**
+> **THREE THINGS ARE PROVED, and none of them needed a ramp, a box update or an instrument.**
 > 1. **The 32 GiB ceiling is `base::SharedMemorySecurityPolicy::kTotalMappedSizeLimit`** — a
 >    per-process budget on total mapped shared memory, `>=` so the maximum pure-2 MiB count is
 >    **16,383**, against a measured 16,381-16,383 on six walks with the 1-3 residual explained to
@@ -10393,12 +10429,12 @@ label is American and which ships to the **United States storefront only**.
 > the moment it arrives; the drain is a **posted task**. So a wedged main thread cannot stop the
 > mapping, only the release — and `deferred_messages_` has no bound.
 >
-> **WHAT IS STILL OPEN, AND IT IS AN INSTRUMENT GAP RATHER THAN A DOUBT.** One pipe per response
-> needs ~14,433 responses in that renderer inside the burst; the resident page's counter read
-> **20 lifetime requests**. `requestCounter.attach(page)` is on the RESIDENT page alone and
-> `withNetworkTrace` is equally page-scoped, so **dedicated workers, service workers and the
-> throwaway tabs are invisible to both**. Closing that is the next cheap thing. **Do not read
-> "20 requests" as "20 responses in that renderer."**
+> **WHAT IS STILL OPEN ON THE DIAGNOSIS, AND IT IS AN INSTRUMENT GAP RATHER THAN A DOUBT.** One
+> pipe per response needs ~14,433 responses in that renderer inside the burst; the resident page's
+> counter read **20 lifetime requests**. `requestCounter.attach(page)` is on the RESIDENT page
+> alone and `withNetworkTrace` is equally page-scoped, so **dedicated workers, service workers and
+> the throwaway tabs are invisible to both**. **Do not read "20 requests" as "20 responses in that
+> renderer."**
 >
 > **THINGS TO STOP DOING.** Stop hunting a 2 MiB constant (the size grep is clean; ipcz proves a
 > 2 MiB allocation can be COMPUTED). Stop citing *"the sections are NOT base shared memory"* —
@@ -10406,13 +10442,95 @@ label is American and which ships to the **United States storefront only**.
 > are `target-silent`. Stop spending ramps on the memory dump: a wedged renderer contributes zero
 > allocator dumps at every level, measured off-box.
 >
-> **AND THERE IS NO FIX ON OUR SIDE, WHICH IS WORTH SAYING PLAINLY.** The pipe size is
-> compile-time (512 KiB only on ChromeOS and 32-bit — no Finch flag), the drain is Chromium's,
-> and the wedge is RC's own promise loop. **What changed is that the damage is now known to be
-> hard-capped by Chromium at 32 GiB of commit, in memory that is never touched** — which is
-> exactly why the RAM arm has sat out fifteen-plus ramps: it watches the one resource that is
-> not running out. The containment already shipped is the remedy; this was an open-ended risk
-> and is now a bounded one.
+> **AND THERE IS NO FIX ON OUR SIDE OF THE ALLOCATION, WHICH IS WORTH SAYING PLAINLY.** The pipe
+> size is compile-time (512 KiB only on ChromeOS and 32-bit — no Finch flag), the drain is
+> Chromium's, and the wedge is RC's own promise loop. What changed is that the damage is now known
+> to be hard-capped by Chromium at 32 GiB of commit, in memory that is never touched — which is
+> exactly why the RAM arm has sat out fifteen-plus ramps: **it watches the one resource that is
+> not running out.** That makes this a **bounded** risk rather than an open-ended one. **It does
+> not make it a closed one** — see directly below.
+>
+> #### THE RESIDUAL IS COMMIT, AND NOTHING WATCHES IT (2026-09-11) — the next piece of work
+>
+> Every arm this repo has built watches **free RAM** or the **rc family's private bytes**. The
+> burst spends neither: it charges ~32 GiB of commit that is never written. So the one resource
+> that actually runs low during a ramp is the one nothing is gated on.
+>
+> **THE BOX, READ 2026-09-11 16:15 UTC via `bot-ask memory`:**
+> ```
+> RAM       15.7 GB total, 10.4 GB free
+> COMMIT     7.0 GB used of 46.7 GB limit   (idle)
+> PAGEFILE  C:\pagefile.sys — 31.0 GB allocated, peak 0.0 GB, SYSTEM MANAGED
+> ```
+> **`peak 0.0 GB` is the confirmation that the 32 GiB is never touched** — 31 GB of pagefile
+> charged and essentially nothing ever written to disk. It also means a larger pagefile costs
+> disk, not I/O.
+>
+> **WHY IT MATTERS:** commit exhaustion is the only failure this box has had that needed a human.
+> On 2026-08-12 `supervise.ps1` could not start a shell ("the paging file is too small"), taking
+> every remote lever with it, and the machine was power-cycled by hand; on 08-17 both Scheduled
+> Tasks stopped together. **The bail arm does not help there, because the burst is complete
+> before it can fire.**
+>
+> **FOUR OPTIONS. None is taken; three of them are decisions rather than tidy-ups.**
+>
+> **A — GIVE THE BAIL ARM A COMMIT TRIGGER. Cheapest, and the plumbing is one field short.**
+> `memory-sample.mjs` ALREADY computes `commitUsedMb` and `commitLimitMb`; `writeLatestMemory`
+> (`ramp-bail.mjs`) **drops them**, persisting only `at`, `rcMb`, `maxPid`, `maxType` — so the
+> bail's timer, which must never spawn PowerShell, has no commit figure to read.
+> - **PREDICTED READING, STATED BEFORE BUILDING (the house rule):** it is **not** a no-op. On
+>   09-10 19:16 commit read **44,354 MB while `rc_mb` was 1,869** — under `RAMP_MB_DEFAULT`
+>   (3000) — so a commit arm would have fired a full sampler tick EARLIER than the rc bar did on
+>   at least one of the six events.
+> - **WHAT IT CANNOT DO: prevent the mapping.** The burst is over in ≤34s. This shortens the
+>   window the box spends near its limit; it does not remove it.
+> - Testable off-box in seconds with `ramp-arm-probe.mjs` — three of the arm's four inputs are
+>   forgeable, which is why the trigger path no longer needs a ramp to exercise.
+> - **BOT-SIDE**, so it arms `CH_BOT_CODE_AT` → the `autocart.bot_version` warn → a box update,
+>   **which ends the RC session.** Land it with something else bot-side, or accept that cost.
+> - **BOTH-CONDITIONS STILL APPLIES.** A commit-only arm would fire on the owner using their own
+>   desktop. Pair it with the stall the way the rc arm is paired, or it is the cry-wolf failure
+>   this file has fixed three times.
+>
+> **B — STOP THE PAGEFILE HAVING TO GROW DURING THE BURST.** `mini-pc\fix-pagefile.ps1` exists,
+> reports by default, writes only with `-Apply`, turns automatic management off FIRST and reads
+> the setting back. **The change is not live until a REBOOT, which ends the RC session.**
+> - **CLAUDE.md CURRENTLY SAYS DO NOT** — *"a bigger pagefile buys a bigger burst up to 32 GiB and
+>   no further, which is more commit taken and nothing gained."* **That objection predates the
+>   ceiling finding by one day, and its premise is now measured**: the burst is capped by Chromium
+>   at 32 GiB **independently of the pagefile**, so a larger limit cannot buy a larger burst. What
+>   it buys is headroom for everything else on the box while one is in flight.
+> - **THE QUESTION THAT MUST BE SETTLED FIRST, AND IT IS NOT SETTLED: is 665 MB of spare PRESSURE
+>   or TRACKING?** Every observed spare sits **665-1,072 MB** ahead of used, across four different
+>   limits (36.7 / 39.8 / 45.5 / 47.9 GB). That is the signature of a system-managed pagefile
+>   growing exactly as much as it needs — i.e. Windows keeping up — **not** of a box about to run
+>   out. **If it is tracking, the objection stands and this option buys nothing.** If growth ever
+>   fails to keep pace with a 34-second burst, that IS the 08-12 failure, and a pre-allocated
+>   fixed pagefile removes the race. **Do not act on this without separating the two.**
+> - The absolute figures are the ones to read. **Every COMMIT PERCENTAGE in this file from 08-22
+>   to 08-28 is an artifact** of the limit chasing the used figure; the ratio pins near 100% all
+>   the way up and back down and is not measuring pressure.
+>
+> **C — STOP THE WEDGE. The only option that addresses the cause rather than the aftermath.**
+> The mapping needs a main thread that never returns to its message loop, which is RC's own
+> promise-rejection storm in the resident page. A resident browser recycled BEFORE it wedges
+> never bursts at all.
+> - **THE RECORDED COUNTER-ARGUMENT IS STRONG AND MUST NOT BE SKIPPED:** a browser REPLACEMENT is
+>   **8x enriched** before a ramp (11 of 26 onsets within 6 minutes of one, against 1.4 expected),
+>   and the 02:0x cluster turned out to be the update window restarting the browser. **Recycling
+>   more often may make this WORSE, not better**, and `restart-rc` is 2 for 2 as a deliberate
+>   forcing lever. Direction of causation is NOT established.
+> - **PARKING THE RESIDENT PAGE IS ALREADY REFUSED**, for a different and still-valid reason:
+>   `checkAndReport`'s localStorage rule would make the session verdict permanently INCONCLUSIVE,
+>   silencing `autocart.rc_session`, the 07:40 pre-flight and `holdAtRisk`'s phone alarm.
+> - What is genuinely unexplored is a **leading indicator** of the wedge — something that changes
+>   before the microtask queue stops draining. Nothing has looked.
+>
+> **D — DO NOTHING, DELIBERATELY.** Named as an option because it is a real one and should be
+> rejected on evidence rather than by momentum: the bail arm is 6 for 6, free RAM has not been
+> below 5.1 GB in 48 hours, the mapping is hard-capped by Chromium, and **the box has not needed
+> a human since 2026-08-17.** The cost of A and B is a box update or a reboot, each of which ends
+> the RC session; the cost of C is possibly making the thing worse.
 > ### 2026-09-10 — THE TRIAL RAN AND THE COMMAND-BUFFER CANDIDATE IS REFUTED
 >
 > **Read `CLAUDE.md` → "AND IT RAMPED ON TRIAL ONE" before touching anything GPU-related. The
