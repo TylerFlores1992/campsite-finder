@@ -57,9 +57,22 @@
  */
 import fs from 'node:fs';
 import { MEM_DUMP_TIMEOUT_MS } from './rc-mem-dump.mjs';
+// ONE DEFINITION OF THE COMMIT BAR, IMPORTED RATHER THAN COPIED. `ramp-scan.mjs` backtested
+// 9000 over every recorded event and the two arms must not disagree about which EVENT they
+// see — the same rule that pins `RAMP_SCAN_MB` and `RAMP_MB` equal. That module has no
+// top-level side effects, so importing it for a constant starts nothing.
+import { RAMP_SCAN_COMMIT_MB } from './ramp-scan.mjs';
 
 /** Where the sampler leaves its newest reading, beside the bot scripts. */
 export const MEMORY_LATEST_FILE = '.memory-latest.json';
+
+/**
+ * A figure or NULL — never 0, and never a coerced `NaN`. A scan that could not run writes
+ * null, and null is UNKNOWN: `Number(undefined)` is NaN and `Number(null)` is 0, and a 0
+ * commit reading would read as "the box is idle" at exactly the moment it is not.
+ * @param {unknown} v
+ */
+const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 /** How long the resident loop must have been stalled before it counts as a ramp in progress. */
 export const RAMP_STALL_MS_DEFAULT = 120_000;
 /** rc family total at which a silent renderer is a ramp. The same bar `ramp-scan.mjs` uses. */
@@ -82,6 +95,13 @@ export function writeLatestMemory(file, sample, { now = () => Date.now(), log = 
     rcMb: Number.isFinite(Number(sample?.rcMb)) && sample?.rcMb != null ? Number(sample.rcMb) : null,
     maxPid: sample?.maxPid ?? null,
     maxType: sample?.maxType ?? null,
+    // COMMIT IS WHY THIS FILE EXISTS FOR THE SECOND ARM. `memory-sample.mjs` has computed
+    // these all along and this writer dropped them, so the bail arm — in a DIFFERENT process,
+    // whose timer must never spawn PowerShell — had no way to see the one figure that moves
+    // during the burst. `rc_mb` is private bytes, i.e. the pages actually touched, and it is
+    // still under 2 GB when the ~32 GiB mapping is already complete.
+    commitUsedMb: num(sample?.commitUsedMb),
+    commitLimitMb: num(sample?.commitLimitMb),
   });
   const tmp = `${file}.${process.pid}.tmp`;
   try {
@@ -134,7 +154,15 @@ export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP
   }
   const rcMb = j?.rcMb == null ? null : Number(j.rcMb);
   if (rcMb == null || !Number.isFinite(rcMb)) return { known: false, why: 'memory reading has no rc figure', at, ageMs };
-  return { known: true, at, ageMs, rcMb, maxPid: j?.maxPid ?? null, maxType: j?.maxType ?? null };
+  // COMMIT IS OPTIONAL AND ITS ABSENCE IS NOT AN UNKNOWN READING. A box running a build older
+  // than this writes no commit field, and the whole reading must stay usable there — the arm
+  // then behaves exactly as it does today, on `rcMb` alone. `known` therefore still turns on
+  // the rc figure only.
+  return {
+    known: true, at, ageMs, rcMb,
+    commitUsedMb: num(j?.commitUsedMb), commitLimitMb: num(j?.commitLimitMb),
+    maxPid: j?.maxPid ?? null, maxType: j?.maxType ?? null,
+  };
 }
 
 /**
@@ -149,8 +177,9 @@ export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP
 export function rampBailDecision({
   stalledMs, memory,
   stallMs = RAMP_STALL_MS_DEFAULT, thresholdMb = RAMP_MB_DEFAULT,
+  commitThresholdMb = RAMP_SCAN_COMMIT_MB,
 }) {
-  const out = { fire: false, stalledMs: null, rcMb: null, readingAgeMs: null, why: '' };
+  const out = { fire: false, stalledMs: null, rcMb: null, commitUsedMb: null, trigger: null, readingAgeMs: null, why: '' };
   // Condition A — the loop's own stall. NEVER UNKNOWN: `lastTick` is a local number the
   // timer sets, so unlike the CDP silence this replaced there is no "we could not tell".
   if (!Number.isFinite(Number(stalledMs))) { out.why = 'no stall reading, so the loop state is UNKNOWN'; return out; }
@@ -162,16 +191,52 @@ export function rampBailDecision({
     return out;
   }
   out.rcMb = memory.rcMb;
+  out.commitUsedMb = num(memory.commitUsedMb);
   out.readingAgeMs = memory.ageMs;
   const stalled = out.stalledMs > stallMs;
-  const big = memory.rcMb > thresholdMb;
+  /**
+   * CONDITION B IS TWO READINGS OF ONE EVENT, AND COMMIT IS THE ONE THAT MOVES FIRST.
+   *
+   * `rcMb` is PRIVATE bytes — the pages actually TOUCHED — and the ~32 GiB mapping is charged
+   * to commit in ≤34 seconds while private bytes are still under 2 GB. Backtested over the 19
+   * onsets in the seven days to 2026-09-11, a commit condition fires EARLIER on 11 of them by
+   * a median 77s (max 162s) and NEVER later, taking a median 1,984 MB off the peak commit
+   * (max 7,009). On the 48h to 09-11 it caps the peak at 44,354 MB instead of 46,807, i.e. the
+   * tightest headroom against a 47,870 MB limit goes 1,063 → 3,516 MB.
+   *
+   * WHAT IT CANNOT DO, STATED SO NOBODY EXPECTS IT: at the sample where this first fires the
+   * commit is ALREADY 35,794-48,444 MB — the mapping is complete. This buys one sampler tick
+   * less of the private-byte tail. It does not touch the burst, and nothing that reads a file
+   * another process writes every two minutes ever could.
+   *
+   * IT IS A SECOND TRIGGER, NOT A REPLACEMENT, for `ramp-scan.mjs`'s reason: commit is a
+   * WHOLE-BOX figure that the owner's own desktop shares, so a reading that only ever came
+   * from commit could be about something that is not Chromium at all. `rcMb` still fires on
+   * its own, and BOTH-CONDITIONS with the stall is what makes the whole-box figure safe to
+   * act on here — across 133 recorded tab-closes the longest trip is 71,552 ms and not one
+   * exceeds 90,000, so a 120-second stall is very nearly diagnostic of a ramp by itself.
+   *
+   * POSITIVELY, NEVER `!(commitMb < threshold)`. An absent figure is UNKNOWN and must not
+   * fire: a box on a build older than this writes none, and the negated form would fire on
+   * every tick of one. Same trap `ramp-scan.mjs` names at its own commit trigger.
+   */
+  const byRc = memory.rcMb > thresholdMb;
+  const byCommit = out.commitUsedMb != null && out.commitUsedMb >= commitThresholdMb;
+  const big = byRc || byCommit;
+  // WHICH ONE FIRED IS THE READING, NOT BOOKKEEPING — an in-burst bail and an after-the-fact
+  // one are different events and must not arrive looking identical. Same field, same three
+  // values, as the scan's `detail.trigger`.
+  if (big) out.trigger = byRc && byCommit ? 'both' : byRc ? 'rcMb' : 'commitUsedMb';
+  const commitSaid = out.commitUsedMb == null
+    ? 'commit not reported'
+    : `commit ${Math.round(out.commitUsedMb)} MB vs ${commitThresholdMb}`;
   if (stalled && big) {
     out.fire = true;
-    out.why = 'the loop is stalled AND the rc family is over the bar';
+    out.why = `the loop is stalled AND the box is over a bar (${out.trigger})`;
   } else if (stalled) {
-    out.why = `the loop has been stalled ${Math.round(out.stalledMs / 1000)}s but rc family ${Math.round(memory.rcMb)} MB is under the bar (${thresholdMb})`;
+    out.why = `the loop has been stalled ${Math.round(out.stalledMs / 1000)}s but rc family ${Math.round(memory.rcMb)} MB is under the bar (${thresholdMb}), ${commitSaid}`;
   } else if (big) {
-    out.why = `rc family ${Math.round(memory.rcMb)} MB is over the bar but the loop advanced ${Math.round(out.stalledMs / 1000)}s ago`;
+    out.why = `over a bar (${out.trigger}) but the loop advanced ${Math.round(out.stalledMs / 1000)}s ago`;
   } else {
     out.why = 'healthy';
   }
@@ -180,8 +245,14 @@ export function rampBailDecision({
 
 /** The bail line. One shape, so the readout and a human grep for the same thing. */
 export function rampBailLine(d) {
+  // THE TRIGGER IS NAMED IN THE LINE, because `commitUsedMb` alone means this fired while the
+  // private bytes were still climbing — a tick earlier than `rcMb` could have — and that is
+  // the difference the whole second trigger exists to make. A line that read the same either
+  // way would make the improvement unobservable from the log.
+  const commit = d.commitUsedMb == null ? 'commit not reported' : `commit ${Math.round(d.commitUsedMb)} MB`;
   return `✗ RAMP — the loop has not advanced in ${Math.round((d.stalledMs ?? 0) / 1000)}s, `
-    + `rc family ${Math.round(d.rcMb ?? 0)} MB (reading ${Math.round((d.readingAgeMs ?? 0) / 1000)}s old). `
+    + `rc family ${Math.round(d.rcMb ?? 0)} MB, ${commit} `
+    + `(reading ${Math.round((d.readingAgeMs ?? 0) / 1000)}s old, trigger ${d.trigger ?? 'none'}). `
     + 'Both conditions met; bailing now rather than at the twelve-minute wedge so the box keeps ~7 GB of commit.';
 }
 
