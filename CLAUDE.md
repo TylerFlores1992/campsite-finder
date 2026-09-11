@@ -6191,6 +6191,83 @@ minGap   RENEW_MIN_GAP_MS   10m  |  alive    stands down for the token's ~60m li
   the SPA carrying the session unaided, and a gap that closes back to 10-30 minutes is our renewal
   resuming and failing. Both are in `bot_events`, retrospectively, whenever somebody looks.
 
+###### THE OVERNIGHT ANSWER IS IN — TEN HOURS OF TOTAL SILENCE, AND IT COST ONE QUERY (2026-09-11)
+The entry above says the 08-18 question is now a one-query job and that nobody had taken it in
+three weeks. **Taken, the morning after, and it is the strongest form of the reading:**
+```
+2026-09-10 19:31:28   tab-close renewal          <- the last trip of the evening
+   [ 599.8 minutes. ZERO bot_events of ANY kind. ]
+2026-09-11 05:31:15   tab-close renewal  trip=46.6s
+             05:42:46   +11.5m  minGap
+             05:54:06   +11.3m  minGap
+             06:25:40   +31.6m  backoff   ... and backoff for the next six hours
+```
+- **THE SILENCE IS TOTAL, NOT MERELY RENEWAL-SHAPED.** Zero rows of every kind — no `tab-close`,
+  no `mem-dump`, no `ramp-scan`, no `request-counts` — checked as a count rather than eyeballed
+  off a listing, because `tab-close` has three emitters and a filtered query would have proved
+  much less.
+- **`chromium_memory_samples` POSTED 312 SAMPLES ACROSS THE SAME WINDOW**, which is the
+  discriminator the entry above predicts working in anger: that series comes from `bot.mjs`, a
+  different process, so it stays healthy through a silent keep-warm and settles nothing on its
+  own. **An empty `bot-events-readout` beside a live memory series is the HEALTHY regime.**
+- **AND THE SILENCE IS ITSELF THE PROOF THE TOKEN NEVER LAPSED, which is tighter than a health
+  reading.** `planRenewal` stands down only while the token is alive AT ALL; `leftS <= 0` and
+  `leftS == null` both ACT. So ten hours of no trips means ten hours in which every poll found a
+  token with time left on it — i.e. **RC's SPA re-minted it repeatedly, silently, unaided,
+  overnight.** The 08-18 entry's own caveat (*"two cycles is not a regime"*) is answered.
+  - **STATED PRECISELY: it proves a NON-EXPIRED token was present at every poll, not that RC
+    would have ACCEPTED one.** Those are different facts — `session_ok` is RC's answer and this
+    is the token's own `exp`. Do not upgrade it.
+- **THEN IT RESUMED AND FAILED, EXACTLY AS PREDICTED.** The gap closes to 11.5 and 11.3 minutes
+  (minGap) and then runs **31.5-minute backoffs for six hours straight** — thirteen consecutive
+  failure-band gaps. That is the 96% figure being watched live rather than computed after the
+  fact, and it is the first time the instrument has been read forward instead of backward.
+- **THE 599.8-MINUTE GAP LANDS IN THE BAND SCHEME'S `other` BUCKET, AND THAT IS CORRECT.** It is
+  not a stand-down branch, so a classifier that named it would be inventing one. The overnight
+  shows up as an outlier in the very instrument built to classify gaps, which is the right
+  behaviour and not a hole in it.
+
+###### AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD — THE AGE FRAMING IS DEAD
+The silence is what makes it possible: no renewals means nothing recycles the browser, so the
+healthy self-sustaining regime is precisely what produces the oldest browsers this box has ever
+had — and **the oldest one ever recorded is the one that ramped**, at 05:28 UTC, `bail:ramp` with
+`ageMs` **611 minutes** against a previous "old" record of 125.
+
+| ramp (UTC) | browser age | busiest path, lifetime | module / anonExec | spread | top sample |
+|---|---|---|---|---|---|
+| 09-10 04:26 | 2.75 min | 17k-75k (burst) | 42 / 6 | 19 of 48 | `chrome.dll+0x180968b` x12 |
+| 09-10 05:52 | 2.6 min | burst | 43 / 5 | 23 of 48 | `chrome.dll+0x18096c6` x11 |
+| 09-10 17:53 | 57.5 min | **6** (no burst) | 39 / 9 | **40 of 48** | **anon-exec (JIT) x9** |
+| **09-11 05:28** | **611 min** | **20** (no burst) | **46 / 2** | **22 of 48** | **`chrome.dll+0x180968b` x12** |
+
+- **IT IS OLD AND BURST-FREE ON BOTH AXES THAT DEFINED THE OUTLIER, AND ITS STACK READS LIKE A
+  YOUNG ONE.** 22 distinct addresses of 48, the three `HandlerAdded` offsets carrying **28 of
+  48**, and JIT down to **2** — the most module-dominant reading of all four. The recorded split
+  was perfect at n=3 and **is broken at n=4 by the most extreme old-browser case available.**
+- **SO NEITHER AGE NOR BURST PRESENCE PREDICTS THE STACK PROFILE**, and the 17:53 event stands
+  alone rather than heading a population. CLAUDE.md's own caution — *"do not build on the age
+  framing"*, written when the correlation was 3-for-3 — was right, and this is what it was right
+  about. **The trip-type reading (cold page load vs Okta navigation) is untouched by this and is
+  now the only surviving candidate**; it is also unmeasured here, because nothing recorded which
+  kind of trip the 611-minute browser was making.
+- **THE WALK IS TWELFTH-TIME CONSISTENT AND IS A `middle` EVENT:** 14,434 regions in `2-4M` across
+  **14,433 allocation bases**, 28,868 MB, 14,431 READWRITE, 64 sampled and **all anonymous**,
+  against the control's 5 regions / 4 bases with its file-backed positive control
+  (`SortDefault.nls`) present as ever. **1,950 short of 2^14 with the commit limit at 47,870 and
+  the box's baseline near 7,000** — so there was room for thousands more and it stopped anyway.
+  That is the sixth member of the population neither the cap nor commit exhaustion explains.
+- **`VMTHREAD` IS FOUR-FOR-FOUR: main thread `Running`, 1,203 ms of a 1,200 ms window**, against a
+  control renderer at **0 ms** and the **GPU process idle at 109 ms across 20 threads** — the
+  same `CONSISTENT WITH, NOT PROOF` shape, which still must not be quoted as a confirmation.
+- **THE RAMP DUMP IS `target-silent` FOR THE FOURTH TIME.** `MDPROC` answered for eight processes
+  — `1864 12984 4884 8976 9180 6404 13152 3024` — and the walk's TARGET **14676 is not among
+  them**, with `partial: no answer in 20000ms` and `emptyPids: []`. **Nothing new; do not spend
+  another ramp on it.** `dump-wedge-probe.mjs` settled off-box that a wedged renderer contributes
+  zero allocator dumps at every level.
+- **AND THE BURST/LEAK DECOUPLING HOLDS FOR THE SEVENTH TIME**: 28,868 MB of mapping beside a
+  busiest path of **20 lifetime requests**, all `200`s to split.io's SDK. **Stop re-litigating
+  it.**
+
 #### WHEN A RAMP CAN BE FORCED, MEASURED RATHER THAN ESTIMATED (2026-09-09)
 The recipe needs **Okta GONE *and* the RC token dead**, and the binding half is Okta's ABSOLUTE
 cap, which our own probing cannot bring forward (measured not to reset across a password sign-in

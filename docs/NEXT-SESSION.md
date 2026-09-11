@@ -33,24 +33,15 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — 2026-09-10 22:20 UTC
+## 1. State — 2026-09-11 12:00 UTC
 
 | | |
 |---|---|
-| master | `29555e0` (#331) — **verify against `origin/master`, this line ages** |
-| mini-PC | `7333940` (#325) — the gap to master is **docs only**, so no box update is owed; the commit trigger below **has FIRED** |
-| last ramp | **2026-09-10 19:17 UTC — the commit arm fired DURING the burst**, the first walk ever taken before the private bytes climbed: 32,774 MB across 16,385 regions **at private 1,843 MB**. `target-silent` ramp dump for the third time (do not spend another ramp on it). Previously **17:53 UTC**, `trigger: "both"` — the commit arm's first firing. Ended by `bail:ramp` on a **57.5-min-old** browser; whole event inside ONE two-minute sample (commit 6,968 → 38,949 → 6,945 MB). **Read `bot_events` for `ramp-scan`, not the tail of the memory series** — a sub-four-minute ramp leaves one sample and rolls out of the default window within the hour, and this one was very nearly missed that way. **Two things it left open:**
-no `ramp` mem-dump landed despite a **150 s** stall (the dump's trigger is 90 s, so it was crossed
-a minute before the bail) — **still open**, and the discriminator is the `alloc trail: resident
-renderer armed` line at the ramping browser's launch, which is printed and was confirmed present
-on a later browser. The `auto-login`-with-no-hold half is **ANSWERED: it is `npm test`** — a
-numeric `carted` fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT` and both
-`nextHoldRelease` and `holdAtRisk` count `carted`, so a CI run puts a phantom release in front of
-the keep-warm. Read live at 19:35:40; see CLAUDE.md → "A NUMERIC TEST FIXTURE PUTS A PHANTOM
-RELEASE IN FRONT OF THE KEEP-WARM". **It explains the STEP, not the stall.** On the next ramp,
-read `tail-log rc-keepwarm` BEFORE anything else. |
-| **quiet since** | **`bot_events` has had NOTHING since 19:31:28** — 2h22m at the first read and **still unbroken at 22:17 (2h46m)**, against a `tab-close` every ~31 min before it. **That is the HEALTHY regime, not a dead box.** `session_live_since` reads **20:32:09**, an hour after the last renewal trip and with no renewal in between, so RC's SPA re-minted silently; `planRenewal` then stands down while the token is alive, which removes the reason for the next trip and sustains itself. **Every renewal runs in a throwaway tab and every tab close emits `tab-close`, so no event is positive evidence no trip ran.** An empty `bot-events-readout` therefore reads exactly like a wedge — **the discriminator is one health read** (`autocart.rc_session` carries `checked Ns ago`). `chromium_memory_samples` keeps arriving either way and settles nothing: it is posted by `bot.mjs`, not the keep-warm. See CLAUDE.md → "AND `bot_events` GOES SILENT FOR HOURS WHEN THE SESSION IS HEALTHY". **AND THE GAPS BETWEEN THOSE `tab-close` ROWS READ `planRenewal` RETROSPECTIVELY** — each stand-down branch has its own cadence (10 / 30 min against a ~60 min token), and over 191 renewal-to-renewal gaps **163 sit in a failure cadence against 7 in the alive band: 96% of the gaps that land on a recognisable branch**, chronic across every day the table covers. |
-| health | **18 of 19 ok** at 21:53 (`rc_session` live, token 39m, `okta=ALIVE`); the one warn is `bot_version`, the ordinary web-ahead-of-box gap, and its own detail says *"No bot-side code in the gap"* |
+| master | `a68a6d2` (#332) — **verify against `origin/master`, this line ages** |
+| mini-PC | **`29555e0`** — it updated itself overnight in the quiet window, so the box is one commit behind master and the gap is **docs only**; no update is owed. Read it with `bot-ask git-status`, never `autocart.bot_version`. |
+| last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
+| **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
+| health | `session_ok` **false** at 11:54 — *"no token at all — signed out; okta session STILL ALIVE"* — which is the **ordinary between-releases state** with no hold queued: the token lives ~1h and `maybeAutoLogin` restores it at T−30. Okta alive to 16:59 UTC. **Not a fault, and the printed remedy (`rc-login.bat`) would kill the Chromium the token lives in.** |
 | fleet | 3/3 shards held, 12 watches |
 | holds | **none live**, so the 02:00-05:00 PT update window is open |
 | migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
@@ -347,14 +338,13 @@ legitimate outcome; quietly building a fifth instrument is not.
   accomplishing nothing, from the address that has eaten a twelve-hour block — and an Okta navigation is the leak's own established trigger. **Do not
   drive-by a change to it**: it is bot-side, it is what repairs a session between releases, and
   the SPA's re-mint is an observation of RC's behaviour rather than a guarantee. It wants the
-  owner's word and the overnight reading below.
-- **THE OVERNIGHT READING IS NOW A ONE-QUERY JOB, AND NOBODY HAS TAKEN IT IN THREE WEEKS.** The
-  08-18 entry asks whether the SPA's self-renewal still holds after an overnight; answering it
-  used to mean reading a log that rolls at 16,000 characters. **It does not any more — the gap
-  between the last `tab-close` and the next one, over a night, IS the answer.** A gap of many
-  hours with `autocart.rc_session` healthy throughout is the SPA carrying the session unaided; a
-  gap that closes back to 10-30 minutes is our renewal resuming and failing. Both are in
-  `bot_events`, retrospectively, whenever somebody looks.
+  owner's word. **The overnight reading it was waiting on is now IN** and supports the
+  stand-down case rather than weakening it.
+- **THE OVERNIGHT READING IS TAKEN — see the state table. Ten hours of total silence, then the
+  renewal resumed and failed for six straight hours.** It answers the 08-18 question and it is
+  the payoff of the gap instrument: one query, no box, no log. **What it does NOT answer is
+  whether RC would have accepted the token** — `planRenewal` reads the token's own `exp`, and
+  `session_ok` is RC's answer. Do not merge those two.
 - **THE APP/STORE SURFACE IS THE SIDE LANE'S AS OF 2026-09-10** (owner's call, recorded in
   `docs/LANES.md`): `docs/APP-STORE.md`, `docs/PLAY-STORE.md`, `docs/STOREKIT-PLAN.md`, both store
   consoles and RevenueCat's. **A main-lane session should not pick these up** — read
