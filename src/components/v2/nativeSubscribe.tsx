@@ -172,10 +172,23 @@ export function SubscribeSentence() {
  * resubmission argues. Two booleans that may both be true, each with its own reason.
  */
 export const IN_APP_PURCHASE_BY_STORE = {
-  // No products in App Store Connect and no NEXT_PUBLIC_REVENUECAT_IOS_KEY — verified
-  // absent in the deployed bundle, twice. Flip when §8's four products are live; the
-  // paywall's own probe still decides whether anything renders.
-  ios: false,
+  // Flipped 2026-09-13, once §8's four products went live: subscription group
+  // `CampHawk Subscriptions`, the four IDs created, Auto-Cart above Base on the group's
+  // levels, English (U.S.) localisation, United States availability and a 1-week free
+  // trial on each; then imported into RevenueCat, attached to `alerts` (all four) and
+  // `autocart` (the Auto-Cart pair), and paired into the `default` offering's existing
+  // four packages beside their Play products.
+  //
+  // TRUE HERE IS NECESSARY AND NOT SUFFICIENT, which is the whole reason this is a flag
+  // and not a platform test. `canSell` also needs a platform and STORE_PURCHASE_ENABLED,
+  // and the paywall's own probe still decides whether anything renders — so a deploy
+  // without NEXT_PUBLIC_REVENUECAT_IOS_KEY, or a binary without the RevenueCat pod,
+  // lands on the same `unavailable` fallback as before. What this flag alone decides is
+  // whether `StorePlansLink` renders at all: false and it returns null, so the shell has
+  // NO route to /pricing and a reviewer finds no way to buy however well the rest is
+  // wired. That is a Guideline 3.1.1 rejection with nothing visibly wrong, which is what
+  // 25 August was.
+  ios: true,
   // Live since build 13 (the billing permission) plus four Active products, US-only.
   android: true,
 } as const;
