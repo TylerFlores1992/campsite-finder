@@ -15,7 +15,8 @@ import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import {
   tierForProductId, providerForStore, ignoreReason, sandboxGranted, statusForEvent,
-  storeTransactionId, verifyAuthHeader, verifyHmac, type RcEvent,
+  storeTransactionId, verifyAuthHeader, verifyHmac, UPSERT_STORE_SUBSCRIPTION,
+  type RcEvent,
 } from '../src/lib/revenuecat';
 
 const NOW = 1_800_000_000_000;
@@ -235,13 +236,25 @@ test('the route never writes grandfathered', () => {
 });
 
 test('the upsert conflicts on the pair migration 071 indexes', () => {
-  assert.match(ROUTE, /ON CONFLICT \(provider, store_transaction_id\)/,
+  // RE-ANCHORED ON THE STATEMENT, NOT THE ROUTE, and the move WIDENS the rule rather than
+  // relaxing it. The obvious repair when this broke was to point it at the new file; that
+  // would have kept asserting only half the contract. Migration 071's index is PARTIAL, and
+  // on 2026-09-14 a bare `ON CONFLICT (a, b)` raised 42P10 at PLAN time against it — so the
+  // statement could not run at all and the route returned an empty 500. The predicate is
+  // part of what "conflicts on the pair" MEANS here.
+  assert.match(UPSERT_STORE_SUBSCRIPTION, /ON CONFLICT \(provider, store_transaction_id\)/,
     'conflicting on anything else would write a new row per renewal');
+  assert.match(UPSERT_STORE_SUBSCRIPTION, /WHERE store_transaction_id IS NOT NULL/,
+    'Postgres cannot infer a PARTIAL index without its predicate — 42P10 at plan time');
 });
 
 test('the ignore checks run BEFORE anything is written', () => {
   const guard = ROUTE.indexOf('ignoreReason(');
-  const write = ROUTE.indexOf('INSERT INTO subscriptions');
+  // THE WRITE ANCHOR MOVED when the statement was extracted, and this guard said so out
+  // loud rather than passing vacuously — which is the whole reason the `> -1` check is
+  // here. Keep it: an `indexOf` that misses returns -1, and `-1 < anything` would report a
+  // guard measuring nothing as a pass.
+  const write = ROUTE.indexOf('mutate(UPSERT_STORE_SUBSCRIPTION');
   assert.ok(guard > -1 && write > -1, 'anchors moved — this guard is measuring nothing');
   assert.ok(guard < write, 'a sandbox or test event must be dropped before the INSERT');
 });

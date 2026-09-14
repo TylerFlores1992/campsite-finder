@@ -15644,6 +15644,91 @@ comma-separated env var, four declarations away; `tierForProductId` still reads
   configs; the file that broke was a NEIGHBOUR reading my source. A structural guard can live in
   any suite, so the blast radius of a `src/lib` edit is not the tests that import it.
 
+#### AND THE WRITE ITSELF COULD NEVER RUN — `ON CONFLICT` WILL NOT INFER A PARTIAL INDEX (2026-09-14)
+The allowlist worked, the first store event in the product's history got past the guard, and it
+hit an **empty 500** — `Content-Length: 0`, no body, nothing in RevenueCat's log naming a cause.
+**The last link in the chain had never once executed, and it was unrunnable.**
+
+Migration 071's index is **PARTIAL**; the statement's `ON CONFLICT` omitted the predicate:
+```
+CREATE UNIQUE INDEX subscriptions_store_txn ON subscriptions (provider, store_transaction_id)
+  WHERE (store_transaction_id IS NOT NULL)          <- the index
+ON CONFLICT (provider, store_transaction_id)         <- the statement, with no WHERE
+```
+- **PROVED AGAINST THE REAL TABLE, WITH NOTHING WRITTEN.** A user id that cannot exist makes the
+  FK refuse the row — and `ON CONFLICT` inference happens at **PLAN** time, before any constraint
+  is checked, so the error says which failed first: the bare form raises **`there is no unique or
+  exclusion constraint matching the ON CONFLICT specification`** (42P10), the predicated form gets
+  as far as the foreign key. One command, no fixture, no writes.
+- **SO IT IS NOT SUBTLY WRONG ON SOME ROWS — IT IS UNRUNNABLE ON ALL OF THEM**, which is exactly
+  why it survived review: there is no input that makes it work, so reading it against a conflict
+  case tells you nothing.
+- **THE SANDBOX GUARD HID IT FOR A FORTNIGHT.** `ignoreReason` dropped every event before the
+  write, so the 23-for-23 401s and then the SANDBOX drops meant this line was never reached on
+  either store. **Fix present and never exercised, and the thing that found it was running the
+  real statement against the real table** — the same move that found the `#218` id-shape bug.
+- **AN UNHANDLED THROW IS THE WORST POSSIBLE REPORT.** Vercel returns a bare 500 with no body, so
+  *"our write failed"*, *"the function crashed"* and *"auth refused you"* are one reading in the
+  delivery log. The write is guarded now and returns `{error:'write failed'}` — **still a 500**,
+  because unlike every `ok({ignored})` above this event IS processable and RevenueCat's six
+  retries are worth having (they are what re-delivered the 04:55 event after the fix, with no
+  repurchase). **The DB message is logged and never returned:** `sqlit` interpolates rather than
+  binds, so that string carries real values spliced into it.
+
+##### AND THE EVIDENCE I DIAGNOSED FROM WAS SERVED BY A BUILD THAT PREDATED THE FIX
+Before this, the same seven deliveries were read as *"the allowlist env var is not live"*. **That
+was wrong, and the mechanism is Vercel's build-time env snapshot crossed with the merge clock:**
+```
+03:04:56  #338 merged      <- read from git: NO allowlist code in it at all
+~04:01    REVENUECAT_WEBHOOK_AUTH *Updated* on Vercel — but #338's build keeps the OLD value
+04:00-14  seven deliveries: 200, {"ignored":"environment=SANDBOX"}   <- ON #338's BUILD
+~04:14    REVENUECAT_SANDBOX_USER_IDS *Added*, Production
+04:44:52  #339 merged      <- first build with the allowlist AND the new secret
+04:55     the first event to reach #339 — empty 500
+```
+- **A BUILD WITHOUT THE FEATURE PRODUCES THE SAME OBSERVATION AS A BUILD WITHOUT THE VARIABLE.**
+  `sandboxGranted` did not exist in #338, so a sandbox event was *always* going to be dropped —
+  those rows could not speak to the env var, and I read them as if they could.
+- **DATE THE READING AGAINST THE DEPLOY BEFORE DIAGNOSING FROM IT.** The response headers carry
+  `Date:` and git carries the merge time; one comparison separates "the config is wrong" from
+  "this reading predates the code". Same family as the 2026-08-25 ramp that had to be dated
+  against `13:26:42`, and as reading a stale checkout as production drift.
+- **`X-Matched-Path` IS THE FREE HALF.** It read `/api/webhooks/revenuecat`, which retired the
+  truncated-URL theory without anyone widening a field — and `/api/webhook` and `/api/webhooks`
+  both 404 from here, so a wrong URL could never have shown as *Sent*.
+- **IGNORE `X-Clerk-Auth-Message: Invalid JWT form`.** It is on every response from this route,
+  it is Clerk annotating a PUBLIC route it is not guarding, and it is the loudest thing in the
+  headers. Already recorded once; it cost a second reader the same detour.
+
+##### A GUARD OF MY OWN SURVIVED ITS MUTATION, AND IT WAS A WORD BOUNDARY
+`assert.doesNotMatch(tail, /error:\s*(e|String\(e\)|detail)\b/)` — **`\b` cannot match between
+`)` and a space**, both being non-word characters, so returning `String(e)` in the 500 body passed
+the whole suite. The rule was right and the anchor was wrong, for the second time in two days and
+in the fix for the first one. Re-anchored on the response object itself (`NextResponse.json(...)`'s
+argument) rather than on a window of text around it. **Seven mutations, each verified to APPLY and
+to fail** — including the predicate dropped, `DO NOTHING`, `grandfathered` added to the update set,
+the route keeping its own INSERT, the write unguarded, the DB message returned, and the 500
+downgraded to a 200 (which silently spends the retries that make a transient failure recoverable).
+
+##### AND TWO NEIGHBOUR GUARDS BROKE ON THE EXTRACTION — RE-ANCHORED, AND ONE WAS WIDENED
+Moving the statement out of `route.ts` broke two guards in `worker/revenuecat-webhook.test.mts`,
+and **the full suite is the only thing that saw it** — the suites I changed were green.
+- *"the ignore checks run BEFORE anything is written"* anchored on `INSERT INTO subscriptions`,
+  which no longer exists in the route. **It failed LOUDLY rather than inverting**, because it
+  carries `assert.ok(guard > -1 && write > -1, 'anchors moved — this guard is measuring nothing')`.
+  That line is the whole difference between a broken guard that shouts and one that passes for
+  ever: `indexOf` misses return **-1**, and `-1 < anything` reads as a pass. Keep it.
+- *"the upsert conflicts on the pair migration 071 indexes"* pointed at the route's text. **The
+  obvious repair — point it at the new file — would have kept asserting half the contract.** The
+  extraction WIDENS the rule: the statement now has one home, so the guard asserts the conflict
+  target **and** the partial predicate, which is what "conflicts on the pair" means against a
+  partial index. Same move as `launchCode` becoming the UNION of two files rather than being
+  re-pointed at one.
+- Three mutations, each verified to apply and to fail: the predicate dropped, the conflict target
+  changed, and a write placed above the ignore checks. **The third did not apply on the first
+  attempt** — a `\n` passed through the shell stayed a literal, so the mutation was a no-op and
+  its green proved nothing. Grep the file for the mutated text before trusting the result.
+
 ### APPLE IAP WAS DECIDED ON 2026-08-24, AND THIS FILE DID NOT CARRY IT FOR SIX DAYS
 **The owner decided to add In-App Purchase and raise prices to absorb Apple's commission.** It is
 recorded in `docs/STOREKIT-PLAN.md` — in the subtitle of the file (*"Written 2026-08-24 on the
