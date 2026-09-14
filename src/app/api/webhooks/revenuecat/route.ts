@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { mutate, queryOne } from '@/lib/db/client';
 import {
   ignoreReason,
+  sandboxGranted,
   providerForStore,
   statusForEvent,
   storeTransactionId,
@@ -39,9 +40,23 @@ function ok(detail: Record<string, unknown> = {}) {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const raw = await req.text();
 
-  if (!verifyAuthHeader(req.headers.get('authorization'), process.env.REVENUECAT_WEBHOOK_AUTH)) {
-    console.error('[revenuecat webhook] rejected: bad or missing Authorization header');
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const authHeader = req.headers.get('authorization');
+  const authSecret = process.env.REVENUECAT_WEBHOOK_AUTH;
+  if (!verifyAuthHeader(authHeader, authSecret)) {
+    // A REFUSAL MUST NAME ITSELF, and this one did not. "No secret configured on Vercel"
+    // and "a secret that does not match" produced the identical 401 with the identical
+    // body, so RevenueCat's delivery log — which shows only the response — could not tell
+    // them apart. On 2026-09-14 that cost three round trips against a webhook that had
+    // been 401ing every event for a fortnight, with no subscription row ever written by
+    // either store. Same family as `status = 'sent'` meaning only "Twilio returned 2xx".
+    //
+    // BOOLEANS ONLY. Never the value, never its length, never a prefix — a length is a
+    // real hint to somebody guessing, and "don't collect a field you would then have to
+    // filter" applies just as hard to one you would have to redact. That an endpoint is
+    // guarded at all is something the 401 already announces.
+    const detail = { secret_configured: !!authSecret, header_present: !!authHeader };
+    console.error(`[revenuecat webhook] rejected: ${JSON.stringify(detail)}`);
+    return NextResponse.json({ error: 'unauthorized', ...detail }, { status: 401 });
   }
 
   // REPORTED, NOT ENFORCED — see verifyHmac. The scheme could not be verified from the
@@ -64,8 +79,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return ok({ ignored: 'unparseable' });
   }
 
-  const ignored = ignoreReason(event);
+  // READ ONCE AND PASSED TO BOTH, so the decision and the line that reports it cannot
+  // disagree about whether this grant happened. See `sandboxGranted` for why the exception
+  // exists and when to clear the variable.
+  const sandboxUsers = process.env.REVENUECAT_SANDBOX_USER_IDS;
+
+  const ignored = ignoreReason(event, sandboxUsers);
   if (ignored) return ok({ ignored });
+
+  // LOUD, ALWAYS. A test purchase granting a real entitlement is a thing somebody chose,
+  // and an unlogged exception is one nobody can find later. It fires only when the guard
+  // let a non-production event through, so it cannot narrate a grant that did not happen.
+  if (sandboxGranted(event, sandboxUsers)) {
+    console.warn(
+      `[revenuecat webhook] SANDBOX GRANT for ${event.app_user_id} (event ${event.id}, ` +
+      `${event.product_id}) — REVENUECAT_SANDBOX_USER_IDS lists this user, so a test ` +
+      'purchase is about to write a real subscription row. Clear the variable once App ' +
+      'Review is done.'
+    );
+  }
 
   const userId = event.app_user_id;
   const provider = providerForStore(event.store);
