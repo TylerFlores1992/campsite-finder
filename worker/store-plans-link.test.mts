@@ -79,12 +79,22 @@ test('the per-store map is a SECOND map, not the complement of the link-out', ()
     'in-app purchase must not be derived from the steering flag');
 });
 
-test('iOS is OFF until its products exist', () => {
-  // No products in App Store Connect and no NEXT_PUBLIC_REVENUECAT_IOS_KEY — verified
-  // absent in the deployed bundle. Linking iOS at the paywall today lands on a fallback.
-  const map = nativeCode.slice(nativeCode.indexOf('IN_APP_PURCHASE_BY_STORE'));
-  assert.match(map.slice(0, 200), /ios:\s*false/, 'iOS must stay off until §8 is done');
-  assert.match(map.slice(0, 200), /android:\s*true/, 'Android sells today');
+test('BOTH stores sell in the app', () => {
+  // INVERTED 2026-09-13, NOT DELETED. This asserted `ios: false` on the premise that
+  // Apple's products did not exist — so once they did, the guard REQUIRED the defect: a
+  // shell with no route to /pricing, which is the Guideline 3.1.1 rejection of 25 August.
+  // Same shape as `held-offer-scope` requiring the 26-text storm. The reason it is kept
+  // rather than dropped is the other direction: reverting either store to false takes the
+  // paywall link away from a platform that sells today, and nothing else would notice.
+  // Bounded by the object's own closing `} as const;`, never by a character window: the
+  // comment above `ios` is 1,238 characters, so a slice(0, 900) fails and a slice(0, 1500)
+  // passes only until somebody edits the comment. CLAUDE.md records that shape costing a
+  // guard four separate times.
+  const from = nativeCode.indexOf('IN_APP_PURCHASE_BY_STORE');
+  assert.ok(from > -1, 'the map is gone — this guard is measuring nothing');
+  const map = nativeCode.slice(from, nativeCode.indexOf('} as const;', from));
+  assert.match(map, /ios:\s*true/, 'Apple products are live since 2026-09-13');
+  assert.match(map, /android:\s*true/, 'Android sells today');
 });
 
 test('it does NOT probe the store — one configure, in the paywall', () => {

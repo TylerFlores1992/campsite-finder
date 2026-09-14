@@ -61,7 +61,7 @@ const REGISTERED: Record<string, { match: RegExp; why: string }[]> = {
   'src/components/v2/nativeSubscribe.tsx': [
     { match: /ios: true,/, why: 'LINKOUT_BY_STORE — the anti-steering carve-outs are US-storefront only and iOS is US-only' },
     { match: /android: false,/, why: 'LINKOUT_BY_STORE — the Android track is deliberately WORLDWIDE, so steering stays off' },
-    { match: /ios: false,/, why: "IN_APP_PURCHASE_BY_STORE — Apple's products do not exist yet (STOREKIT-PLAN §4e)" },
+    { match: /ios: true,/, why: 'IN_APP_PURCHASE_BY_STORE — Apple\'s four products are live (2026-09-13), so the shell carries the paywall' },
     { match: /android: true,/, why: 'IN_APP_PURCHASE_BY_STORE — Play products are live' },
   ],
   'src/lib/native/purchases.ts': [
