@@ -15570,6 +15570,80 @@ already on this plan"**.
   the paywall shows *"Confirming your subscription…"* and waits for a server change that
   deliberately never comes. A production purchase flips it.
 
+### THE REVENUECAT WEBHOOK HAS 401'd EVERY EVENT IT HAS EVER RECEIVED (2026-09-14)
+
+**The billing chain has never once worked, on either store, and the guard got the blame.** Found
+while testing the iOS paywall: two real Apple purchases on `iamtylerflores12345@yahoo.com` — a
+Base Monthly trial and a change to Auto-Cart Monthly, both in RevenueCat's customer history —
+produced **zero rows in `subscriptions`**, and the app went on showing "See plans".
+- **REVENUECAT'S DELIVERY LOG IS THE INSTRUMENT NOBODY HAD OPENED.** Every delivery reads
+  `Failure`, back through the Play test on 2026-08-31 — **23 for 23.** The webhook's own config is
+  correct (`Both Production and Sandbox`, all apps, all events), so the events were always being
+  SENT.
+- **A SANDBOX EVENT CAN ONLY RETURN 200 OR 401 FROM THAT ROUTE, WHICH IS WHAT MAKES THIS
+  PROVABLE.** `ignoreReason` drops it before any DB call, `verifyHmac` is length-guarded and
+  cannot throw, and a parse failure returns 200. There is exactly one non-2xx path: the
+  Authorization check. `Failure` therefore IS the 401 — by exhaustion over the route, not by
+  guessing.
+- **AND IT WAS REPRODUCED EXACTLY.** A POST carrying a non-JWT `Authorization` header returns the
+  byte-identical response RevenueCat recorded, Clerk annotations and all:
+  ```
+  x-clerk-auth-message: Invalid JWT form. A JWT consists of three parts separated by dots.
+                        (reason=token-invalid, token-carrier=header)
+  x-clerk-auth-reason:  token-invalid
+  → HTTP 401 {"error":"unauthorized"}
+  ```
+  **`token-carrier=header` is the useful half**: Clerk only says it when there IS something in
+  that header to fail at parsing, so RevenueCat is demonstrably sending one and the mismatch is
+  in the VALUE.
+- **THE CLERK LINES ARE A RED HERRING AND ARE THE LOUDEST THING IN THE RESPONSE.** `/api/webhooks/(.*)`
+  is in `isPublicRoute`, so Clerk annotates and passes through — "Invalid JWT form" is Clerk
+  describing a shared secret it was never meant to parse, on a route it is not guarding. Anyone
+  reading that response cold goes hunting in `middleware.ts` and finds nothing wrong, because
+  nothing is. A protected route would 404, not 401 (that trap is recorded elsewhere in this file).
+- **"NO SUBSCRIPTION ROW APPEARED, AND THAT IS THE GUARD WORKING" IS CORRECTED.** That is this
+  file's own write-up of the 2026-08-30 Play purchase. The sandbox guard WOULD have dropped it —
+  and it never got the chance, because the call was 401'd first. **A guard was credited with a
+  failure it did not cause**, which is the mirror of crediting a repair to the wrong mechanism,
+  and it hid a production-critical bug for a fortnight: a real paying customer's purchase would
+  not have reached the database either.
+- **THE 401 COULD NOT SAY WHICH REFUSAL IT WAS.** A missing `REVENUECAT_WEBHOOK_AUTH` and a
+  mismatched one produced the identical status and the identical body, and RevenueCat's log shows
+  only the response — so three round trips went on distinguishing them by hand. It now answers
+  `{secret_configured, header_present}`, **booleans only**: never the value, never its LENGTH,
+  which is a real hint to somebody guessing. Same rule as not collecting a field you would then
+  have to redact.
+- **A WRONG-SECRET CURL IS A ONE-SIDED TEST AND THAT IS WHY IT IS USEFUL.** The secret is sent
+  RAW (no `Bearer` — RevenueCat's own field help), so a request carrying the exact string that is
+  supposed to be in `REVENUECAT_WEBHOOK_AUTH` passes or fails on **Vercel's side alone**. A
+  failure there rules RevenueCat's console out entirely without reading either masked field.
+- **USE A `TEST`-TYPE EVENT TO PROBE IT.** `ignoreReason`'s first line drops it, before the
+  environment check and before any DB work, so it exercises the whole auth path and writes
+  nothing.
+
+#### AND THE FIX'S OWN CI FAILURE WAS A GUARD READING PAST THE FUNCTION IT NAMES (2026-09-14)
+`worker/store-plans.test.mts` → *"the webhook does not re-implement the id shape"* went red on the
+allowlist PR, on a diff that does not touch `tierForProductId` at all. It asserted
+`rc.slice(rc.indexOf('export function tierForProductId'))` contains no `split(` — **sliced from
+the declaration to the END OF THE FILE**, so it is a rule about one three-line function that fires
+on any `split(` anywhere below it. What tripped it was `sandboxAllowlist` splitting a
+comma-separated env var, four declarations away; `tierForProductId` still reads
+`tierForStoreProductId(productId) ?? 'base'` and delegates exactly as the guard demands.
+- **THE RULE IS RIGHT AND THE ANCHOR WAS WRONG**, which is this file's most-repeated shape — and
+  the second time in one PR, after `sandboxAllowlist`'s own pair of defences absorbed each other's
+  mutations. Bounded at BOTH ends now (`indexOf('\n}', from)`), so it covers the function it names.
+- **A MISSING ANCHOR NOW FAILS RATHER THAN INVERTING.** `indexOf` returns **-1** and
+  `slice(-1)` is the LAST CHARACTER OF THE FILE — which passes `doesNotMatch` vacuously, for ever,
+  on a guard that has silently stopped reading its subject. `assert.ok(from > -1)` is what makes
+  that loud. Same trap as `keepwarm-recycle.test.mts`'s `readAt < -1`, in the other direction: there
+  a missing anchor read as a real regression, here it reads as a pass.
+- **TWO MUTATIONS, EACH VERIFIED TO APPLY AND TO FAIL**: a `split(':')` put INSIDE
+  `tierForProductId` (the regression the guard exists for), and the anchor string made absent.
+- **IT IS ALSO WHY THE FULL SUITE RUNS BEFORE A PUSH, NOT THE ONE SUITE YOU CHANGED.**
+  `worker/revenuecat-webhook.test.mts` passed 28/28 and `npm run typecheck` was clean on both
+  configs; the file that broke was a NEIGHBOUR reading my source. A structural guard can live in
+  any suite, so the blast radius of a `src/lib` edit is not the tests that import it.
+
 ### APPLE IAP WAS DECIDED ON 2026-08-24, AND THIS FILE DID NOT CARRY IT FOR SIX DAYS
 **The owner decided to add In-App Purchase and raise prices to absorb Apple's commission.** It is
 recorded in `docs/STOREKIT-PLAN.md` — in the subtitle of the file (*"Written 2026-08-24 on the

@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import {
-  tierForProductId, providerForStore, ignoreReason, statusForEvent,
+  tierForProductId, providerForStore, ignoreReason, sandboxGranted, statusForEvent,
   storeTransactionId, verifyAuthHeader, verifyHmac, type RcEvent,
 } from '../src/lib/revenuecat';
 
@@ -46,12 +46,87 @@ test('store maps to provider, and an unknown store maps to nothing', () => {
   assert.equal(providerForStore(undefined), null);
 });
 
+// The account App Review signs in as. Shaped like the real Clerk id it stands in for,
+// because two of these guards turn on prefixes and superstrings of it.
+const LISTED = 'user_3IS7IGizJd6UTZmrUf8xkOGB3F8';
+const sb = (o: Partial<RcEvent> = {}): RcEvent =>
+  ev({ environment: 'SANDBOX', app_user_id: LISTED, ...o });
+
 test('a SANDBOX event is never acted on', () => {
   // The production webhook receives these — the integration is set to both environments
   // on purpose. Granting on one lets anyone with a test device mint a subscription.
   assert.ok(ignoreReason(ev({ environment: 'SANDBOX' })));
   assert.ok(ignoreReason(ev({ environment: undefined })));
   assert.equal(ignoreReason(ev({ environment: 'PRODUCTION' })), null);
+  assert.ok(ignoreReason(sb(), 'user_somebody_else'),
+    'an allowlist that does not name this user must change nothing');
+});
+
+test('an allowlisted user IS acted on', () => {
+  // The exception that lets App Review complete a purchase and see the app unlock.
+  assert.equal(ignoreReason(sb(), LISTED), null);
+  assert.equal(sandboxGranted(sb(), LISTED), true);
+});
+
+test('the allowlist grants ONLY in SANDBOX — absent is not sandbox', () => {
+  // Absent must not round to a verdict that grants, the same rule that stops `unknown`
+  // rounding to `signed-out`. `!== 'PRODUCTION'` is the tempting, wrong widening: it would
+  // grant on a malformed event, on a renamed environment, and on no environment at all.
+  for (const environment of [undefined, '', 'sandbox', 'SANDBOX_X', 'STAGING']) {
+    assert.ok(ignoreReason(sb({ environment }), LISTED),
+      `environment ${JSON.stringify(environment)} must not grant`);
+    assert.equal(sandboxGranted(sb({ environment }), LISTED), false);
+  }
+});
+
+test('the allowlist matches the WHOLE id, never a prefix or a substring', () => {
+  assert.ok(ignoreReason(sb(), LISTED.slice(0, 8)),
+    'a PREFIX in the allowlist must not grant — a prefix of a real id is guessable');
+  assert.ok(ignoreReason(sb(), `${LISTED}X`),
+    'a SUPERSTRING must not grant — this is what `raw.includes(user)` gets wrong');
+});
+
+test('an empty or malformed allowlist grants nobody', () => {
+  for (const raw of [undefined, null, '', '   ', ',', ',,', ' , ']) {
+    assert.ok(ignoreReason(sb(), raw),
+      `allowlist ${JSON.stringify(raw)} must grant nobody — closed is the default`);
+  }
+});
+
+test('an event carrying no app_user_id is never granted', () => {
+  // The dangerous pair, and the reason empty entries are filtered: one trailing comma
+  // yields an `''` entry, and an event with no user reads as `''`. They would match.
+  for (const app_user_id of [undefined, '']) {
+    assert.ok(ignoreReason(sb({ app_user_id }), `${LISTED},`),
+      'a stray comma must not grant to an event with no user');
+  }
+});
+
+test('allowlist entries are trimmed, and more than one can be named', () => {
+  // A value pasted with spaces after the commas is how TWILIO_ACCOUNT_SID failed every
+  // send in August, while the error named the username rather than the padding.
+  const raw = ` ${LISTED} , user_second `;
+  assert.equal(ignoreReason(sb(), raw), null);
+  assert.equal(ignoreReason(sb({ app_user_id: 'user_second' }), raw), null);
+});
+
+test('the empty-entry pair is BOTH present', () => {
+  // A STRUCTURAL GUARD BECAUSE NOTHING ELSE CAN SEE THESE. `.filter(Boolean)` and
+  // `if (!user)` each independently stop a stray trailing comma granting to an event with
+  // no user, so by mutation EITHER can be deleted with the whole suite still green — and
+  // the survivor is then the only thing standing between a malformed env var and a free
+  // subscription. The behavioural test above proves the PROPERTY; this proves the pair.
+  const MOD = readFileSync('src/lib/revenuecat.ts', 'utf8');
+  assert.match(MOD, /\.filter\(Boolean\)/,
+    'sandboxAllowlist must drop empty entries');
+  assert.match(MOD, /if \(!user\) return false;/,
+    'sandboxGranted must refuse an event with no app_user_id');
+});
+
+test('a TEST event is ignored even for an allowlisted user', () => {
+  // RevenueCat's own "Send test event" button carries environment SANDBOX and a
+  // real-looking product, and anyone with dashboard access can press it.
+  assert.ok(ignoreReason(sb({ type: 'TEST' }), LISTED));
 });
 
 test('a TEST event is never acted on', () => {
@@ -140,6 +215,18 @@ test('the route rejects a bad Authorization header with a non-2xx', () => {
     'a failed auth check must return 401 before anything is written');
 });
 
+test('the 401 names WHICH refusal, in booleans and nothing else', () => {
+  // Missing secret and wrong secret were one indistinguishable 401 for a fortnight while
+  // every RevenueCat delivery failed. The body must separate them — and must never carry
+  // the value or its length, which is a real hint to somebody guessing.
+  const at = ROUTE.indexOf('if (!verifyAuthHeader(');
+  assert.ok(at > -1, 'the auth check moved — this guard is measuring nothing');
+  const block = ROUTE.slice(at, ROUTE.indexOf('\n  }', at));
+  assert.match(block, /secret_configured: !!authSecret/, 'say whether Vercel has the secret');
+  assert.match(block, /header_present: !!authHeader/, 'say whether the caller sent one');
+  assert.ok(!/\.length/.test(block), 'a length leaks how much of the secret to guess');
+});
+
 test('the route never writes grandfathered', () => {
   // Migration 032 wrote it once; no webhook may strip it. Same rule the Stripe webhook
   // states in its own upsert.
@@ -157,4 +244,24 @@ test('the ignore checks run BEFORE anything is written', () => {
   const write = ROUTE.indexOf('INSERT INTO subscriptions');
   assert.ok(guard > -1 && write > -1, 'anchors moved — this guard is measuring nothing');
   assert.ok(guard < write, 'a sandbox or test event must be dropped before the INSERT');
+});
+
+test('the route PASSES the allowlist to ignoreReason', () => {
+  // FIX-PRESENT-AND-INERT, the shape this repo has paid for repeatedly: every behavioural
+  // guard above calls `ignoreReason` directly, so the module can be perfect while the
+  // route still calls it with one argument and drops every sandbox event — green tests,
+  // rejected app.
+  assert.match(ROUTE, /const sandboxUsers = process\.env\.REVENUECAT_SANDBOX_USER_IDS/,
+    'the variable name is the contract with Vercel and cannot be inferred');
+  assert.match(ROUTE, /ignoreReason\(event,\s*sandboxUsers\)/,
+    'the route must hand the allowlist in, or the exception can never fire');
+});
+
+test('the route logs every sandbox grant, off the SAME decision', () => {
+  // Re-testing the condition to decide what to print is two copies of one decision, and
+  // the copy is the one that drifts. It must call the exported predicate.
+  const at = ROUTE.indexOf('sandboxGranted(event, sandboxUsers)');
+  assert.ok(at > -1, 'the route must reuse sandboxGranted rather than re-deriving it');
+  assert.match(ROUTE.slice(at, at + 600), /console\.warn/,
+    'a test purchase writing a real subscription row must leave a line somebody can find');
 });
