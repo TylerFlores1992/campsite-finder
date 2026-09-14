@@ -15621,6 +15621,29 @@ produced **zero rows in `subscriptions`**, and the app went on showing "See plan
   environment check and before any DB work, so it exercises the whole auth path and writes
   nothing.
 
+#### AND THE FIX'S OWN CI FAILURE WAS A GUARD READING PAST THE FUNCTION IT NAMES (2026-09-14)
+`worker/store-plans.test.mts` → *"the webhook does not re-implement the id shape"* went red on the
+allowlist PR, on a diff that does not touch `tierForProductId` at all. It asserted
+`rc.slice(rc.indexOf('export function tierForProductId'))` contains no `split(` — **sliced from
+the declaration to the END OF THE FILE**, so it is a rule about one three-line function that fires
+on any `split(` anywhere below it. What tripped it was `sandboxAllowlist` splitting a
+comma-separated env var, four declarations away; `tierForProductId` still reads
+`tierForStoreProductId(productId) ?? 'base'` and delegates exactly as the guard demands.
+- **THE RULE IS RIGHT AND THE ANCHOR WAS WRONG**, which is this file's most-repeated shape — and
+  the second time in one PR, after `sandboxAllowlist`'s own pair of defences absorbed each other's
+  mutations. Bounded at BOTH ends now (`indexOf('\n}', from)`), so it covers the function it names.
+- **A MISSING ANCHOR NOW FAILS RATHER THAN INVERTING.** `indexOf` returns **-1** and
+  `slice(-1)` is the LAST CHARACTER OF THE FILE — which passes `doesNotMatch` vacuously, for ever,
+  on a guard that has silently stopped reading its subject. `assert.ok(from > -1)` is what makes
+  that loud. Same trap as `keepwarm-recycle.test.mts`'s `readAt < -1`, in the other direction: there
+  a missing anchor read as a real regression, here it reads as a pass.
+- **TWO MUTATIONS, EACH VERIFIED TO APPLY AND TO FAIL**: a `split(':')` put INSIDE
+  `tierForProductId` (the regression the guard exists for), and the anchor string made absent.
+- **IT IS ALSO WHY THE FULL SUITE RUNS BEFORE A PUSH, NOT THE ONE SUITE YOU CHANGED.**
+  `worker/revenuecat-webhook.test.mts` passed 28/28 and `npm run typecheck` was clean on both
+  configs; the file that broke was a NEIGHBOUR reading my source. A structural guard can live in
+  any suite, so the blast radius of a `src/lib` edit is not the tests that import it.
+
 ### APPLE IAP WAS DECIDED ON 2026-08-24, AND THIS FILE DID NOT CARRY IT FOR SIX DAYS
 **The owner decided to add In-App Purchase and raise prices to absorb Apple's commission.** It is
 recorded in `docs/STOREKIT-PLAN.md` — in the subtitle of the file (*"Written 2026-08-24 on the

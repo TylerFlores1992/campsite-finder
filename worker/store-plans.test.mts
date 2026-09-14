@@ -426,8 +426,20 @@ test('the webhook does not re-implement the id shape', () => {
   // not the other — which is precisely what this change repaired.
   const rc = code(readFileSync('src/lib/revenuecat.ts', 'utf8'));
   assert.match(rc, /tierForStoreProductId/, 'revenuecat.ts must delegate the shape rule');
+
+  // BOUNDED AT BOTH ENDS. The first version sliced from the declaration to the END OF THE
+  // FILE, so it was a rule about `tierForProductId` that fired on any `split(` anywhere
+  // below it — and it did, on 2026-09-14, over `sandboxAllowlist` splitting a comma-separated
+  // env var four declarations away. `tierForProductId` was untouched and still delegating.
+  // A guard that reads past the thing it names is measuring the neighbour.
+  const from = rc.indexOf('export function tierForProductId');
+  assert.ok(from > -1, 'tierForProductId must be declared in revenuecat.ts');
+  // A missing anchor must FAIL rather than silently invert: slice(-1) is the last character
+  // of the file, which passes this assertion while proving nothing.
+  const end = rc.indexOf('\n}', from);
+  assert.ok(end > -1, 'could not find the end of tierForProductId');
   assert.doesNotMatch(
-    rc.slice(rc.indexOf('export function tierForProductId')),
+    rc.slice(from, end + 2),
     /split\(/,
     'tierForProductId must not parse the id itself'
   );
