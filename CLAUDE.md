@@ -15494,6 +15494,76 @@ reasons are ours.
   `docs/APP-STORE.md` §2d, which is accurate about what was SENT; what is stale is the framing
   that a rejection is what would decide IAP.
 
+#### AND SIX WEEKS ON THE SAME MECHANISM IS STILL LIVE — THE CHECK FOR IT NAMED THE WRONG ACCOUNT (2026-09-14)
+The entry above is the 08-22 rejection: the fix was in production and the demo account could not
+see it. **Nothing about that has changed, and it is now in front of a working IAP flow.** Read
+out of the database rather than remembered:
+```
+Sign-In account : tylerflores1992@yahoo.com        (docs/APP-STORE.md:120)
+  is_beta       : false
+      active  base  stripe  grandfathered=true     2026-07-29
+  hasActiveSubscription: true
+```
+- **SO A REVIEWER SIGNING IN TODAY REACHES NO PAYWALL AND NO WAY TO BUY**, with four live Apple
+  products, both RevenueCat keys in the deployed bundle (`appl_` and `goog_`, scanned 09-14) and
+  the webhook chain proven end to end. Every purchase surface is gated on `!subscribed`; the
+  artefact is right and the thing handed to the reviewer is not, for the third submission running.
+- **AND THE CHECK I WROTE TO CATCH IT REPORTED CLEAN, BECAUSE IT HARDCODED A CLERK ID.** That id
+  (`user_3IS7IGizJd6UTZmrUf8xkOGB3F8`) is `iamtylerflores12345@yahoo.com` — the **sandbox test**
+  account, not the Sign-In one — and I told the owner in as many words that it "**is** the App
+  Review demo account" and was "the only account in the database that can still see a paywall".
+  Both false. **A check that names its subject by an id nobody re-reads can be pointed at the
+  wrong thing and go on passing**, which is the 08-14 shape (the field was populated; nobody
+  asked whether the password worked) with the instrument itself as the victim.
+- **`scripts/app-review-precheck.mts` TAKES THE EMAIL** and asks the real `hasActiveSubscription`
+  rather than a copy of the rule — `is_beta` short-circuits it before any row is read, so a
+  re-implementation would have to know that and would be the copy that drifts. It **names which
+  of the two causes** fired, because only one of them is a row you can delete: a Stripe row is a
+  real subscription and deleting it to pass a check is worse than the check failing.
+
+##### SIGNING OUT NO LONGER REVEALS A PURCHASE OPTION — §2d's INSTRUCTIONS ARE STALE
+The 08-22 remedy was numbered sign-out steps in the review notes, on the finding that
+`WatchCta`'s `isNative` branch sits above its `!signedIn` branch. **That was true of the
+LINK-OUT and is false of the paywall.** Read in source 2026-09-14:
+- `SubscribeCta`, native + signed out -> **Sign in / Create account**. The `canSell` branch
+  carrying `StorePlansLink` is *below* the `gate === "signedOut"` return and unreachable.
+- `WatchCta`, native + signed out -> `SUBSCRIBE_HREF` (the camphawk.app steer), never `/pricing`.
+- `StorePlansLink` renders only from `SubscribeCta` and `NewWatch`, both of which return early
+  for a subscriber (`gate === "ready"`) — so **`/pricing` is reachable only when signed in AND
+  not subscribed.**
+
+So following §2d's own instructions now walks the reviewer to a screen with no purchase option,
+which is the citation. **The demo account has to BE a non-subscriber** — there is no longer a
+sign-out path around it.
+
+##### CLEARING THE SANDBOX ALLOWLIST BEFORE REVIEW IS THE WRONG MOVE, AND I ADVISED IT TWICE
+App Review's own purchases run in **SANDBOX**, and `ignoreReason` drops every non-PRODUCTION
+event unless the buyer is in `REVENUECAT_SANDBOX_USER_IDS`. **Cleared, the reviewer's purchase
+succeeds at StoreKit and unlocks nothing** — which is its own rejection, and indistinguishable
+from the bug fixed on 09-14.
+- **`src/lib/revenuecat.ts` already says it and I went further than the code**: *"CLEAR
+  `REVENUECAT_SANDBOX_USER_IDS` ONCE THE APP IS APPROVED."* Approved, not submitted.
+- The earlier advice was framed around **our own** testing polluting the demo account, which is a
+  real hazard and a different one from the reviewer's own purchase. Two hazards, one variable,
+  and the remedy for the first is the cause of the second.
+- The allowlist must therefore contain the **Sign-In account's** Clerk id through review. The
+  pre-check prints it for exactly this comparison; nothing in a session can read the Vercel value.
+
+##### TWO THINGS A SESSION CANNOT VERIFY ANY MORE, SO THEY ARE THE OWNER'S
+- **THE PASSWORD.** `api.clerk.com` is **`connect_rejected` at the agent proxy** (organization
+  policy), so §2a's one-command check — the one whose absence caused the 08-14 rejection — is
+  gone from a session. Sign in at camphawk.app with the exact string pasted into ASC.
+- **THE BUILD.** `@revenuecat/purchases-capacitor` landed **2026-08-29 (`8818544`)**, so an iOS
+  build older than that contains no StoreKit at all and the paywall renders its `unavailable`
+  fallback — **visually identical to a healthy pre-IAP build**, and identical again to a missing
+  API key or an empty offering. §2d records the 08-22 resubmission as the *same binary* `1.0 (5)`,
+  which predates RevenueCat by a week. Read the attached build's date in the console.
+
+**`docs/APP-STORE.md` §2d AND §5 CARRY THE STALE INSTRUCTIONS AND ARE THE SIDE LANE'S** (the
+APP/STORE surface, `docs/LANES.md`, assigned 2026-09-10) — named here rather than edited. §2d's
+sign-out steps and §5's *"the demo account has an active subscription, so this works
+immediately"* are both now reasons to be rejected.
+
 ### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
 **This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
 on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that
