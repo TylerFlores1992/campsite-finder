@@ -200,6 +200,31 @@ export function storeTransactionId(event: RcEvent): string | null {
 }
 
 /**
+ * The upsert, shared so the guard runs THIS statement and not a copy of it.
+ *
+ * **THE `WHERE` IS LOAD-BEARING AND ITS ABSENCE WAS A 500 ON EVERY WRITE.** Migration 071's
+ * index is PARTIAL — `CREATE UNIQUE INDEX subscriptions_store_txn ON subscriptions
+ * (provider, store_transaction_id) WHERE store_transaction_id IS NOT NULL` — and Postgres
+ * will not infer a partial index from a bare `ON CONFLICT (a, b)`. It raises 42P10, *"there
+ * is no unique or exclusion constraint matching the ON CONFLICT specification"*, at PLAN
+ * time, so the statement could never run: not on a bad row, not on a conflict, ever.
+ *
+ * **IT HID BEHIND THE SANDBOX GUARD FOR A FORTNIGHT.** `ignoreReason` dropped every event
+ * before the write, so this line had never once executed on either store — and the first
+ * event ever allowed through (2026-09-14 04:55 UTC, the first sandbox grant) hit it and
+ * returned an EMPTY 500. Fix present, never exercised, for the umpteenth time; the only
+ * thing that found it was running the real statement against the real table.
+ *
+ * `grandfathered` IS DELIBERATELY NOT IN THE UPDATE SET, exactly as the Stripe webhook does
+ * it: migration 032 wrote it once and no webhook may strip it.
+ */
+export const UPSERT_STORE_SUBSCRIPTION = `
+  INSERT INTO subscriptions (user_id, provider, store_transaction_id, status, tier)
+  VALUES ($1, $2, $3, $4, $5)
+  ON CONFLICT (provider, store_transaction_id) WHERE store_transaction_id IS NOT NULL
+  DO UPDATE SET status = EXCLUDED.status, tier = EXCLUDED.tier, updated_at = NOW()`;
+
+/**
  * The shared `Authorization` value, compared in constant time.
  *
  * RAW VALUE, NO `Bearer` PREFIX — read off RevenueCat's own field help: "RevenueCat will

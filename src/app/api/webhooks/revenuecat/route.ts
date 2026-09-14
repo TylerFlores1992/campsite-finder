@@ -25,6 +25,7 @@ import {
   statusForEvent,
   storeTransactionId,
   tierForProductId,
+  UPSERT_STORE_SUBSCRIPTION,
   verifyAuthHeader,
   verifyHmac,
   type RcEvent,
@@ -125,15 +126,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return ok({ ignored: 'indeterminate', type: event.type });
   }
 
-  // `grandfathered` is deliberately NOT in the update set, exactly as the Stripe webhook
-  // does it: migration 032 wrote it once and no webhook may strip it.
-  await mutate(
-    `INSERT INTO subscriptions (user_id, provider, store_transaction_id, status, tier)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (provider, store_transaction_id)
-     DO UPDATE SET status = EXCLUDED.status, tier = EXCLUDED.tier, updated_at = NOW()`,
-    [userId, provider, txnId, status, tierForProductId(event.product_id)]
-  );
+  try {
+    await mutate(UPSERT_STORE_SUBSCRIPTION,
+      [userId, provider, txnId, status, tierForProductId(event.product_id)]);
+  } catch (e) {
+    // A 500 ON PURPOSE, and the only non-2xx below the auth check. Every `ok({ignored})`
+    // above is a decision not to act, which a retry can never improve on — but this event
+    // IS processable and we merely failed to write it, so RevenueCat's six retries are
+    // worth having. That is what gave the 2026-09-14 event a second chance once the
+    // statement was fixed, with no repurchase.
+    //
+    // AND IT MUST NAME ITSELF, because an unhandled throw does not. This exact line raised
+    // 42P10 (see UPSERT_STORE_SUBSCRIPTION) and Vercel returned a bare 500 with
+    // `Content-Length: 0` — no body, no cause, nothing in RevenueCat's delivery log to
+    // separate "our write failed" from "the function crashed" from "auth refused you".
+    // Same rule as the 401 above, one branch over.
+    //
+    // THE DETAIL IS LOGGED, NEVER RETURNED. `sqlit` INTERPOLATES rather than binds, so a
+    // DB error message carries the statement with real values spliced into it — a user id
+    // here, and whatever the next caller passes later. Don't emit a field you would then
+    // have to redact.
+    console.error(`[revenuecat webhook] WRITE FAILED for event ${event.id}: ` +
+      (e instanceof Error ? e.message : String(e)));
+    return NextResponse.json({ error: 'write failed' }, { status: 500 });
+  }
 
   return ok({ type: event.type, status });
 }
