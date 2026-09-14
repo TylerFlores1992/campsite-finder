@@ -37,7 +37,7 @@ Three things that will bite in the first ten minutes:
 
 | | |
 |---|---|
-| master | `a592e21` (#336) — **verify against `origin/master`, this line ages** |
+| master | `18b90aa` (#340) — **verify against `origin/master`, this line ages** |
 | mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11). **A BOT-SIDE UPDATE IS NOW GENUINELY OWED — #336 changed `ramp-bail.mjs`, `ramp-arm-probe.mjs` and `bot-commands.mjs`** — so `autocart.bot_version` correctly reads *"MISSING bot-side changes"*. **That is EXPECTED and is not a fault, and it needs NO action: the box updates itself in the 02:00-05:00 PT quiet window, which is how it took `a68a6d2` overnight on 09-11.** Do NOT press "Update now" — a forced update ends the RC session for nothing. Confirm arrival with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
 | last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
 | **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
@@ -277,13 +277,34 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
     is in `worker-deploy.yml`'s `paths:` and restarts all three pollers.
   - **Still MAIN's, and still open:** HMAC is reported-not-enforced, and out-of-order webhook
     delivery is unhandled (needs a migration, so main's block).
-- **Play production release 25 was IN REVIEW as of 2026-09-01 — nine days ago, and nobody in a
-  session can read the Play console, so treat that as a date and not as current state.** Ask the
-  owner before acting on it. Whenever it lands, the first REAL purchase is what exercises
-  webhook → row → entitlement for the first time, carrying two known gaps (HMAC is reported, not
-  enforced; out-of-order delivery unhandled). A licence-tester purchase does NOT exercise it —
-  `ignoreReason` correctly drops every non-PRODUCTION event, so an absent `subscriptions` row is
-  the guard working, not a broken webhook.
+- **THE BILLING CHAIN IS PROVEN END TO END AS OF 2026-09-14 — purchase → RevenueCat → webhook →
+  row → `hasAutocartEntitlement` → "Start watching", confirmed in the app by the owner.** It had
+  never once run: the webhook 401'd **23 for 23** for a fortnight, then the sandbox guard dropped
+  everything that got in, then the write it finally reached raised `42P10` on every row because
+  `ON CONFLICT` omitted a partial index's predicate. Three bugs, each hiding the next. **What is
+  still unexercised is a REAL `PRODUCTION` purchase**, carrying the two known gaps below.
+- **BEFORE THE NEXT APPLE SUBMISSION: `NODE_USE_ENV_PROXY=1 npx tsx scripts/app-review-precheck.mts`.**
+  It reads **NOT CLEAN** today — the Sign-In account `tylerflores1992@yahoo.com` carries a live
+  grandfathered Stripe subscription, every purchase surface is gated on `!subscribed`, and the
+  reviewer therefore reaches no paywall at all. **That is the 2026-08-22 rejection, unchanged, now
+  in front of a working IAP flow.** Three things a resumer will otherwise get wrong, all in
+  CLAUDE.md → "AND SIX WEEKS ON THE SAME MECHANISM IS STILL LIVE":
+  - **Signing out does NOT reveal the paywall any more.** `/pricing` is reachable only when signed
+    in AND not subscribed; signed-out native gets Sign in / Create account, or the link-out. The
+    sign-out steps in `docs/APP-STORE.md` §2d are now a route to a screen with no way to buy.
+  - **Do NOT clear `REVENUECAT_SANDBOX_USER_IDS` before review.** App Review purchases run in
+    SANDBOX, so a cleared allowlist means the reviewer's purchase unlocks nothing.
+    `src/lib/revenuecat.ts` says *once the app is APPROVED*, and it must hold the **Sign-In**
+    account's Clerk id meanwhile — not the sandbox test account's, which is what an earlier
+    hardcoded check in this session wrongly asserted it was.
+  - **The attached BUILD must be dated 2026-08-29 or later** (`8818544`, when
+    `@revenuecat/purchases-capacitor` landed). Older and there is no StoreKit in the binary and
+    the paywall renders `unavailable` — identical to a healthy pre-IAP build.
+  - **`api.clerk.com` is `connect_rejected` at the proxy**, so §2a's password check is no longer
+    available from a session. The owner signs in at camphawk.app with the exact ASC string.
+- **Play production release 25 was IN REVIEW as of 2026-09-01, and nobody in a session can read
+  the Play console — treat that as a date, not as current state.** Ask the owner before acting on
+  it.
 - **The release-window Routine self-disables 2026-09-12**, ~2 firings left.
 - **A NUMERIC TEST FIXTURE IS VISIBLE TO PRODUCTION, AND ONE HALF OF IT HAS A NARROW SAFE FIX.**
   `REAL = '0'` passes `REAL_UNIT`, so for the length of any `npm test` run both `nextHoldRelease`
