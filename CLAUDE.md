@@ -15642,6 +15642,107 @@ reviewer to a screen with no purchase option, and §5 still says the demo accoun
 subscription "so this works immediately". Both were true when written and are now reasons to be
 rejected.
 
+##### THE APPLE PURCHASE CHAIN IS PROVEN — ONE ROW, THREE UNEXERCISED FIXES (2026-09-15)
+
+`provider=apple`, the first store row this product has ever had, written at **03:23:10 UTC**
+from a TestFlight purchase on the demo account:
+
+```
+iamtylerflores12345@yahoo.com | trialing | autocart | provider=apple
+  | store_transaction_id=2000001235755873
+```
+
+**IT PROVES THREE THINGS AT ONCE, NONE OF WHICH HAD EVER RUN.** The sandbox allowlist
+(`REVENUECAT_SANDBOX_USER_IDS`) reaching a deployed function, `#339`'s auth fix letting the
+event past the 401, and `#340`'s `ON CONFLICT … WHERE store_transaction_id IS NOT NULL`
+letting the write land. All three were deployed and **all three were unexercised** — the
+23-for-23 401s and then the SANDBOX drops meant the write had never been reached on either
+store. Purchase → RevenueCat → webhook → `subscriptions` → `hasActiveSubscription` is closed.
+
+**AND A PLAN CHANGE FOLLOWED IT ON THE SAME ROW, four minutes later.**
+```
+03:23:10  trialing  autocart
+03:27:24  active    base        <- same id, same store_transaction_id
+```
+Apple keeps `original_transaction_id` **stable across changes inside a subscription group**, so
+`DO UPDATE SET status, tier` tracked the move from Auto-Cart to Alerts rather than opening a
+second row. That is a second capability proven, and it is the one a real subscriber changing
+plan will exercise first.
+
+**THE `autocart` TIER WAS NOT A BUG, AND RULING THAT OUT WAS WORTH THE ROUND TRIP.** The owner
+reported buying Alerts; the row said `autocart`. `tierForProductId` falls back to `'base'` for
+anything unrecognised, so it **cannot** emit `autocart` by accident — the event really carried
+an Auto-Cart product id. The dangerous reading was a crossed id in App Store Connect, which
+would sell the Auto-Cart entitlement at $2.99 — **silent free premium, the direction the tier
+design says must never happen**. Settled from the console in one screenshot, and the check is
+the same one §9b's Play trap needed:
+
+| Level | Reference name | Product ID | Duration |
+|---|---|---|---|
+| 1 | Auto-Cart Yearly | `app.camphawk.mobile.autocart.yearly` | 1 year |
+| 2 | Auto-Cart Monthly | `app.camphawk.mobile.autocart.monthly` | 1 month |
+| 3 | Base Yearly | `app.camphawk.mobile.base.yearly` | 1 year |
+| 4 | Base Monthly | `app.camphawk.mobile.base.monthly` | 1 month |
+
+Every name matches its id and every **duration** matches its name, so the
+`camphawk_autocart / yearly` reading `Type: Monthly` trap is not present on Apple. The benign
+explanation held: the Auto-Cart button sits directly below Alerts and it was the one being
+tapped.
+
+##### A TESTFLIGHT BUILD DOES NOT USE SANDBOX TEST ACCOUNTS, AND I ADVISED CREATING ONE
+Told to clear a leftover subscription, I sent the owner to **Settings → Developer → Sandbox
+Apple Account** and to create a sandbox tester in ASC. **Neither exists on that phone, because
+neither applies.** A TestFlight build buys with **the ordinary Apple ID signed into the App
+Store**; sandbox test accounts are for a build installed from Xcode.
+- **THE EVIDENCE WAS IN THE OWNER'S FIRST SCREENSHOT AND I READ PAST IT.** *"Beta testers
+  aren't charged for this In-App purchase, and it will only be available during testing"* is
+  TestFlight's wording. A sandbox-account purchase says `[Environment: Sandbox]`.
+- The tester account is harmless and worth keeping for a future Xcode build. The cost was a
+  round trip.
+
+##### THE PAYWALL'S SILENT BLIP IS AN IN-GROUP CHANGE, AND IT HAS EXACTLY ONE CAUSE
+Tapping Auto-Cart with Alerts already live did nothing visible — the button flicked to
+*"Opening…"* and back, with no banner. **`StorePaywall` has exactly one silent outcome:**
+```js
+if (outcome.result === "cancelled") return setPhase({ kind: "idle" });   // no banner, by design
+if (outcome.result !== "purchased")  return setPhase({ kind: "error", ... });
+```
+A refusal prints a message, a failure prints a message, a throw prints *"Something went
+wrong."* **So a blip with no banner IS `userCancelled` from StoreKit** — and `cancelled` does
+not log either, so Safari Web Inspector would show nothing. The symptom is the whole diagnosis.
+- **CAUSE: `decidePurchase` returned `action: 'change'`**, because `readCurrentStoreProduct()`
+  saw the live Alerts subscription. StoreKit returned cancelled without presenting anything.
+  Cancelling the existing subscription made the next tap a plain `buy`, and it succeeded first
+  time.
+- **DO NOT "FIX" THE SILENCE.** Backing out of a purchase must stay silent; telling somebody
+  who changed their mind that the app is broken is the failure that branch exists for.
+
+##### AND THE CANCEL ROUTE IS CIRCULAR — YOU CANNOT REACH `Manage` WHILE SUBSCRIBED
+Every purchase surface gates on `!subscribed`, so a subscriber sees no paywall, therefore no
+StoreKit sheet, therefore **no `Manage` button** — and a TestFlight subscription does **not**
+appear under Settings → [your name] → Subscriptions. The only supported UI is unreachable from
+the state that needs it.
+- **THE WAY OUT IS TO WAIT.** TestFlight periods are compressed and auto-renew at most **six
+  times**, so the subscription expires on its own in about half an hour. `statusForEvent` reads
+  the expiry timestamp rather than the event name, so `EXPIRATION` lands on `'expired'` and the
+  row stops entitling unattended.
+- **DELETING OUR ROW EARLY IS FUTILE** — it is not the Apple subscription, and the next renewal
+  writes it straight back. Measured: unchanged from 03:27:24, so renewals had stopped by 03:37,
+  and the delete at that point was permanent (`apple rows = 0`, pre-check CLEAN).
+
+##### THE TEST ITSELF CREATES THE 08-22 REJECTION, EVERY TIME
+A successful purchase makes the demo account a subscriber, and **a subscriber sees no paywall
+and no way to buy** — which is precisely what got 1.0 (5) rejected on 2026-08-22 with the fix
+already live in production.
+- `scripts/app-review-precheck.mts` says so in its own words (`NOT CLEAN — … That is the
+  2026-08-22 rejection`) and names the cause, so the row can be deleted knowingly rather than
+  hunted for.
+- **SO THE ORDER IS FIXED AND IS NOT OPTIONAL:** prove the chain, let the store subscription
+  lapse, delete the row, confirm **CLEAN**, *then* submit. **The reviewer's own purchase will
+  write the same row** — that is the chain working, and it is cleared after APPROVAL, never
+  before (`REVENUECAT_SANDBOX_USER_IDS` must still contain the demo account's Clerk id through
+  review, or their purchase unlocks nothing).
+
 ### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
 **This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
 on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that
