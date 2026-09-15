@@ -15564,6 +15564,84 @@ APP/STORE surface, `docs/LANES.md`, assigned 2026-09-10) — named here rather t
 sign-out steps and §5's *"the demo account has an active subscription, so this works
 immediately"* are both now reasons to be rejected.
 
+##### THE SUBMISSION STATE, WRITTEN DOWN BECAUSE IT LIVED ONLY IN A CHAT (2026-09-14)
+
+The owner's words: *"this session keeps bouncing back and forth from up to date to older
+conversations."* They were right, and the cause is structural rather than a fault — the Apple
+state existed **only in the conversation**, so every compaction re-derived it from screenshots.
+Everything durable in this repo is in files. This is that state in a file.
+
+**THE SMALL BUSINESS PROGRAM IS APPROVED — 2026-09-14, ~15 days after the 08-30 submission.**
+*"The commission rate on your paid apps and in-app purchases is now 15%."* That was the last
+gate in `docs/STOREKIT-PLAN.md` §4e and **it required no action when it landed**: the four
+products were already priced on the 15% column ($2.99 / $23.99 / $11.99 / $59.99). Had it gone
+the other way, the 30% column puts Auto-Cart yearly at **$71.99** — above Campsite Tonight's
+$59.99, forfeiting the positioning that tier was built on. It also makes §10b's arithmetic real
+rather than projected: at 15% the store nets **more than Stripe on every plan** (+$0.41 /
++$1.27 / +$0.78 / +$2.74), because Stripe's fixed $0.30 is an effective **14.9%** on $2.50.
+
+**§4e's SEVEN-STEP CHECKLIST IS 7-OF-7 AND THE FILE STILL SAYS `GATED ON SBP — DO NOT START AT
+STEP 1`.** Steps 1-5 (products, localisation, import, entitlements, the offering's App Store
+rows) are proven transitively by the 09-14 Apple sandbox purchase completing — RevenueCat could
+not have returned Apple products, and the webhook could not have written a `provider=apple` row,
+with any of them missing. Steps 6-7 were re-verified directly: `appl_wHvemXmRZcTKzVnGXWNgVHodsTF`
+and `goog_pJJOzaIyddbmXbjzlWEbAoEwjQJ` are both live in `/_next/static/chunks/0k48db3_3ihio.js`.
+**The checklist is the side lane's file, so it is NAMED here rather than edited** — but a reader
+who opens it cold is told not to start work that is finished.
+
+**THE DEMO ACCOUNT WAS SWAPPED, WHICH IS THE 08-22 BLOCKER CLEARED.** Sign-In Information now
+points at `iamtylerflores12345@yahoo.com` (clerk `user_3IS7IGizJd6UTZmrUf8xkOGB3F8`), which
+`app-review-precheck.mts` reads **CLEAN**: no rows, `is_beta: false`. The old one
+(`tylerflores1992@yahoo.com`) is still `active base stripe grandfathered` and was deliberately
+**not** touched — a Stripe row is a real subscription and deleting one to pass a check is worse
+than the check failing.
+
+**BUILD `1.0 (27)` IS ATTACHED, AND THE BUILD-DATE TRAP IS WHY IT MATTERS.** RevenueCat entered
+the build at `8818544`, **2026-08-29 11:07 PT**. Build 27 uploaded 1:22 PM that day; 26 at
+12:58 PM — both past it, and the commit log corroborates (`#222` "the iOS build with RevenueCat
+in the tree is green" at 13:03, `#224` beta review refusing 26 for empty Test Information at
+13:09, `#225` filling those fields at 13:17, 27 uploading five minutes later and reading
+**Approved** where 26 still reads *Ready to Submit*). **The previously-submitted `1.0 (5)` is
+from 08-22 and contains no StoreKit at all.**
+- **DO NOT MATCH ON BUILD NUMBER.** "TestFlight #12" in this file is the **Codemagic run**
+  number; ASC's build number is `PROJECT_BUILD_NUMBER` (`codemagic.yaml:265`), a **project-wide**
+  counter shared with the Android workflow. The recorded proof is `android-release` run 8
+  producing versionCode **16**. Match on UPLOAD DATE.
+- **BUILD 27 HAS ZERO INSTALLS.** Build **21** (Aug 9, three weeks before RevenueCat) carries 4
+  installs and 219 sessions, so it is the one that has actually been used. The paywall screenshot
+  that proves StoreKit works came from *some* build; the reviewer gets **27**. Install it and
+  walk the flow before submitting.
+
+**WHAT REMAINS, AND ALL FOUR ARE CONSOLE OR VERCEL WORK NO SESSION CAN DO:** *Add for Review* on
+the four subscriptions; `REVENUECAT_SANDBOX_USER_IDS` containing that clerk id on Vercel
+**followed by a redeploy** (env changes do not reach already-deployed functions); installing 27
+and walking the paywall; then submitting. **After APPROVAL** — not submission — clear the
+allowlist and delete whatever row the reviewer's purchase wrote.
+
+**THE RISK THIS ROUND CARRIES, NAMED BEFORE IT BITES.** On iOS a signed-in non-subscriber gets
+**two different answers depending on where they tap**: `SubscribeCta` (on `/new`) renders
+*"See plans"* → `/pricing` → the StoreKit paywall, because `canSell` short-circuits above the
+link-out; `WatchCta` (on a campground page) renders *"Subscribe to watch"* → **camphawk.app in
+Safari**, because `LINKOUT_BY_STORE.ios` is true. Both are legal on the US storefront and the
+comment in `SubscribeCta` says *"EXACTLY ONE OF THE TWO LINKS RENDERS"* — true per component,
+and the app as a whole shows both. **A reviewer's instinct is the campground page.** The review
+notes defuse it by leading with numbered IAP steps and declaring the external link second; if
+this round comes back on 3.1.1 again, `LINKOUT_BY_STORE.ios = false` is the next lever, and it
+is one boolean, web-side, no rebuild.
+
+**AND THE REVIEW SCREENSHOT WAS THE ONE ASSET NOBODY HAD PRODUCED.** §8 requires one per
+subscription and says a single paywall shot reused across all four is enough. **A sandbox
+purchase working does not prove it is there** — sandbox buys succeed while a subscription sits
+*Missing Metadata*, so that gap was invisible to everything we had tested. It also could only be
+taken as a NON-subscriber, which made it the same job as the demo-account swap.
+
+**TWO SIDE-LANE FILES CARRY STALE INSTRUCTIONS AND ARE NAMED, NOT EDITED** (`docs/LANES.md`, the
+APP/STORE surface, assigned 2026-09-10): `docs/STOREKIT-PLAN.md` §4e and §8 say SBP is pending
+and the checklist is gated; `docs/APP-STORE.md` §2d's numbered **sign-out** steps now walk a
+reviewer to a screen with no purchase option, and §5 still says the demo account has an active
+subscription "so this works immediately". Both were true when written and are now reasons to be
+rejected.
+
 ### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
 **This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
 on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that
@@ -15844,9 +15922,10 @@ the link-out is.
   agreement** active with banking and tax complete before IAP products can be created — unknown
   from here.~~ **IT IS NOT UNKNOWN AND HAS NOT BEEN SINCE 2026-08-25 — `docs/STOREKIT-PLAN.md`
   §6.1 has it off the console: Paid Applications ACTIVE (Aug 25 2026 – Jul 25 2027), bank
-  account ACTIVE, W-9 ACTIVE.** The single outstanding Apple gate is the **Small Business
-  Program**, submitted 2026-08-30 and pending — i.e. the commission rate, not the ability to
-  create products. **This is the shape the owner named on 08-30: the fact was recorded, in the
+  account ACTIVE, W-9 ACTIVE.** ~~The single outstanding Apple gate is the **Small Business
+  Program**, submitted 2026-08-30 and pending~~ — **APPROVED 2026-09-14 at 15%. See "THE
+  SUBMISSION STATE, WRITTEN DOWN BECAUSE IT LIVED ONLY IN A CHAT" below. It was always the
+  commission rate, never the ability to create products.** **This is the shape the owner named on 08-30: the fact was recorded, in the
   file that owns it, and the file a session reads first said it was unknown.** §6.1 is the
   authority for Apple's gates; do not re-derive them from here.
 - **The second precondition stands unchanged:** Apple **has subscription groups**, which Play
