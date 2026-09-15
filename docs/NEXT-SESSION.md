@@ -287,14 +287,30 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
   later updated the SAME row (Apple keeps `original_transaction_id` stable inside a subscription
   group). CLAUDE.md → "THE APPLE PURCHASE CHAIN IS PROVEN". **What is still unexercised is a REAL
   `PRODUCTION` purchase**, carrying the two known gaps below.
-- **APPLE IS SUBMITTED — ALL SIX ITEMS, 2026-09-15 04:35 UTC, `e77ec119-c61f-4e2c-87d0-da4f98859958`,
-  Waiting for Review.** The app version `1.0 (27)`, the `CampHawk Subscriptions` group and the four
-  subscriptions all read *Waiting for Review* in ONE submission. **There is nothing left to do on
-  Apple until they answer** — read CLAUDE.md → "THE SUBMISSION STATE, WRITTEN DOWN BECAUSE IT LIVED
-  ONLY IN A CHAT" and → "\"ADD FOR REVIEW\" PUTS A SUBSCRIPTION IN A DRAFT" before touching anything.
-  Standing facts: **SBP approved at 15%** (no price change needed — the four products were already
-  on the 15% column), **§4e is 7-of-7** while that file still says `GATED ON SBP`, and **Sign-In
-  Information points at the clean account**.
+- **APPLE REJECTED `1.0 (27)` ON 2026-09-15 — 3.1.2, no Terms of Use (EULA) link in the App Store
+  metadata — AND THE FIX IS WAITING ON ONE CONSOLE PASTE.** An AUTOMATED pre-check, so **nothing
+  about the app was adjudicated** for the third submission running; the other five items are held
+  behind the version. The description genuinely carried no ToU, EULA or Privacy link at all —
+  checked, not conceded — and that requirement did not exist before the four IAP products joined a
+  submission, so nothing regressed. `docs/appstore-description.txt` now carries both links
+  (3,715/4,000) and `src/lib/store-listing.test.mts` guards it.
+  **THE OWNER'S THREE STEPS: paste the .txt into the version's Description; open the standard EULA
+  URL once to confirm it loads; Resubmit to App Review with `Items Submitted` reading SIX.**
+  Reply text and the standard-versus-custom EULA decision are in `docs/APP-STORE.md` §2e;
+  CLAUDE.md → "REJECTED A FIFTH TIME, BY A MACHINE, OVER TWO MISSING LINES" is the finding.
+  - **`www.apple.com` IS PROXY-BLOCKED, so the EULA URL cannot be verified from a session** —
+    take it from the letter's own hyperlink in Resolution Center. The rejection is about a link
+    being FUNCTIONAL, so a dead one fails the same check twice. (`developer.apple.com` answers,
+    **and serves its "Page Not Found" with HTTP 200** — grep the body, do not trust the status.)
+  - **`Items Submitted (6)` is the tell.** Six means the 09-14 draft fix held; one means the
+    subscriptions are back in a separate draft — CLAUDE.md → "\"ADD FOR REVIEW\" PUTS A
+    SUBSCRIPTION IN A DRAFT".
+  - **The plausible NEXT rejection is the in-app disclosure**, which was deliberately not touched;
+    it is `1.0 (27)`'s web layer, so a push fixes it with no rebuild.
+  Standing facts, unchanged — and read CLAUDE.md → "THE SUBMISSION STATE, WRITTEN DOWN BECAUSE IT
+  LIVED ONLY IN A CHAT" before touching anything: **SBP approved at 15%** (no price change needed
+  — the four products were already on the 15% column), **§4e is 7-of-7** while that file still
+  says `GATED ON SBP`, and **Sign-In Information points at the clean account**.
   - **`NODE_USE_ENV_PROXY=1 npx tsx scripts/app-review-precheck.mts iamtylerflores12345@yahoo.com`
     reads CLEAN.** Run it before any submission; the default argument is the OLD account and reads
     NOT CLEAN by design, because it is a live grandfathered Stripe subscriber that must not be
