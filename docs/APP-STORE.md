@@ -208,6 +208,162 @@ link-out in §2c, and looking for it on the version page finds nothing.
 Apple has renamed these routes more than once; the first two are stable, the rest are
 best-effort. If one 404s, the setting has not moved — the path has.
 
+## 2e. REJECTED 2026-09-15 — Guideline 3.1.2, no Terms of Use link in the metadata
+
+**The fifth rejection letter, the first one nobody has to argue with, and the cheapest to
+fix: two lines of text in one metadata field.** It is also the first that an *automated*
+check raised — the letter says so in its own opening — so **no human opened the app**, and
+nothing about the IAP flow, the demo account or the review notes was adjudicated. The whole
+six-item submission is blocked behind one metadata field.
+
+```
+App Version
+App Review Guideline Issue
+
+This is an automated message. The review of this submission cannot proceed.
+See below for more information.
+
+The submission offers auto-renewable subscriptions, such as Auto-Cart Monthly,
+Base Yearly, Base Monthly, Auto-Cart Yearly, but does not include a functional
+link to the Terms of Use (EULA) in the app metadata that appears on the app's
+App Store product page.
+
+If you are using the standard Apple Terms of Use (EULA), include a link to the
+Terms of Use in the App Description. If you are using a custom EULA, add it in
+App Store Connect.
+```
+
+ASC files it as **3.1.2 Business: Payments - Subscriptions**, against `iOS App 1.0 (27)`.
+The other five items read *Ready for Review* and are held by the banner: *"Your app version
+was rejected and no other items submitted can be accepted or approved."*
+
+### It is correct, and it was checked rather than assumed
+
+`docs/appstore-description.txt` contained **no Terms of Use link, no EULA link and no
+Privacy Policy link anywhere in its 3,582 characters.** One grep, zero hits. The
+description discusses subscriptions at length under `FREE AND PAID` and links nineteen
+government reservation systems, and it named neither agreement.
+
+**This is a requirement of offering auto-renewable subscriptions, so it did not exist for
+the four earlier submissions.** Nothing regressed — the four IAP products became part of a
+submission for the first time on 2026-09-14, and this is the check that fires when they do.
+
+### The fix — App Description, console-side, no code and no rebuild
+
+Two lines, added after the `FREE AND PAID` paragraph in `docs/appstore-description.txt`:
+
+```
+Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
+Privacy Policy: https://camphawk.app/privacy
+```
+
+3,582 -> **3,715 characters** against the 4,000 limit, so nothing had to be cut. That
+mattered: the obvious thing to trim is the government source list at the bottom, which is
+what the 2026-08-03 Play "Misleading Claims" rejection was fixed with.
+
+**THE STANDARD EULA, NOT A CUSTOM ONE — and the letter offers both, so this is a decision.**
+Apple's default terms govern unless a custom License Agreement is uploaded in App Store
+Connect (App Information -> License Agreement). **Whether one has been uploaded is NOT
+verifiable from a session** — nobody here can read ASC — so this rests on the repo never
+mentioning one and on Apple's letter offering the standard path first; **confirm the
+License Agreement field is empty before pasting.** Uploading
+`camphawk.app/terms` as a custom EULA instead is the other path and is worse here: it is
+not written as an EULA, it must meet Apple's minimum terms to be accepted, and **its
+`Subscriptions` section says billing is "through Stripe"**, which is false for an App Store
+purchase and would be the first thing a reviewer following that link reads.
+
+**TAKE THE URL FROM APPLE'S OWN LETTER, NOT FROM THIS FILE.** The rejection hyperlinks the
+words *"standard Apple Terms of Use (EULA)"* in Resolution Center — that is the canonical
+target, one click, and it cannot be mistyped. The URL above is the well-known one and
+**could not be verified from a session: `www.apple.com` is `connect_rejected` at the agent
+proxy** (a policy denial, confirmed in `recentRelayFailures`, not a dead URL —
+`developer.apple.com` answers 200 from the same session). **The rejection is literally about
+a link being FUNCTIONAL, so a dead one fails the same check twice.** Open it once in a
+browser before submitting.
+
+### Resubmitting — the six items should stay six
+
+Metadata is editable on a **Rejected** version, which is what makes this a text edit rather
+than a new build. The sequence:
+
+1. App Store Connect -> the version page -> **Description** -> paste
+   `docs/appstore-description.txt` in full.
+2. Open the standard EULA URL in a browser and confirm it loads.
+3. App Review -> the submission -> **Resubmit to App Review**.
+
+**That button was GREYED OUT in the rejection screenshot**, beneath *"Unresolved Issues"*.
+The likeliest reading is that it enables once the version's issue is addressed — i.e. after
+step 1 — but **that is an inference and nobody here can see the console.** If it stays grey
+after the Description is saved, do not hunt for a hidden control: the page's own footer and
+its ACTION column are where ASC keeps the ones that look absent, which cost two wrong
+answers on 09-14.
+
+**`Items Submitted (6)` IS THE TELL, AND IT IS THE ONE THAT WENT WRONG LAST TIME.** On
+2026-09-14 the four subscriptions sat in a separate draft, the rejection page's resubmit
+carried only the app version, and `Items Submitted (1)` was the only thing that said so —
+see `CLAUDE.md` -> *"'ADD FOR REVIEW' PUTS A SUBSCRIPTION IN A DRAFT THAT NEEDS ITS OWN APP
+VERSION"*. That is already fixed here: all six are in **this** submission, so resubmitting
+carries them. **Count them before pressing it.** Six means the earlier fix held; one means
+it has come apart again and the subscriptions are back in a draft.
+
+### What was NOT changed, and the risk that remains
+
+**The in-app disclosure at the point of purchase was not touched, and it is the plausible
+next rejection.** 3.1.2 also wants the subscription's title, length, price and functional
+links to the Privacy Policy and Terms of Use presented in the binary. `StorePaywall`
+renders the tier name, the store's own `priceString` and `/month` or `/year` — title,
+price and length — and `/pricing` sits inside the `(app)` route group, whose footer carries
+`Terms` and `Privacy` links, so all five are on the screen. **That is the minimum set met
+by the layout rather than by design**, the footer's `Terms` points at our own terms rather
+than the EULA now cited in the description, and **nothing guards any of it.** It is left
+alone deliberately: this letter cites the metadata only, the binary half is `1.0 (27)`'s
+web layer and can be changed with a push if a human reviewer does raise it, and widening a
+fix past its evidence is how the 08-22 round was spent.
+
+**The Play description was not given the same links.** Google has never cited this and
+there is no evidence to encode.
+
+### The guard
+
+`src/lib/store-listing.test.mts`. A store listing is plain text that `tsc`, `next build`
+and the whole suite are structurally unable to see, and **nothing in this repo referenced
+`docs/appstore-description.txt` at all** — so the requirement could only be enforced by
+somebody remembering it. Same blind spot, and same remedy, as the `jsx-spacing` and
+`us-spelling` gates. It asserts a labelled, functional link for both agreements, and the
+4,000-character cap on **both** listings — `CLAUDE.md`'s "paste the file, re-count after any
+edit" is an instruction rather than a mechanism, and the Play description has 102 characters
+of headroom.
+
+It deliberately does **not** pin Apple's URL: the custom-EULA path above is legitimate and
+pinning would fail the day somebody takes it.
+
+**ONE MUTATION SURVIVED THE FIRST ROUND, AND IT WAS THE VACUOUS CASE.** A description
+reading `Terms of Use (EULA): see the CampHawk website` — the label with no URL, i.e. the
+exact defect Apple rejected — **passed.** `TERMS_LABEL` is an alternation and was
+interpolated bare, so the regex built three top-level branches and the middle one matched
+the word `EULA` anywhere with no URL required. A non-capturing group fixes it. ~29th
+instance in this repo of a guard anchored on the wrong thing, and it was found by mutation
+rather than by reading.
+
+### Resolution Center reply
+
+```
+Thank you for the review.
+
+You are correct, and this was our omission. The App Store description did not
+contain a link to the Terms of Use.
+
+We use the standard Apple Terms of Use (EULA) and have not uploaded a custom
+license agreement. We have therefore added a functional link to the standard
+Apple Terms of Use to the App Description, alongside a link to our Privacy
+Policy, and verified that both load.
+
+No binary changes were needed. We are resubmitting the same build, 1.0 (27),
+with the corrected description.
+```
+
+---
+
 ## 2d. THE 3.1.1 FIX WAS LIVE AND THE REVIEWER COULD NOT SEE IT (2026-08-22)
 
 Same guideline, same build, same letter as 08-19. **The change was never adjudicated**, and
@@ -1106,7 +1262,7 @@ this is the field to use for seasonal messaging):
 Sold out for the weekend you wanted? CampHawk watches that campground around the clock and tells you the second someone cancels - usually within seconds.
 ```
 
-**Description** (3581/4000 — 419 spare). Verbatim copy of
+**Description** (3714/4000 — 286 spare). Verbatim copy of
 `docs/appstore-description.txt`:
 
 ```
@@ -1133,6 +1289,9 @@ Every Recreation.gov campground in all 50 states, plus state parks in 34 states 
 
 FREE AND PAID
 Searching live availability is free and needs no account. Watching a booked campground, and the alerts that come with it, require a subscription.
+
+Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
+Privacy Policy: https://camphawk.app/privacy
 
 WHERE OUR INFORMATION COMES FROM
 CampHawk does not create campground or availability information. It reads what the official reservation systems below publish and links you back to them to book. The same list is also at https://camphawk.app/sources

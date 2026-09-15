@@ -15792,6 +15792,77 @@ Submissions  Today 9:11 PM   VERSIONS: 1.0    1 Item    Waiting for Review
   SIDE lane's** (`docs/LANES.md`, the APP/STORE surface, assigned 2026-09-10), so this is NAMED here
   rather than edited there.
 
+##### REJECTED A FIFTH TIME, BY A MACHINE, OVER TWO MISSING LINES (2026-09-15)
+`iOS App 1.0 (27)` came back **3.1.2 Business: Payments - Subscriptions** roughly eighteen hours
+after the six-item submission went in, and the letter opens *"This is an automated message"* —
+so **no human opened the app**, and the IAP flow, the demo account and the replacement review
+notes were all un-adjudicated for the third submission running. The other five items read *Ready
+for Review*, held by the banner *"no other items submitted can be accepted or approved."*
+
+> The submission offers auto-renewable subscriptions … but does not include a functional link to
+> the Terms of Use (EULA) in the app metadata that appears on the app's App Store product page.
+
+- **IT IS CORRECT, AND CHECKED RATHER THAN CONCEDED.** `docs/appstore-description.txt` carried
+  **no Terms of Use link, no EULA link and no Privacy Policy link** in 3,582 characters — one
+  grep, zero hits — while discussing subscriptions at length and linking nineteen government
+  reservation systems.
+- **NOTHING REGRESSED: this requirement did not exist for the four earlier submissions.** It is a
+  property of OFFERING auto-renewable subscriptions, and the four products became part of a
+  submission for the first time on 09-14. **So the count of Apple rejections is now five and the
+  count of distinct causes is still five** — none is a recurrence.
+- **THE FIX IS TWO LINES IN ONE METADATA FIELD**, 3,582 → 3,715 of 4,000, no code and no rebuild;
+  metadata is editable on a **Rejected** version, which is the whole reason this is cheap. Full
+  account, the standard-versus-custom EULA decision, and the Resolution Center reply are in
+  `docs/APP-STORE.md` §2e — **the side lane's file** (`docs/LANES.md`, the APP/STORE surface),
+  written there because the user directed it and no side lane was live.
+- **THE CUSTOM-EULA PATH WAS REJECTED FOR A REASON WORTH KEEPING: `camphawk.app/terms`'s
+  `Subscriptions` section says billing is "through Stripe"**, which is false for an App Store
+  purchase. Uploading it as a custom License Agreement would put that sentence one click from the
+  product page. **Recorded, not fixed** — it is reachable today only through the in-app footer,
+  the description now links Apple's EULA instead, and widening a fix past its evidence is how the
+  08-22 round was spent.
+
+- **`www.apple.com` IS `connect_rejected` AT THE AGENT PROXY WHILE `developer.apple.com` ANSWERS
+  200.** So the standard EULA URL — the one thing this fix turns on — **cannot be verified from a
+  session**, and the rejection is literally about a link being FUNCTIONAL. **Take it from the
+  letter's own hyperlink in Resolution Center**, which is canonical and unmistypeable. Third entry
+  in this family after `api.clerk.com` and `api.codemagic.io`.
+- **AND `developer.apple.com` SERVES ITS "Page Not Found" WITH HTTP 200.** Two guessed help URLs
+  returned `200` and were both soft 404s, so a status-code reachability check is a **false
+  positive on content** — the `GITHUB_TOKEN`/`/user` shape, one host along. Grep the body for
+  `Page Not Found`; the guidelines page is the one that returns real text.
+
+- **THE GUARD IS `src/lib/store-listing.test.mts`, and it exists because NOTHING IN THE REPO
+  REFERENCED THE DESCRIPTION AT ALL** — one grep, zero hits, so a store listing is plain text that
+  `tsc`, `next build` and the whole suite are structurally unable to see. Same blind spot and same
+  remedy as the `jsx-spacing` and `us-spelling` gates. It asserts a labelled **functional** link
+  for both agreements, the 4,000-character cap on **both** listings, and that `docs/APP-STORE.md`
+  §6's self-described *"Verbatim copy"* really is verbatim. **Guards under `src/`, in neither of
+  `worker-deploy.yml`'s `paths:` lists — read, not remembered — so this fires no worker deploy.**
+- **EIGHT MUTATIONS, EACH VERIFIED TO APPLY AND TO FAIL. ONE SURVIVED THE FIRST ROUND AND IT WAS
+  THE VACUOUS CASE.** A description reading `Terms of Use (EULA): see the CampHawk website` — the
+  label with no URL, i.e. **the exact defect Apple rejected** — passed. `TERMS_LABEL` is an
+  alternation interpolated bare, so `^.*terms of use|EULA|licen[sc]e agreement.*https?://\S+`
+  parsed as three top-level branches and the middle one matched the word `EULA` anywhere with no
+  URL required. A non-capturing group fixes it. **~29th time a guard here has anchored on the
+  wrong thing, and the first where the anchor was operator precedence rather than a misplaced
+  string.**
+- **THE DESCRIPTION EXISTS TWICE AND ONLY ONE COPY WAS ENFORCED.** `docs/APP-STORE.md` §6 carries
+  a verbatim duplicate under its own instruction *"paste `docs/appstore-description.txt`, don't
+  retype from here"*. They were still identical on 09-15 — luck, not a mechanism — and the drift
+  ships the text Apple just rejected, because §6 is what somebody scrolling for the rejection
+  reads first. Both are updated and a guard now pins them equal.
+
+- **WHAT WAS DELIBERATELY NOT TOUCHED: the in-app disclosure at the point of purchase.** 3.1.2
+  also wants title, length, price and functional Privacy/Terms links in the BINARY. `StorePaywall`
+  renders the tier name, the store's own `priceString` and `/month`|`/year`; `/pricing` is inside
+  the `(app)` route group whose footer carries `Terms` and `Privacy`. **All five are on the screen
+  by layout rather than by design, the footer's `Terms` points at our own terms rather than the
+  EULA now cited in the description, and nothing guards any of it.** It is the plausible next
+  rejection — and it is `1.0 (27)`'s web layer, so a push fixes it without a build if a human
+  reviewer raises it. **The Play description was not given the same links**; Google has never
+  cited this and there is no evidence to encode.
+
 ### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
 **This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
 on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that

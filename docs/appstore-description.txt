@@ -22,6 +22,9 @@ Every Recreation.gov campground in all 50 states, plus state parks in 34 states 
 FREE AND PAID
 Searching live availability is free and needs no account. Watching a booked campground, and the alerts that come with it, require a subscription.
 
+Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
+Privacy Policy: https://camphawk.app/privacy
+
 WHERE OUR INFORMATION COMES FROM
 CampHawk does not create campground or availability information. It reads what the official reservation systems below publish and links you back to them to book. The same list is also at https://camphawk.app/sources
 
