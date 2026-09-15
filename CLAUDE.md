@@ -15743,6 +15743,55 @@ already live in production.
   before (`REVENUECAT_SANDBOX_USER_IDS` must still contain the demo account's Clerk id through
   review, or their purchase unlocks nothing).
 
+##### "ADD FOR REVIEW" PUTS A SUBSCRIPTION IN A DRAFT THAT NEEDS ITS OWN APP VERSION (2026-09-15)
+The four subscriptions read **"This item has been added for review"** on the Subscriptions page and
+every one of them showed *Ready for Review*. **They were in a separate draft submission that App
+Store Connect would not let anybody submit**, and the app version went to Apple without them.
+```
+Drafts       Today 7:45 PM   VERSIONS: -      5 Items   Ready for Review
+Submissions  Today 9:11 PM   VERSIONS: 1.0    1 Item    Waiting for Review
+```
+- **THE TELL IS `Items Submitted (1)`, AND IT DID NOT MOVE ACROSS THE RESUBMIT.** The rejection page
+  carries its own items, so "Resubmit to App Review" there re-sends **that submission** and nothing
+  else. The subscriptions had been added to a draft two hours earlier through a different page, and
+  the two containers never join on their own.
+- **AND THE DRAFT CANNOT RESCUE ITSELF** — it refuses with *"To submit your items for review, add an
+  app version for the selected platform"*, while the only iOS version is locked inside the other
+  submission. Chicken-and-egg by construction: the version has to come OUT before it can go IN.
+- **THE CONSEQUENCE IF IT HAD GONE THROUGH IS THE EXPENSIVE ONE, AND IT IS NOT A REJECTION.**
+  Products in *Ready to Submit* are visible in the sandbox a reviewer tests in, so the review could
+  plausibly have PASSED — and an approved-and-released 1.0 (27) with unapproved products gives every
+  real customer a paywall with nothing in it. That is the same empty-purchase-screen failure as the
+  08-19/08-22 3.1.1 rejections, **shipped to paying users instead of caught by a reviewer**, and
+  fixable only by an expedited 1.0.1 (the first IAPs an app ships must be reviewed alongside a
+  version, so the draft could never have been submitted alone).
+- **THE FIX IS `Cancel Submission`, AND IT IS SAFE — read out of Apple's own help, not reasoned.**
+  App Review -> Submissions -> the row -> **bottom left of the page**, below the Date Submitted
+  block. The version lands on **Developer Rejected**, whose definition is *"You removed your app from
+  review. When you're ready, resubmit your build or submit a new build."* Not a deletion: the build,
+  metadata, screenshots, review notes and Sign-In credentials all persist, and the message thread
+  spans submissions. **The only cost is queue position** — *"if you resubmit, the review process will
+  start over"*. **Measured: 9:11 PM -> 9:35 PM, twenty-four minutes.** Then version -> Add for
+  Review, draft reads 6, submit.
+- **THE REMOVE CONTROL IS ABSENT IN EXACTLY THE STATE THAT NEEDS IT.** A REJECTED submission's items
+  table has an **ACTION** column and the page says *"you can also remove those items and resubmit
+  them later"*; once resubmitted and *Waiting for Review* **that column disappears entirely**. So the
+  thing everyone looks for is gone precisely when it is wanted, and the control that works in both
+  states is the unlabelled-looking link at the FOOT of the page. Same for the reply link: it lives
+  inside an expanded **Apple** message, never inside your own.
+- **I SENT THE OWNER HUNTING FOR A CONTROL THAT WAS ON THE PAGE THE WHOLE TIME**, twice, because I
+  was describing the UI from a model of it rather than from evidence. **When a control cannot be
+  found, read the page's own footer and secondary actions before concluding it is absent** — and
+  `developer.apple.com/help/app-store-connect/**` is REACHABLE from a session and settled both the
+  location and the safety in two `WebFetch` calls. The owner refusing to press an irreversible button
+  on my confidence is what forced that check; they were right to.
+- **`docs/STOREKIT-PLAN.md` §4e READ 7-OF-7 WITH THIS MISSING.** Its checklist covers products,
+  localisation, import, entitlements, the offering's App Store rows and the two API keys, and says
+  nothing about the subscriptions having to ride in the SAME submission as an app version — so
+  "Add for Review" reads as the finish line and is not. **That file and `docs/APP-STORE.md` are the
+  SIDE lane's** (`docs/LANES.md`, the APP/STORE surface, assigned 2026-09-10), so this is NAMED here
+  rather than edited there.
+
 ### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
 **This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
 on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that
