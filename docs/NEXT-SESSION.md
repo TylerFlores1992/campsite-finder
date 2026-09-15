@@ -37,7 +37,7 @@ Three things that will bite in the first ten minutes:
 
 | | |
 |---|---|
-| master | `18b90aa` (#340) — **verify against `origin/master`, this line ages** |
+| master | `b8182fc` (#341) — **verify against `origin/master`, this line ages** |
 | mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11). **A BOT-SIDE UPDATE IS NOW GENUINELY OWED — #336 changed `ramp-bail.mjs`, `ramp-arm-probe.mjs` and `bot-commands.mjs`** — so `autocart.bot_version` correctly reads *"MISSING bot-side changes"*. **That is EXPECTED and is not a fault, and it needs NO action: the box updates itself in the 02:00-05:00 PT quiet window, which is how it took `a68a6d2` overnight on 09-11.** Do NOT press "Update now" — a forced update ends the RC session for nothing. Confirm arrival with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
 | last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
 | **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
@@ -283,23 +283,28 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
   everything that got in, then the write it finally reached raised `42P10` on every row because
   `ON CONFLICT` omitted a partial index's predicate. Three bugs, each hiding the next. **What is
   still unexercised is a REAL `PRODUCTION` purchase**, carrying the two known gaps below.
-- **BEFORE THE NEXT APPLE SUBMISSION: `NODE_USE_ENV_PROXY=1 npx tsx scripts/app-review-precheck.mts`.**
-  It reads **NOT CLEAN** today — the Sign-In account `tylerflores1992@yahoo.com` carries a live
-  grandfathered Stripe subscription, every purchase surface is gated on `!subscribed`, and the
-  reviewer therefore reaches no paywall at all. **That is the 2026-08-22 rejection, unchanged, now
-  in front of a working IAP flow.** Three things a resumer will otherwise get wrong, all in
-  CLAUDE.md → "AND SIX WEEKS ON THE SAME MECHANISM IS STILL LIVE":
-  - **Signing out does NOT reveal the paywall any more.** `/pricing` is reachable only when signed
-    in AND not subscribed; signed-out native gets Sign in / Create account, or the link-out. The
-    sign-out steps in `docs/APP-STORE.md` §2d are now a route to a screen with no way to buy.
-  - **Do NOT clear `REVENUECAT_SANDBOX_USER_IDS` before review.** App Review purchases run in
-    SANDBOX, so a cleared allowlist means the reviewer's purchase unlocks nothing.
-    `src/lib/revenuecat.ts` says *once the app is APPROVED*, and it must hold the **Sign-In**
-    account's Clerk id meanwhile — not the sandbox test account's, which is what an earlier
-    hardcoded check in this session wrongly asserted it was.
-  - **The attached BUILD must be dated 2026-08-29 or later** (`8818544`, when
-    `@revenuecat/purchases-capacitor` landed). Older and there is no StoreKit in the binary and
-    the paywall renders `unavailable` — identical to a healthy pre-IAP build.
+- **APPLE IS MID-SUBMISSION. THE LIVE STATE IS CLAUDE.md → "THE SUBMISSION STATE, WRITTEN DOWN
+  BECAUSE IT LIVED ONLY IN A CHAT" — read it before touching anything Apple.** As of 2026-09-14
+  evening: **SBP approved at 15%** (no price change needed — the four products were already on the
+  15% column), **§4e is 7-of-7** while that file still says `GATED ON SBP`, **build `1.0 (27)` is
+  attached**, **Sign-In Information points at the clean account**, and the four subscriptions have
+  their review screenshot and notes.
+  - **`NODE_USE_ENV_PROXY=1 npx tsx scripts/app-review-precheck.mts iamtylerflores12345@yahoo.com`
+    reads CLEAN.** Run it before any submission; the default argument is the OLD account and reads
+    NOT CLEAN by design, because it is a live grandfathered Stripe subscriber that must not be
+    deleted to pass a check.
+  - **Four things remain and none can be done from a session** — *Add for Review* on the four
+    subscriptions, `REVENUECAT_SANDBOX_USER_IDS` = `user_3IS7IGizJd6UTZmrUf8xkOGB3F8` on Vercel
+    **followed by a redeploy**, installing build 27 and walking the paywall, then submitting.
+    **After APPROVAL, not submission:** clear the allowlist and delete the reviewer's row.
+  - **Signing out does NOT reveal the paywall any more.** `/pricing` needs signed in AND not
+    subscribed. `docs/APP-STORE.md` §2d's sign-out steps and §5's "the demo account has an active
+    subscription" are both now reasons to be rejected — side lane's file, named not edited.
+  - **Do NOT clear `REVENUECAT_SANDBOX_USER_IDS` before APPROVAL.** App Review buys in SANDBOX, so
+    a cleared allowlist means the reviewer's purchase unlocks nothing.
+  - **The attached BUILD must be dated 2026-08-29 or later** (`8818544`). **Match on upload DATE,
+    never on build number** — ASC's number is `PROJECT_BUILD_NUMBER`, project-wide across both
+    workflows, so "TestFlight #12" (a Codemagic run number) is not ASC build 12.
   - **`api.clerk.com` is `connect_rejected` at the proxy**, so §2a's password check is no longer
     available from a session. The owner signs in at camphawk.app with the exact ASC string.
 - **Play production release 25 was IN REVIEW as of 2026-09-01, and nobody in a session can read
