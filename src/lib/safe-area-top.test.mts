@@ -75,6 +75,10 @@ const INSET_OWNER: Record<string, string> = {
   'src/app/camping/group-camping/[state]/page.tsx': 'src/components/v2/SiteTypeStatePage.tsx',
   'src/app/camping/yurts/[state]/page.tsx': 'src/components/v2/SiteTypeStatePage.tsx',
 
+  // Comparison pages — two thin routes over one renderer, same shape as the type hubs.
+  'src/app/vs/campnab/page.tsx': 'src/components/v2/ComparisonPage.tsx',
+  'src/app/vs/campflare/page.tsx': 'src/components/v2/ComparisonPage.tsx',
+
   // The 08:00 hand-off. Every state renders through ClaimFlow's <Shell>.
   'src/app/claim/[id]/page.tsx': 'src/components/v2/ClaimFlow.tsx',
 };

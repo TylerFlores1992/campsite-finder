@@ -3,6 +3,7 @@ import { query } from '@/lib/db/client';
 import { stateSlug } from '@/lib/coverage';
 import { statesWithPages } from '@/lib/stateCampgrounds';
 import { SITE_TYPE_HUBS, statesForType } from '@/lib/siteTypeHubs';
+import { COMPETITORS } from '@/lib/competitors';
 
 /**
  * The sitemap, cut into named sections — ONE definition, read by two consumers.
@@ -128,6 +129,17 @@ export async function staticEntries(): Promise<MetadataRoute.Sitemap> {
     // Nothing has tested a dedicated page. Priority with /auto-cart: bottom of funnel.
     { url: `${BASE}/sold-out-campsite`, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${BASE}/campsite-cancellation-alerts`, changeFrequency: 'monthly', priority: 0.8 },
+    // COMPARISON PAGES, DERIVED FROM THE CONFIG rather than typed out. "campnab alternative"
+    // is the highest-intent query in this category — somebody who has already decided they
+    // want a cancellation service and is choosing between them — so these sit with /pricing
+    // and /auto-cart at the bottom of the funnel. A third competitor added to COMPETITORS is
+    // in the sitemap automatically, which is the point: a page nobody submits is a page
+    // nobody finds.
+    ...COMPETITORS.map((c) => ({
+      url: `${BASE}/vs/${c.slug}`,
+      changeFrequency: 'monthly' as const,
+      priority: 0.8,
+    })),
     { url: `${BASE}/terms`, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/privacy`, changeFrequency: 'yearly', priority: 0.3 },
     // Listed so the source citation is publicly discoverable, not just linked from the store
