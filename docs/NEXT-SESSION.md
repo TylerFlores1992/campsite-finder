@@ -37,7 +37,7 @@ Three things that will bite in the first ten minutes:
 
 | | |
 |---|---|
-| master | `b73b3cf` (#342) — **verify against `origin/master`, this line ages** |
+| master | `800865b` (#343) — **verify against `origin/master`, this line ages** |
 | mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11). **A BOT-SIDE UPDATE IS NOW GENUINELY OWED — #336 changed `ramp-bail.mjs`, `ramp-arm-probe.mjs` and `bot-commands.mjs`** — so `autocart.bot_version` correctly reads *"MISSING bot-side changes"*. **That is EXPECTED and is not a fault, and it needs NO action: the box updates itself in the 02:00-05:00 PT quiet window, which is how it took `a68a6d2` overnight on 09-11.** Do NOT press "Update now" — a forced update ends the RC session for nothing. Confirm arrival with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
 | last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
 | **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
@@ -287,24 +287,28 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
   later updated the SAME row (Apple keeps `original_transaction_id` stable inside a subscription
   group). CLAUDE.md → "THE APPLE PURCHASE CHAIN IS PROVEN". **What is still unexercised is a REAL
   `PRODUCTION` purchase**, carrying the two known gaps below.
-- **APPLE IS MID-SUBMISSION. THE LIVE STATE IS CLAUDE.md → "THE SUBMISSION STATE, WRITTEN DOWN
-  BECAUSE IT LIVED ONLY IN A CHAT" — read it before touching anything Apple.** As of 2026-09-14
-  evening: **SBP approved at 15%** (no price change needed — the four products were already on the
-  15% column), **§4e is 7-of-7** while that file still says `GATED ON SBP`, **build `1.0 (27)` is
-  attached**, **Sign-In Information points at the clean account**, and the four subscriptions have
-  their review screenshot and notes.
+- **APPLE IS SUBMITTED — ALL SIX ITEMS, 2026-09-15 04:35 UTC, `e77ec119-c61f-4e2c-87d0-da4f98859958`,
+  Waiting for Review.** The app version `1.0 (27)`, the `CampHawk Subscriptions` group and the four
+  subscriptions all read *Waiting for Review* in ONE submission. **There is nothing left to do on
+  Apple until they answer** — read CLAUDE.md → "THE SUBMISSION STATE, WRITTEN DOWN BECAUSE IT LIVED
+  ONLY IN A CHAT" and → "\"ADD FOR REVIEW\" PUTS A SUBSCRIPTION IN A DRAFT" before touching anything.
+  Standing facts: **SBP approved at 15%** (no price change needed — the four products were already
+  on the 15% column), **§4e is 7-of-7** while that file still says `GATED ON SBP`, and **Sign-In
+  Information points at the clean account**.
   - **`NODE_USE_ENV_PROXY=1 npx tsx scripts/app-review-precheck.mts iamtylerflores12345@yahoo.com`
     reads CLEAN.** Run it before any submission; the default argument is the OLD account and reads
     NOT CLEAN by design, because it is a live grandfathered Stripe subscriber that must not be
     deleted to pass a check.
-  - **As of 2026-09-15 03:40 UTC, four of those are DONE**: the four subscriptions and their group
-    read *added for review*, the allowlist is on Vercel and live (`b73b3cf` built after it was
-    set), build 27 was installed and the paywall walked to a completed purchase, and the row that
-    purchase wrote has been deleted so the account reads CLEAN again. **What remains is console
-    work only** — add version 1.0 to the submission (5 items -> 6; Apple requires the first
-    auto-renewable subscription to ship with a new app version), paste the replacement review
-    notes, reply in Resolution Center, submit.
-    **After APPROVAL, not submission:** clear the allowlist and delete the reviewer's row.
+  - **EVERY STEP OF THAT LIST IS DONE.** The chain was proven by a real TestFlight purchase, the
+    row it wrote was deleted, the replacement review notes were pasted, the Resolution Center reply
+    was posted (Messages 11, 2026-09-15 04:11 UTC), and the six-item submission went in 24 minutes
+    later. **After APPROVAL, not submission:** clear `REVENUECAT_SANDBOX_USER_IDS` and delete the
+    row the reviewer's own purchase writes.
+  - **THE SUBMISSION WENT IN ONCE WITH ONE ITEM AND HAD TO BE CANCELLED AND REDONE.** The four
+    subscriptions were in a separate draft that ASC refuses to submit without an app version, and
+    resubmitting the version from the rejection page did not pick them up. **`Items Submitted (1)`
+    is the tell.** Full account, including why `Cancel Submission` is safe and where the control
+    hides, in CLAUDE.md under the heading above.
   - **THE REVIEW NOTES IN `docs/APP-STORE.md` §2d ARE THE 08-22 BLOCK AND MUST NOT BE PASTED.**
     They never mention In-App Purchase, lead with the external purchase link, and describe the
     demo account as subscribed — all three are now false and the last rejection was 3.1.1 IAP.
