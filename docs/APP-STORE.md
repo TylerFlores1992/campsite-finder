@@ -213,8 +213,8 @@ best-effort. If one 404s, the setting has not moved — the path has.
 **The fifth rejection letter, the first one nobody has to argue with, and the cheapest to
 fix: two lines of text in one metadata field.** It is also the first that an *automated*
 check raised — the letter says so in its own opening — so **no human opened the app**, and
-nothing about the IAP flow, the demo account or the review notes was adjudicated. All six
-items of the 09-15 submission are blocked behind it.
+nothing about the IAP flow, the demo account or the review notes was adjudicated. The whole
+six-item submission is blocked behind one metadata field.
 
 ```
 App Version
@@ -263,7 +263,10 @@ what the 2026-08-03 Play "Misleading Claims" rejection was fixed with.
 
 **THE STANDARD EULA, NOT A CUSTOM ONE — and the letter offers both, so this is a decision.**
 Apple's default terms govern unless a custom License Agreement is uploaded in App Store
-Connect (App Information -> License Agreement), and none has been. Uploading
+Connect (App Information -> License Agreement). **Whether one has been uploaded is NOT
+verifiable from a session** — nobody here can read ASC — so this rests on the repo never
+mentioning one and on Apple's letter offering the standard path first; **confirm the
+License Agreement field is empty before pasting.** Uploading
 `camphawk.app/terms` as a custom EULA instead is the other path and is worse here: it is
 not written as an EULA, it must meet Apple's minimum terms to be accepted, and **its
 `Subscriptions` section says billing is "through Stripe"**, which is false for an App Store
@@ -287,6 +290,13 @@ than a new build. The sequence:
    `docs/appstore-description.txt` in full.
 2. Open the standard EULA URL in a browser and confirm it loads.
 3. App Review -> the submission -> **Resubmit to App Review**.
+
+**That button was GREYED OUT in the rejection screenshot**, beneath *"Unresolved Issues"*.
+The likeliest reading is that it enables once the version's issue is addressed — i.e. after
+step 1 — but **that is an inference and nobody here can see the console.** If it stays grey
+after the Description is saved, do not hunt for a hidden control: the page's own footer and
+its ACTION column are where ASC keeps the ones that look absent, which cost two wrong
+answers on 09-14.
 
 **`Items Submitted (6)` IS THE TELL, AND IT IS THE ONE THAT WENT WRONG LAST TIME.** On
 2026-09-14 the four subscriptions sat in a separate draft, the rejection page's resubmit
