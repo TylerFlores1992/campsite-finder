@@ -595,7 +595,15 @@ async function loadWatches(): Promise<WatchRow[]> {
             COALESCE(u.autocart_enabled, false) AS autocart_enabled,
             COALESCE(u.autocart_connected, false) AS autocart_connected,
             u.autocart_verified_at::text AS autocart_verified_at,
-            (u.is_beta OR EXISTS (
+            (u.is_beta
+             -- The comped, self-expiring grant (migration 077). Read here as well as in
+             -- lib/auth.hasAutocartEntitlement because this query is a THIRD copy of that
+             -- predicate - a function cannot be imported into one SQL statement, so the
+             -- copies are kept in step by worker/autocart-trial.test.mts instead.
+             -- (No backticks in this comment on purpose: the whole query is a template
+             -- literal, and one here terminates the string. Third time in this repo.)
+             OR u.autocart_trial_until > NOW()
+             OR EXISTS (
                SELECT 1 FROM subscriptions s
                 WHERE s.user_id = u.id
                   AND s.status IN ('active', 'trialing')

@@ -25,6 +25,10 @@ const isPublicRoute = createRouteMatcher([
   // and carries no credential; see the route.
   '/api/rc-precart',
   '/robots.txt',
+  // Comparison pages. Googlebot — and a shopper — opens these signed out, and Clerk's
+  // auth.protect() answers 404, not 401, so an omission here is a 404 on the pages built for
+  // the highest-intent queries we have, with nothing red anywhere.
+  '/vs/(.*)',
   '/sitemap.xml',
   // Per-section sitemaps, submitted to Search Console alongside /sitemap.xml so coverage is
   // reported per segment. They carry NO file extension, so the matcher below does not skip
