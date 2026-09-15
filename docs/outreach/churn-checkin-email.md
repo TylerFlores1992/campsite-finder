@@ -49,6 +49,9 @@ apologising or asking what went wrong.
 
 ## The email
 
+**SENT 2026-09-15** to `brentwolfe@hotmail.com` (address confirmed against `users`, not
+taken from this file), Gmail message id `1a0a5263c88ede42`. Awaiting a reply.
+
 **Subject:** Did you get the Nevada Beach site?
 
 Hi Brent,
