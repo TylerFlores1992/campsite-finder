@@ -46,6 +46,7 @@ const SUBSCRIBED = `(
 /** Mirrors lib/auth.hasAutocartEntitlement. */
 const AUTOCART_ENTITLED = `(
   u.is_beta
+  OR u.autocart_trial_until > NOW()
   OR EXISTS (SELECT 1 FROM subscriptions s
               WHERE s.user_id = u.id
                 AND s.status IN ('active','trialing')

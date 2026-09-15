@@ -59,6 +59,10 @@ export async function hasAutocartEntitlement(userId: string): Promise<boolean> {
   const row = await queryOne<{ entitled: boolean }>(
     `SELECT (
        EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND u.is_beta)
+       -- A COMPED, SELF-EXPIRING GRANT (migration 077). The > NOW() is the whole mechanism:
+       -- the entitlement lapses on its own, so "put them back on alerts when the week is
+       -- up" needs no cron and nothing to forget. NULL is the ordinary state.
+       OR EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND u.autocart_trial_until > NOW())
        OR EXISTS (
          SELECT 1 FROM subscriptions s
           WHERE s.user_id = $1
