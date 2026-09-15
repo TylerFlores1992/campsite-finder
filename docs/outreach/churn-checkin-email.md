@@ -60,9 +60,10 @@ I did want to ask one thing, if you don't mind: back on 2 September we managed t
 site 014 at Nevada Beach into your cart about eight seconds after it opened up. **Did
 that one actually work out — did you get the booking?**
 
-I'm asking because you're the first person to have the auto-cart actually fire on a
-real trip, and I genuinely don't know whether it got you the site or just got you a
-full cart and a headache. Either answer is useful to me.
+I'm asking because Recreation.gov only holds a cart for about fifteen minutes, and
+what I can see on my end is that we put it there — not whether that was enough time
+for you to check out. So it either got you the site or got you a full cart and a
+headache, and I'd like to know which.
 
 And if there was anything annoying about it — too many texts, the wrong sites, having
 to link your Recreation.gov account — I'd rather hear it.
@@ -83,3 +84,8 @@ CampHawk
 - No "we're sorry to see you go" opener — it invites him to invent a reason he didn't have.
 - No stats about the other four attempts. He does not need our diagnostics; the one question
   is what we want answered.
+- **Never tell a customer they are the first at anything.** An earlier draft said "you're the
+  first person to have the auto-cart actually fire on a real trip" — true, and it tells a
+  paying customer the product is barely used. The REASON for asking has to stand on its own,
+  so it is now the fifteen-minute cart hold: we can see that we carted it and cannot see
+  whether he checked out. Same question, no admission.
