@@ -52,9 +52,9 @@ higher tier. Instead of just telling you a site opened up, it signs into your
 Recreation.gov account and puts the site in your cart, so you check out instead of
 racing everyone else who got the same alert.
 
-That one needs a nudge from you: it won't do anything until you connect your
-Recreation.gov login under **Settings → Auto-cart**. Takes a minute, and it's entirely
-optional — leave it off and your normal alerts carry on exactly as they are.
+That one needs a nudge from you: head to **Settings → Auto-cart**, connect your
+Recreation.gov login, and switch it on. Takes a minute, and it's entirely optional —
+leave it alone and your normal alerts carry on exactly as they are.
 
 Either way we'll keep watching all three right up to your dates. Hope we can catch you
 something.
@@ -73,7 +73,10 @@ CampHawk
   week" in a later draft.
 - **It never promises they'll get a site.** Auto-cart acts when something opens; if nothing
   opens it is as quiet as this week was.
-- **It says the grant is optional and needs their action.** Without that sentence the comp
-  expires having never run, which is the exact failure the email exists to avoid.
+- **It says the grant is optional and needs their action — BOTH actions.** `isAutocartLane`
+  requires `autocart_enabled` AND `autocart_connected`, and the settings card has two
+  separate controls ("Set up auto-cart", then a "Turn on" switch). An earlier draft said only
+  "connect your login", which would have left them linked and still inert — the exact failure
+  the email exists to prevent, reintroduced by the email.
 - **No numbers.** The 471-check figure was in the previous draft and was cut — it reads as
   defensive, and "we've been checking continuously" says the same thing in five words.
