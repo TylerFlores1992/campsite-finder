@@ -47,6 +47,20 @@ test('a prefix is not a substring — `bail` must not sweep in a neighbour', () 
   }
 });
 
+test('a wedge recycle is its own class, NOT a bail and NOT the unrecognised bucket', () => {
+  // It is a reading taken DURING the event and the only record of what that page was asking
+  // for, since the counter resets on the reopen — so `other`, which renders last below the
+  // baseline, is exactly the defect the bails were rescued from.
+  assert.equal(requestCountReason('wedge-recycle'), 'wedge-recycle');
+  // NOT folded into `bail`: a bail ends the process and costs the RC session, a wedge recycle
+  // closes one page and costs an RC page load. Counting them together overstates the expensive
+  // one, and the whole point of the new arm is that it is the cheap one.
+  assert.notEqual(requestCountReason('wedge-recycle'), 'bail');
+  assert.notEqual(requestCountReason('bail:wedge-page'), 'wedge-recycle',
+    'a bail that happens to name the wedge arm is still a bail');
+  assert.equal(requestCountReason('bail:wedge-page'), 'bail');
+});
+
 test('the other two reasons are unchanged, and anything unknown is `other`', () => {
   assert.equal(requestCountReason('hung-close'), 'hung-close');
   assert.equal(requestCountReason('teardown'), 'teardown');
@@ -68,6 +82,18 @@ test('the readout classifies through the shared function and keeps no equality l
     'the readout must not keep its own equality classifier beside the shared one');
   assert.doesNotMatch(src, /\['bail', 'hung-close', 'teardown'\]/,
     'the `other` bucket must be derived from the same classifier, not a second hand-written list');
+});
+
+test('wedge recycles are rendered, and rendered with the bails rather than after the baseline', () => {
+  // A class nothing prints is a class nobody reads — the fix-present-and-inert shape, which is
+  // how the bails themselves came to print last for a fortnight.
+  const src = code('../../scripts/bot-events-readout.mts');
+  const showWedges = src.indexOf('for (const c of wedges) show(');
+  const showTears = src.indexOf('for (const c of baseline) show(');
+  assert.ok(showWedges > -1, 'the readout must render the wedge-recycle bucket at all');
+  assert.ok(showTears > -1, 'anchors moved — this guard is measuring nothing');
+  assert.ok(showWedges < showTears, 'a during-the-event reading must not print below the baseline');
+  assert.match(src, /at a wedge recycle/, 'the summary line must count them');
 });
 
 test('bails are printed BEFORE the teardown baseline', () => {

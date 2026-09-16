@@ -139,12 +139,26 @@ export async function recentBotEvents(
  * `bail:` and not `bail`, so a future `bailout` cannot be swept in; the bare `'bail'` stays
  * matched because rows written before #280 carry it and are still real bails. The full reason
  * is what gets PRINTED either way, so the arm name is never lost.
+ *
+ * `wedge-recycle` (2026-09-16) IS ITS OWN CLASS, AND ADDING IT IS THE SAME LESSON PAID FORWARD.
+ * The page-wedge arm emits a `request-counts` snapshot when it closes a wedged page, and that
+ * is a reading taken DURING the event — the most valuable kind, and the only record of what
+ * that page was asking for, since the counter resets on the reopen. Left unclassified it lands
+ * in `other`, which the readout renders LAST, below the teardowns its own header calls the
+ * baseline. That is precisely the defect the paragraphs above describe, so it is classified
+ * here rather than discovered in a fortnight.
+ *
+ * It is deliberately NOT folded into `bail`. A bail ends the PROCESS and costs the RC session;
+ * a wedge recycle closes one page and costs an RC page load. Counting them together would make
+ * `N at a bail` overstate how often the expensive thing happened, and the whole point of the
+ * new arm is that it is the cheap one.
  */
-export type RequestCountReason = 'bail' | 'hung-close' | 'teardown' | 'other';
+export type RequestCountReason = 'bail' | 'wedge-recycle' | 'hung-close' | 'teardown' | 'other';
 
 export function requestCountReason(raw: unknown): RequestCountReason {
   const r = typeof raw === 'string' ? raw : '';
   if (r === 'bail' || r.startsWith('bail:')) return 'bail';
+  if (r === 'wedge-recycle' || r.startsWith('wedge-recycle:')) return 'wedge-recycle';
   if (r === 'hung-close' || r === 'teardown') return r;
   return 'other';
 }
