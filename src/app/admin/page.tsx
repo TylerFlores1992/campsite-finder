@@ -82,7 +82,7 @@ export default async function AdminPage() {
   // Allowlist lives in lib/admin — see the note there about the four copies.
   if (!(await currentUserIsAdmin())) notFound();
 
-  const [usersAgg, seriesRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows, smsDelivery] =
+  const [usersAgg, seriesRows, subRows, activeSub, cancelling, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows, smsDelivery] =
     await Promise.all([
       safe(
         queryOne<{ total: number; new_7d: number; new_30d: number }>(
@@ -133,6 +133,30 @@ export default async function AdminPage() {
              ORDER BY user_id, created_at DESC) t WHERE status IN ('active','trialing')`
         ),
         { n: 0 }
+      ),
+      // SUBSCRIPTIONS SCHEDULED TO END (2026-09-16). Every other number on this page
+      // reports these as healthy, correctly: a cancelling subscriber is `active`, is
+      // entitled, and is still being billed until the date — so MRR counts them and the
+      // status breakdown files them under Active. That is how a churn went unnoticed
+      // until the owner opened Stripe.
+      //
+      // Counted over the LIVE row rather than the newest one, unlike the two queries
+      // above. Those answer "what is this account's latest subscription", where a stale
+      // canceled row beside a live one is a reporting quirk; here it would be a
+      // falsehood, because a long-dead row can carry `cancel_at_period_end = true` from
+      // the cancellation that killed it and would be counted as a churn in progress
+      // for ever.
+      //
+      // `min(cancel_at)` is the SOONEST one, which is the date worth showing beside a
+      // count: it is when the next bite lands. NULL is a real answer — Stripe can set
+      // the flag without a date — and renders as no date rather than as no cancellation.
+      safe(
+        queryOne<{ n: number; soonest: string | null }>(
+          `SELECT count(*)::int n, min(cancel_at)::text soonest
+             FROM subscriptions
+            WHERE status IN ('active','trialing') AND cancel_at_period_end`
+        ),
+        { n: 0, soonest: null }
       ),
       safe(
         queryOne<{ active: number; total: number; watchers: number }>(
@@ -335,6 +359,7 @@ export default async function AdminPage() {
     shardCov,
     capacity,
     activeSub,
+    cancelling,
     subMap,
     watchAgg,
     alertAgg,

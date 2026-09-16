@@ -85,6 +85,26 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
           <Row label="Auto-cart entitled" value={user.autocart_entitled ? 'yes' : 'no'} />
           <Row label="Subscription" value={user.sub_status ?? 'none'} />
           <Row label="Tier" value={user.sub_tier ?? '—'} />
+          {/* A cancelling subscriber reads `active` on the line above, with full
+              entitlement, until the day it ends — so this row is the only thing on the
+              panel that can show a churn in progress. A missing date still renders,
+              because the flag is what says a cancellation is scheduled and hiding the
+              row for want of a date would hide the churn itself. */}
+          {user.cancelling ? (
+            <Row
+              label="Cancels"
+              value={
+                user.cancel_at
+                  ? new Date(user.cancel_at).toLocaleDateString('en-US', {
+                      timeZone: 'America/Los_Angeles',
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })
+                  : 'scheduled — Stripe gave no date'
+              }
+            />
+          ) : null}
           <Row label="Grandfathered" value={user.grandfathered ? 'yes' : 'no'} />
           {user.stripe_customer_id ? (
             <a

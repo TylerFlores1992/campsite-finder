@@ -71,6 +71,9 @@ export interface AdminData {
   capacity: PollerCapacity;
   usersAgg: { total: number; new_7d: number; new_30d: number };
   activeSub: { n: number };
+  /** Live subscriptions Stripe is scheduled to end, and the soonest date. See the
+   *  query in admin/page.tsx for why this is counted over the live row. */
+  cancelling: { n: number; soonest: string | null };
   subMap: Record<string, number>;
   watchAgg: { active: number; total: number; watchers: number };
   alertAgg: { sent: number; sent_7d: number; failed: number };
@@ -573,6 +576,31 @@ function UsersRevenuePanel({
             <StatusRow label="Past due" value={subMap['past_due'] ?? 0} dot="bg-ch-ochre" />
             <StatusRow label="Canceled" value={subMap['canceled'] ?? 0} dot="bg-ch-faint" />
           </ul>
+          {/* CANCELLING IS NOT A STATUS AND IS NOT IN THE LIST ABOVE.
+              Those four are Stripe statuses and they partition the table; a subscription
+              scheduled to end is `active` and is already counted there. Adding a fifth
+              StatusRow would double-count it and make the column stop summing, which is
+              the sort of thing somebody reconciles against Stripe and cannot make add up.
+              So it sits below the list, as a note about a subset.
+
+              It renders ONLY when non-zero, deliberately. "Cancelling 0" every day is a
+              line nobody reads by the end of the week, and the entire point is that its
+              appearance is the news. */}
+          {data.cancelling.n > 0 ? (
+            <p className="mt-3 rounded-ch-sm border border-ch-ochre/30 bg-ch-ochre/10 px-3 py-2 text-ch-fine text-ch-ink">
+              <strong className="font-bold">
+                {data.cancelling.n} cancelling
+              </strong>
+              {data.cancelling.soonest
+                ? ` — soonest ${new Date(data.cancelling.soonest).toLocaleDateString('en-US', {
+                    timeZone: 'America/Los_Angeles',
+                    month: 'short',
+                    day: 'numeric',
+                  })}`
+                : ' — no end date from Stripe'}
+              . Still active and still paying until then.
+            </p>
+          ) : null}
           <a
             href="https://dashboard.stripe.com/subscriptions"
             target="_blank"

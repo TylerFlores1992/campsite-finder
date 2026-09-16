@@ -34,25 +34,48 @@ import { mutate } from '@/lib/db/client';
  * 3. IT NEVER CREATES A ROW. A subscription Stripe knows about and we do not is reported
  *    too, because writing one needs a Clerk user id that may not be in its metadata, and
  *    inventing an entitlement is worse than reporting a gap.
+ *
+ * ── THE CANCELLATION SCHEDULE IS RECONCILED TOO, AND THAT IS WHY (2026-09-16) ──────────
+ * `cancel_at_period_end` landed in migration 078 and the webhook writes it — FORWARD
+ * ONLY. Somebody who has already cancelled generates no further event, so the webhook
+ * leaves exactly the rows that motivated the column blank, and the admin page goes on
+ * showing a healthy subscriber right up until the day they vanish. This is the same
+ * shape as the 2026-09-02 trial-status fix needing this module behind it: repairing what
+ * gets WRITTEN repairs nothing already written.
+ *
+ * A difference in the cancellation alone is a real change and counts as one. It is
+ * tempting to compare only status and tier — those decide entitlement, and a pending
+ * cancellation decides nothing about what anyone can do today — but the whole point is
+ * that a row can be perfectly correct about entitlement and silent about the thing the
+ * owner needed to know.
  */
 
 export type Tier = 'base' | 'autocart';
 
-/** One of our rows, as stored. */
-export interface OurRow {
-  stripe_subscription_id: string;
+/** The fields this module compares and writes. `cancel_at` is an ISO string on both
+ *  sides, but it is compared as an INSTANT rather than as text — see `sameInstant`. */
+export interface SubFacts {
   status: string;
   tier: Tier;
+  cancel_at_period_end: boolean;
+  /** ISO 8601, or null when Stripe reported no date. NULL is not "no cancellation" —
+   *  read `cancel_at_period_end` for that. */
+  cancel_at: string | null;
+}
+
+/** One of our rows, as stored. */
+export interface OurRow extends SubFacts {
+  stripe_subscription_id: string;
 }
 
 /** What Stripe says about one subscription. `null` means Stripe could not account for
  *  it — a 404, or an id it does not recognise. NEVER treated as cancelled. */
-export type StripeFact = { status: string; tier: Tier } | null;
+export type StripeFact = SubFacts | null;
 
 export interface Change {
   id: string;
-  from: { status: string; tier: Tier };
-  to: { status: string; tier: Tier };
+  from: SubFacts;
+  to: SubFacts;
 }
 
 export interface Plan {
@@ -91,21 +114,56 @@ export function planReconcile(
       unaccounted.push(id);
       continue;
     }
-    if (fact.status === row.status && fact.tier === row.tier) {
+    if (sameFacts(row, fact)) {
       unchanged++;
       continue;
     }
-    changes.push({
-      id,
-      from: { status: row.status, tier: row.tier },
-      to: { status: fact.status, tier: fact.tier },
-    });
+    changes.push({ id, from: facts_(row), to: facts_(fact) });
   }
 
   const held = new Set(ours.map((r) => r.stripe_subscription_id).filter(Boolean));
   const unknownToUs = stripeIds.filter((id) => !held.has(id));
 
   return { changes, unchanged, unaccounted, unknownToUs };
+}
+
+/** The four fields, without whatever else the caller's row carries. */
+function facts_(f: SubFacts): SubFacts {
+  return {
+    status: f.status,
+    tier: f.tier,
+    cancel_at_period_end: f.cancel_at_period_end,
+    cancel_at: f.cancel_at,
+  };
+}
+
+/**
+ * Do our row and Stripe's answer agree?
+ *
+ * `cancel_at` is compared as an INSTANT, not as a string. Postgres hands back
+ * `2026-10-08T14:35:08.318+00:00` where Stripe's epoch seconds render as
+ * `2026-10-08T14:35:08.000Z` — the same moment, spelled two ways — so a string compare
+ * would report a change on every single run, rewrite every row, and make the reconcile
+ * permanently noisy. A noisy reconcile is one nobody reads, which is how the real
+ * difference it is there to catch gets skimmed past.
+ *
+ * An UNPARSEABLE date on either side counts as a difference rather than throwing: this
+ * decides a report, and the honest answer to "I cannot read this value" is to show it to
+ * a human, not to declare agreement.
+ */
+function sameFacts(a: SubFacts, b: SubFacts): boolean {
+  if (a.status !== b.status) return false;
+  if (a.tier !== b.tier) return false;
+  if (a.cancel_at_period_end !== b.cancel_at_period_end) return false;
+  return sameInstant(a.cancel_at, b.cancel_at);
+}
+
+function sameInstant(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return a === b;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return false;
+  return ta === tb;
 }
 
 /**
@@ -116,17 +174,19 @@ export function planReconcile(
  * halfway leaves every other row already correct rather than a batch half-applied in a
  * way nobody can describe.
  *
- * `status` and `tier` ONLY. Not `grandfathered`, not `user_id`, not the Stripe ids — see
- * rule 1 in the header.
+ * `status`, `tier` and the cancellation schedule ONLY. Not `grandfathered`, not
+ * `user_id`, not the Stripe ids — see rule 1 in the header.
  */
 export async function applyReconcile(plan: Plan): Promise<number> {
   let applied = 0;
   for (const c of plan.changes) {
     await mutate(
       `UPDATE subscriptions
-          SET status = $2, tier = $3, updated_at = NOW()
+          SET status = $2, tier = $3,
+              cancel_at_period_end = $4, cancel_at = $5,
+              updated_at = NOW()
         WHERE stripe_subscription_id = $1`,
-      [c.id, c.to.status, c.to.tier]
+      [c.id, c.to.status, c.to.tier, c.to.cancel_at_period_end, c.to.cancel_at]
     );
     applied++;
   }

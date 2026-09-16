@@ -37,6 +37,17 @@ function since(iso: string | null): string {
  * `is_beta`, so a badge reading purely off `subscriptions` renders the owner's own
  * account — 6 watches, 530 alerts — as "no plan". Beta is shown first because it is
  * what is actually granting access to most of this list.
+ *
+ * A PENDING CANCELLATION IS SHOWN ON TOP OF THE PLAN, NOT INSTEAD OF IT (2026-09-16).
+ * Somebody who cancels keeps `status = 'active'` and full entitlement until the period
+ * ends, so every branch below is still telling the truth about what they can do today —
+ * and between them they hid the only thing worth acting on. The owner found out a
+ * subscriber had gone by opening Stripe.
+ *
+ * It is deliberately NOT a fourth `if` returning "Cancelling" on its own. A badge that
+ * replaced "Auto-Cart" with "Cancelling" would lose which plan is ending, which is what
+ * decides whether the reply is worth writing; and it would read as revoked to anyone
+ * scanning the list, when the subscriber still has weeks of paid access left.
  */
 function accessBadge(u: AdminUserRow): { label: string; cls: string } {
   if (u.is_beta) return { label: 'Beta', cls: 'bg-ch-blue/10 text-ch-blue border-ch-blue/30' };
@@ -47,6 +58,36 @@ function accessBadge(u: AdminUserRow): { label: string; cls: string } {
   if (u.sub_status)
     return { label: u.sub_status, cls: 'bg-ch-paper text-ch-muted border-ch-line' };
   return { label: 'no plan', cls: 'bg-ch-paper text-ch-faint border-ch-line' };
+}
+
+/** PACIFIC, NOT THE SERVER'S ZONE.
+ *
+ *  `cancel_at` is a real instant, and Vercel runs UTC — so a cancellation at 02:00 UTC
+ *  renders as the following day to an owner sitting in California. One day wrong on the
+ *  date somebody decides whether to write an email against. Every operational clock in
+ *  this product is Pacific (the 08:00 releases, the box's quiet window, `pacific()` in
+ *  the hold suites), so the admin page reads the same one.
+ *
+ *  Same family as `formatStayDates`, where `new Date('2026-09-04')` rendered as Sep 3 in
+ *  every US timezone — a date that is off by one is worse than no date, because it looks
+ *  like an answer. */
+const PACIFIC_DAY: Intl.DateTimeFormatOptions = {
+  timeZone: 'America/Los_Angeles',
+  month: 'short',
+  day: 'numeric',
+};
+
+/** "Ends Oct 8", or just "Ending" when Stripe gave us the flag and no date.
+ *
+ *  NULL from `cancel_at` is "Stripe reported no date", never "not cancelling" — the flag
+ *  alone decides that. Rendering nothing when the date is missing would hide exactly the
+ *  churn this badge exists for, so the wordless case still shows. */
+function cancellingBadge(u: AdminUserRow): string | null {
+  if (!u.cancelling) return null;
+  if (!u.cancel_at) return 'Ending';
+  const d = new Date(u.cancel_at);
+  if (Number.isNaN(d.getTime())) return 'Ending';
+  return `Ends ${d.toLocaleDateString('en-US', PACIFIC_DAY)}`;
 }
 
 type Sort = 'seen' | 'watches' | 'alerts';
@@ -130,6 +171,7 @@ export default function UsersBox({
         <ul className="max-h-[32rem] divide-y divide-ch-line overflow-y-auto overscroll-contain">
           {shown.map((u) => {
             const badge = accessBadge(u);
+            const ending = cancellingBadge(u);
             return (
               <li key={u.id}>
                 <Link
@@ -146,6 +188,11 @@ export default function UsersBox({
                       {u.alerts_sent.toLocaleString()} alerts · seen {since(u.last_seen_at)}
                     </span>
                   </span>
+                  {ending ? (
+                    <span className="shrink-0 rounded-full border border-ch-ochre/40 bg-ch-ochre/10 px-2 py-0.5 text-[11px] font-medium text-ch-ochre">
+                      {ending}
+                    </span>
+                  ) : null}
                   <span
                     className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge.cls}`}
                   >
