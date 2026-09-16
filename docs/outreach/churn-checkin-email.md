@@ -92,3 +92,19 @@ CampHawk
   paying customer the product is barely used. The REASON for asking has to stand on its own,
   so it is now the fifteen-minute cart hold: we can see that we carted it and cannot see
   whether he checked out. Same question, no admission.
+
+---
+
+## Outcome
+
+**Sent 2026-09-15 12:59Z. No reply as of 2026-09-16.** The thread holds one message — ours.
+
+**That is not evidence of anything yet.** One working day, and a question with no deadline in
+it is one a person answers when they think of it or not at all. **Do not follow up** — a second
+email turns a low-cost question into a sales call, which is the thing "Do not add to this"
+exists to prevent.
+
+**And the subscription itself is UNAFFECTED by the silence: Stripe has it cancelling on
+2026-10-08.** The reply would tell us WHY; nothing about the billing waits on it. That date is
+also why the badge gap recorded in `CLAUDE.md` matters — without a reply, the admin page is the
+only place this churn was ever going to announce itself.

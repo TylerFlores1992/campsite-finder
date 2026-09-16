@@ -8431,6 +8431,71 @@ rest of their paid period — weeks — with no record anywhere that it ends.
   rather than remembered — so it restarts no poller. The two webhook/reconcile suites are in
   `worker/` already and merging them DOES fire a worker deploy; check `poller.shards` after.
 
+#### THE RECONCILE RAN AND THE BADGE STILL CANNOT SEE THE ONE CANCELLING SUBSCRIBER (2026-09-16)
+Merged as `9eca2e9`, worker deploy green (3/3 shards), and the owner pressed **Apply**. It
+applied **exactly one change** — the row the whole entry above was written about:
+```
+brentwolfe@hotmail.com  sub_1UAsp5CebasC0btsmHfIf11u  status active  tier autocart
+  cancel_at             2026-10-08 14:38:01+00     <- written by the reconcile
+  cancel_at_period_end  false                      <- UNCHANGED, and that is STRIPE'S answer
+  updated_at            2026-09-15 21:47:04 PT
+```
+- **THE RECONCILE IS NOT THE BUG, AND THAT WAS CHECKED IN SOURCE RATHER THAN ASSUMED.** The
+  route reads `cancel_at_period_end: sub.cancel_at_period_end === true` and
+  `cancel_at: sub.cancel_at ? new Date(sub.cancel_at * 1000).toISOString() : null` off the
+  **same `Subscription` object in the same statement**, and `applyReconcile` writes them
+  together — so they cannot disagree by our doing. Stripe really reports this subscription as
+  a **dated** cancellation with the period-end flag **false**.
+- **STRIPE HAS TWO INDEPENDENT WAYS TO END A SUBSCRIPTION AND THEY ARE DIFFERENT FIELDS**, read
+  out of the pinned SDK (`stripe@22.3.0`, `esm/resources/Subscriptions.d.ts`) rather than
+  recalled: `cancel_at` is *"A date in the future at which the subscription will automatically
+  get canceled"*; `cancel_at_period_end` is *"Whether this subscription will (if `status=active`)
+  or did (if `status=canceled`) cancel at the end of the current billing period."* **A
+  non-null `cancel_at` is unambiguous — it says the subscription WILL cancel** — and it does not
+  imply the flag.
+- **SO ALL THREE SURFACES SHOW NOTHING, AND THAT IS THE FAILURE THE MIGRATION EXISTS TO END.**
+  Every gate is the flag alone: `queries.ts` twice
+  (`COALESCE(sub.cancel_at_period_end, false) AS cancelling`), `admin/page.tsx`'s count
+  (`WHERE status IN ('active','trialing') AND cancel_at_period_end`), `UsersBox.tsx`
+  (`if (!u.cancelling) return null`) and the detail page (`{user.cancelling ? …}`). **The data
+  is right in the database and the churn is still invisible on the page** — which is the
+  sentence the owner's original report was about, arriving one layer along.
+- **THE MIRROR CASE WAS DEFENDED AT LENGTH AND THIS ONE WAS NEVER ASKED.** The entry above
+  argues why the boolean is load-bearing — against a **NULL `cancel_at` while the flag is set**,
+  which would report a cancelling subscriber as healthy. Correct, and it is one of two
+  directions. Nobody asked what a set date beside a false flag does, and it is the direction
+  the only real subscriber is in.
+- **THE TEST STAGED THE STATE, IN THE SAME CHANGE, AND SAID SO IN ITS OWN COMMENT.**
+  `worker/subscription-reconcile.test.mts:147` reads *"scheduled to end on a specific date
+  without `cancel_at_period_end`, so the same instant can sit beside either value of the flag —
+  **and the flag is what the admin badge reads**."* Both halves of the conclusion are written
+  down, one line apart, and the conclusion was never drawn. **That is one step short of the
+  `held-offer-scope` shape**: not a test requiring the bug, but a test NAMING the state the
+  product cannot see — and it was added to catch a mutation, so it earned its keep and hid this
+  at the same time.
+- **THE HONEST REPAIR, AND IT IS DELIBERATELY NOT MADE.** `cancelling` becomes
+  `COALESCE(cancel_at_period_end, false) OR cancel_at IS NOT NULL`. Three caveats, each a way
+  the one-line version goes wrong:
+  1. **That predicate exists in FOUR copies across three files.** Fixing three of them is how
+     the count and the badge come to disagree about who is leaving — the shape that produced
+     `holdsAhead`/`holdsDueWithin`. It wants ONE definition.
+  2. **The live-row filter still applies, for the same reason as the flag.** Stripe's own
+     docstring says the flag persists on a `canceled` row; `cancel_at` persists identically, so
+     an unfiltered count reports every churn that has ever happened as one in progress, for
+     ever, growing.
+  3. **The badge's date branch already handles a present `cancel_at`** — only the GATE changes,
+     and the guards need the mirror fixture (flag false, date set) on all three surfaces. The
+     existing one exercises the RECONCILE and nothing downstream of it.
+- **WHAT IT HAS COST SO FAR: nothing, and that is timing.** The date is Oct 8, so there are
+  three weeks in which to notice by other means. The claim that fails is the feature's own —
+  *visible the day it happens* — and it fails on a sample of one, which is the whole population.
+- **ONE FREE CONFIRMATION RODE ALONG.** `sheatullos@gmail.com` was created **2026-09-08**, after
+  the 09-02 webhook fix, and reads **`trialing`** rather than a hardcoded `active`. That fix was
+  forward-only and had never been observed on a real row; it has now.
+- **AND THE INSTANT COMPARISON HELD.** Exactly one `updated_at` moved. A text compare would have
+  rewritten every row with a date on it and made the reconcile permanently noisy — the defect
+  that entry predicted, not observed, until now.
+
 ### DATES ARE EDITABLE ON `/manage/<token>` NOW — and the form was never the hard part (2026-09-02)
 
 `src/lib/watch-dates.ts` + a `setDates` op. The interesting half is that **`watch_site_alerts`
@@ -10470,6 +10535,43 @@ label is American and which ships to the **United States storefront only**.
   returning nothing (the guard blind while reading green).
 
 ## Open / next session
+
+### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
+
+**Read "THE RECONCILE RAN AND THE BADGE STILL CANNOT SEE THE ONE CANCELLING SUBSCRIBER" before
+touching any of this.** Migration 078 is merged (`9eca2e9`), deployed, worker green at 3/3
+shards, and the owner has run the reconcile — it applied **exactly one change** and the data in
+the database is correct. **Every admin surface still shows nothing**, because all four gates
+read `cancel_at_period_end` and Stripe reports this subscription as a **dated** cancellation:
+`cancel_at = 2026-10-08 14:38:01+00`, flag **false**.
+
+- **IT IS NOT A RECONCILE BUG AND NOT A DATA BUG** — both fields are read off one Stripe object
+  in one statement, checked in source. Do not go looking there.
+- **THE REPAIR IS `COALESCE(cancel_at_period_end, false) OR cancel_at IS NOT NULL`**, and the
+  three caveats that make it more than a one-liner (four copies of the predicate, the live-row
+  filter, the missing mirror fixture) are in the entry above. **NOT STARTED, on the owner's
+  instruction.**
+- **THE DEADLINE IS REAL BUT NOT URGENT: Oct 8.** Three weeks of margin, and the row is right,
+  so nothing is lost by taking it deliberately.
+
+**EVERYTHING ELSE FROM THAT CHANGE IS DONE AND NEEDS NOTHING.** The webhook writes both fields
+from all three paths; the reconcile is live behind Admin → *"Does our table match Stripe?"*; the
+instant comparison held (one `updated_at` moved, not seven); and `sheatullos@gmail.com`, created
+after the 09-02 webhook fix, reads **`trialing`** — that fix confirmed on a real row for the
+first time.
+
+**TWO THINGS FLAGGED AND NOT ACTED ON, both from the same read:**
+- **An Apple email dated Sep 15: *"There's an issue with your CampHawk: Campsite Alerts (iOS)
+  submission"***, against the build submitted Sep 14 21:35 PT. Unread here — nobody in a session
+  can open App Store Connect. **`docs/APP-STORE.md` and the store consoles are the SIDE lane's**
+  (`docs/LANES.md`, the APP/STORE surface), so this is named rather than worked.
+- **A Sentry issue that predates its own fix:** CAMPHAWK-N, *"DB mutate error: there is no unique
+  or exclusion constraint matching the ON CONFLICT specification"* on `POST
+  /api/webhooks/revenuecat`, **dated Sep 14** — i.e. before `#340` added the partial-index
+  predicate. **Check the timestamp before reading it as a live fault.** CAMPHAWK-M and
+  CAMPHAWK-K are Server Action staleness, which is the ordinary consequence of a deploy.
+  **`sentry` is an unauthorized MCP server in this session** — it needs an interactive
+  `/mcp` authorization, so those readings came from the web UI and cannot be re-taken here.
 
 ### THE COMMIT RESIDUAL: THE PAGEFILE TRACKS, AND OPTION B IS OFF (2026-09-11)
 
