@@ -10536,91 +10536,6 @@ label is American and which ships to the **United States storefront only**.
 
 ## Open / next session
 
-### THE ANDROID DEVELOPER VERIFICATION DEADLINE IS SEP 30, AND IT WAS RECORDED NOWHERE (2026-09-16)
-
-Found in Gmail while orienting, not in the repo: `googleplay-noreply@google.com`, **2026-08-31**,
-subject prefixed **`CampHawk:`** — *"[Final reminder] Register your apps and signing keys to meet
-Android developer verification requirements before **Sep 30, 2026**"*, and *"All Google Play apps
-must be registered by September 30, 2026 to meet Play Console requirements. Any Play apps not
-registered will be **removed from Google Play globally**."*
-
-**Zero hits for `developer verification`, `signing key.*register` or `September 30, 2026` across
-`docs/` and `CLAUDE.md`.** It arrived sixteen days before it was read, it is fourteen days from
-its date, and the only copy was an email.
-
-- **CAMPHAWK IS ALMOST CERTAINLY ALREADY REGISTERED, AND THAT IS STRUCTURAL RATHER THAN A GUESS.**
-  Google's own page says *"Google Play automatically registers 99% of apps. Use Play Console to
-  manually register remaining apps or those distributed outside Google Play"*, and the email says
-  the auto-registration was done **using Play signing keys**. CampHawk necessarily uses **Play App
-  Signing**: it is a 2026 app that publishes an **AAB** (`android/app/build/outputs/**/*.aab` →
-  `publishing.google_play`), and Play App Signing has been **mandatory for all new apps since
-  August 2021** and is required for app bundles. The keystore reference being named
-  `camphawk_upload` is consistent with that and is the weaker evidence, not the argument.
-- **SO THE ACTION IS TO CONFIRM, NOT TO DO** — and nobody in a session can confirm it.
-  `support.google.com` is **blocked at the agent proxy**; the Play Console has never been readable
-  from here. **Play Console → Home**, where a package-name status sits beside each app and the
-  list filters to unregistered. `app.camphawk.mobile` is the package name.
-
-#### THE EMAIL AND GOOGLE'S DOCS DESCRIBE TWO DIFFERENT THINGS, AND COLLAPSING THEM GOES BOTH WAYS WRONG
-`developer.android.com/developer-verification` (fetched 2026-09-16, HTTP 200 with real content)
-says **September 30, 2026 is a *"Regional deadline in Brazil, Indonesia, Singapore, and Thailand
-for participating app stores"***, that the protections *"begin for users installing apps from
-participating stores … in Brazil, Indonesia, Singapore, and Thailand, on certified devices running
-Android 7+"*, and that *"In 2027, we'll expand this globally to all apps on certified devices."*
-
-**That is not the same claim as the email's, and neither is wrong.** They are two mechanisms
-sharing one date:
-
-| | what it is | scope on Sep 30 | consequence |
-|---|---|---|---|
-| **Registration** (the email) | package name + signing key registered in Play Console | **global, all Play apps** | **removed from Google Play** |
-| **Install-time enforcement** (the docs) | certified devices refuse unverified developers' apps | **BR / ID / SG / TH only**, participating stores | app will not install there; **global in 2027** |
-
-- **READING ONLY THE DOCS UNDERSTATES IT** — "we ship US-only, so a Brazil/Indonesia/Singapore/
-  Thailand deadline cannot touch us" is true of the second row and says nothing about the first,
-  which is global and whose consequence is removal.
-- **READING ONLY THE EMAIL OVERSTATES THE SIDELOAD HALF** — its third bullet reads as though an
-  unregistered key stops installing everywhere on Sep 30, and the docs bound that to four
-  countries until 2027.
-- **QUOTE THE ROW, NOT THE DATE.** Both mechanisms are "Sep 30, 2026" and they are not the same
-  deadline.
-
-#### THE SIDELOAD APK IS A SECOND, DIFFERENT KEY — RECORDED, NOT ACTED ON
-The email's third bullet is *"Add any additional keys for your Play apps that you use to sign them
-outside of Google Play"*, and this repo has exactly that shape. `android-release` emits **both**
-artifacts: the **AAB** goes to Play, which **re-signs it with the app signing key Google holds**,
-while the **APK** is signed with the `camphawk_upload` key and **never re-signed**. So a sideloaded
-CampHawk carries a **different certificate** from a Play-installed one, and the sideload path is
-deliberate — `CH_SIDELOAD_ONLY` exists in `codemagic.yaml` precisely to produce an installable
-APK when the billing gate would otherwise delete the AAB.
-
-- **IT IS NOT URGENT AND THE REASON IS THE TABLE ABOVE**: install-time enforcement is BR/ID/SG/TH
-  until 2027, the owner's phone is in the US, and a direct ADB/file install is not one of the
-  *participating stores* the docs enumerate (Google Play, HONOR, OPPO, Galaxy Store, Palm Store,
-  V-Appstore, GetApps).
-- **WHAT IS NOT ESTABLISHED, AND DO NOT WRITE ONE IN:** whether a direct sideload to your own
-  device ever needs the pair registered. The docs describe an **"advanced flow"** for *"power users
-  who want the ability to download unverified apps"* and **do not say** that a personal sideload is
-  exempt. `support.google.com` is blocked here, so the authoritative page could not be read.
-- **IT BECOMES A REAL QUESTION IN 2027**, when the enforcement goes global — and if the sideload
-  APK ever becomes a distribution channel rather than a one-off repair, sooner.
-
-#### NO GUARD, DELIBERATELY
-The state that matters lives in the Play Console, which no test can reach, and the mechanical
-facts (the upload key, the two artifacts) are already stated in `codemagic.yaml`'s own comments.
-A test asserting those would restate the workflow while proving nothing about registration —
-**a guard that inspects nothing is indistinguishable from one that approves**, which is the shape
-`chromium-attribution.test.mts` and `hold-fixture-safety.test.mts` both had to be widened out of.
-A date-triggered failure was considered and rejected for the same reason the admin banner's
-thresholds were tuned: a check that reddens CI for everyone on 2026-10-01 is the cry-wolf failure
-this file has fixed three times.
-
-**`docs/PLAY-STORE.md` IS THE SIDE LANE'S** (`docs/LANES.md`, the APP/STORE surface, assigned
-2026-09-10) **and carries nothing about signing at all** — no `app signing`, no `upload key`, no
-keystore, no fingerprint. The console procedure belongs there; it is **named here rather than
-written there**, and the fact that the file recording Play's setup has never mentioned which key
-signs what is the reason this took a fetch of Google's docs to answer.
-
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
 
 **Read "THE RECONCILE RAN AND THE BADGE STILL CANNOT SEE THE ONE CANCELLING SUBSCRIBER" before
@@ -16648,6 +16563,93 @@ break.** TestFlight build **8 is up (2026-08-08)**, after two failures worth kno
     **three of its four claims false** — and **which three was never written down**, in any file
     or commit. If Play asks a follow-up, that analysis has to be redone from scratch.
 Details in `docs/PLAY-STORE.md` §0a and §0c.
+
+### ANDROID DEVELOPER VERIFICATION — REGISTERED, 3 KEYS, ALL VERIFIED (confirmed 2026-09-16)
+
+`googleplay-noreply@google.com` sent a **2026-08-31** final reminder, subject prefixed `CampHawk:`
+— *"Register your apps and signing keys … before **Sep 30, 2026**"*, with *"Any Play apps not
+registered will be **removed from Google Play globally**."* It was recorded in **no file** (zero
+hits for `developer verification` or `September 30, 2026` across `docs/` and `CLAUDE.md`), sat
+unread for sixteen days, and was found only because a session happened to search Gmail.
+
+**THE CONSOLE ANSWERS IT AND THERE IS NOTHING TO DO.** Play Console → Android developer
+verification → Package names, read by the owner 2026-09-16:
+
+```
+CampHawk   ✓ Registered   app.camphawk.mobile   Keys 3   Last updated Aug 1, 2026
+  C3:B7:D9:E5:C0   Verified
+  10:04:0F:3E:4D   Verified
+  25:F6:19:6B:F3   Verified
+```
+
+- **Registered, three keys, every one Verified, and updated 2026-08-01 — a month before the
+  reminder that prompted the search.** So the email was informational for this account and the
+  deadline never applied to us. **Do not re-open it.**
+- **The prediction was right for the right reason, which is worth keeping because the reason is
+  reusable.** It was called *"almost certainly already registered, structurally rather than by
+  guess"* before the console was read: Google auto-registers 99% of apps **using their Play
+  signing keys**, and CampHawk **necessarily uses Play App Signing** — a 2026 app publishing an
+  **AAB**, and Play App Signing has been mandatory for new apps since August 2021 and is required
+  for app bundles. The console says the same thing in its own words: *"Some information from your
+  Play Console account is [used to meet] requirements, saving you time."* The `camphawk_upload`
+  keystore NAME was the weaker evidence and was labelled as such.
+
+#### THE CONSOLE'S OWN BANNER CONFIRMS THE TWO-MECHANISM SPLIT — three sources now agree
+The banner on that page reads: *"any Play apps not registered by September 30, 2026 [will be
+removed from] Google Play **globally**. Android apps from other **participating stores** … not
+registered will also no longer be installable on **certified devices in select countries**."*
+
+**That is two mechanisms sharing one date, stated in one paragraph**, and it matches
+`developer.android.com` (*"Regional deadline in Brazil, Indonesia, Singapore, and Thailand for
+participating app stores"*, global in 2027):
+
+| | what it is | scope on Sep 30 | consequence |
+|---|---|---|---|
+| **Registration** | package name + signing keys registered in Play Console | **global, all Play apps** | **removed from Google Play** |
+| **Install-time enforcement** | certified devices refuse unverified developers' apps | **BR / ID / SG / TH**, participating stores | won't install there; **global in 2027** |
+
+- **READING ONLY THE DOCS UNDERSTATES IT** — *"we ship US-only, so a Brazil/Indonesia/Singapore/
+  Thailand deadline cannot touch us"* is true of the second row and **silent about the first**,
+  which is global and whose consequence is removal.
+- **READING ONLY THE EMAIL OVERSTATES THE SIDELOAD HALF** — its third bullet reads as though an
+  unregistered key stops installing everywhere on Sep 30, and both the docs and the console bound
+  that to select countries until 2027.
+- **QUOTE THE ROW, NOT THE DATE.** Both are "Sep 30, 2026" and they are not the same deadline.
+
+#### THREE KEYS IS THE INTERESTING NUMBER, AND IT PROBABLY CLOSES THE SIDELOAD QUESTION
+`android-release` emits **both** artifacts. The **AAB** goes to Play, which **re-signs it with the
+app signing key Google holds**; the **APK** is signed with `camphawk_upload` and **never
+re-signed**, so a sideloaded CampHawk carries a **different certificate** from a Play-installed
+one. That is exactly the email's third bullet (*"additional keys for your Play apps that you use
+to sign them outside of Google Play"*), and before the console was read it was recorded as an open
+question.
+
+**Three registered keys is more than the app signing key alone**, and Play Console holds precisely
+the app signing key and the upload key for an app in this configuration (plus a legacy key where
+one exists). So the upload key is **very likely** among the three and the sideload path is
+**very likely** already covered.
+
+- **NOT ESTABLISHED, AND DELIBERATELY NOT WRITTEN IN AS FACT.** The console truncates each
+  fingerprint to five bytes, so nothing here matches one to the upload key. **What would close it
+  in one look: Play Console → Setup → App integrity**, which lists the app signing key and upload
+  key certificates in full — compare those against the three above.
+- It only matters if the sideload APK ever becomes a distribution channel rather than the one-off
+  repair `CH_SIDELOAD_ONLY` exists for, or in 2027 when enforcement goes global. **Neither is now.**
+
+#### NO GUARD, DELIBERATELY
+The state lives in the Play Console, which no test can reach, and the mechanical facts (the upload
+key, the two artifacts) are already stated in `codemagic.yaml`'s own comments. A test asserting
+those would restate the workflow while proving nothing about registration — **a guard that
+inspects nothing is indistinguishable from one that approves**, which is the shape
+`chromium-attribution.test.mts` and `hold-fixture-safety.test.mts` both had to be widened out of.
+A date-triggered failure was considered and rejected for the same reason the admin banner's
+thresholds were tuned: a check that reddens CI for everyone on 2026-10-01 is the cry-wolf failure
+this file has fixed three times.
+
+**`docs/PLAY-STORE.md` IS THE SIDE LANE'S** (`docs/LANES.md`, the APP/STORE surface, assigned
+2026-09-10) **and carries nothing about signing at all** — no `app signing`, no `upload key`, no
+keystore, no fingerprint. That gap is why answering a question about our own signing keys needed a
+fetch of Google's docs instead of a grep, and it is **named here rather than written there**.
 
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
 Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:
