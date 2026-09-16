@@ -31,12 +31,22 @@ const wedge = code(wedgeSrc);
 // ── the probe ──────────────────────────────────────────────────────────────────────────────
 
 test('the probe is BOUNDED — page.evaluate has no timeout of its own', async () => {
-  // A page that never answers. Unbounded, this hangs for ever and takes the watchdog with it.
+  // THE STRUCTURAL ASSERTION GOES FIRST, AND THE ORDER IS THE WHOLE LESSON. It was third, and
+  // deleting the race SURVIVED this guard: an unbounded probe does not fail the behavioural
+  // half, it HANGS, and node:test reports a hung suite as `# fail 0` with every test
+  // `cancelled` — which reads as a pass to anything counting failures, including the mutation
+  // harness that caught it. An assertion placed after a call that can hang is unreachable.
+  assert.match(wedge, /Promise\.race\(/, 'the probe must race the evaluate against a timer');
+
+  // A page that never answers. The call is itself raced, so a hang arrives as a failed
+  // assertion rather than as silence — the same rule, applied to the test's own await.
   const t0 = Date.now();
-  const reading = await probeResidentPage({ evaluate: () => new Promise(() => {}) }, 150);
+  const reading = await Promise.race([
+    probeResidentPage({ evaluate: () => new Promise(() => {}) }, 150),
+    new Promise((r) => setTimeout(() => r('DID NOT RETURN'), 5_000)),
+  ]);
   assert.equal(reading, 'wedged');
   assert.ok(Date.now() - t0 < 5_000, 'the probe did not return inside its budget');
-  assert.match(wedge, /Promise\.race\(/, 'the probe must race the evaluate against a timer');
 });
 
 test('a page that answers reads alive', async () => {

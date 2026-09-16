@@ -136,6 +136,24 @@ export async function probeResidentPage(page, timeoutMs = WEDGE_PROBE_TIMEOUT_MS
  * The decision, pure so it can be tested without a browser.
  *
  * `reading` is what `probeResidentPage` returned. Returns the NEW strike count and what to do.
+ *
+ * THE @typedef IS LOAD-BEARING, NOT DOCUMENTATION, and a plain `@param {object} [o]` with
+ * `[o.reading]` properties does NOT do the job — measured, not assumed. TypeScript infers a
+ * destructured signature from the DEFAULTS, and `reading` deliberately has none, so without a
+ * named type the one property the whole decision turns on is absent from it and the ROOT
+ * tsconfig rejects every caller that passes it. `npm test` is perfectly happy either way; the
+ * typecheck is what sees it.
+ *
+ * @typedef {object} WedgeInput
+ * @property {'alive'|'wedged'|'inconclusive'|null} [reading]
+ * @property {number} [strikes]
+ * @property {number} [strikesNeeded]
+ * @property {number} [recycles]
+ * @property {number} [maxRecycles]
+ */
+/**
+ * @param {WedgeInput} [input]
+ * @returns {{ strikes: number, act: 'none'|'recycle'|'escalate', why: string }}
  */
 export function wedgeDecision({
   reading,
