@@ -44,8 +44,13 @@ export const dynamic = 'force-dynamic';
 async function buildPlan(): Promise<Plan> {
   const stripe = getStripe();
 
+  // `cancel_at` comes back as TEXT, not a Date. The planner compares it against an ISO
+  // string built from Stripe's epoch seconds, and `to_char` with an explicit offset is
+  // what makes those two the same instant rather than the same-ish local time. A bare
+  // `::text` on a timestamptz renders in whatever the session's TimeZone happens to be.
   const ours = await query<OurRow>(
-    `SELECT stripe_subscription_id, status, tier
+    `SELECT stripe_subscription_id, status, tier, cancel_at_period_end,
+            to_char(cancel_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS cancel_at
        FROM subscriptions
       WHERE stripe_subscription_id IS NOT NULL`
   );
@@ -58,6 +63,10 @@ async function buildPlan(): Promise<Plan> {
       facts.set(id, {
         status: sub.status,
         tier: tierForPriceId(sub.items?.data?.[0]?.price?.id),
+        // Epoch SECONDS. A bare `new Date(sub.cancel_at)` is 1970 and would reconcile
+        // every cancelling row to a date that has already passed.
+        cancel_at_period_end: sub.cancel_at_period_end === true,
+        cancel_at: sub.cancel_at ? new Date(sub.cancel_at * 1000).toISOString() : null,
       });
     } catch {
       // NULL means "Stripe could not account for this", NEVER "cancelled". The plan

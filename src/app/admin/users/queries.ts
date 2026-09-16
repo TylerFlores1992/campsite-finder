@@ -55,7 +55,8 @@ const AUTOCART_ENTITLED = `(
 
 /** The LIVE subscription, preferred over any lapsed sibling row. */
 const LIVE_SUB = `LEFT JOIN LATERAL (
-  SELECT s.status, s.tier, s.grandfathered, s.stripe_customer_id
+  SELECT s.status, s.tier, s.grandfathered, s.stripe_customer_id,
+         s.cancel_at_period_end, s.cancel_at
     FROM subscriptions s
    WHERE s.user_id = u.id
    ORDER BY (s.status IN ('active','trialing')) DESC, s.updated_at DESC NULLS LAST
@@ -77,6 +78,13 @@ export interface AdminUserRow {
   sub_status: string | null;
   sub_tier: string | null;
   grandfathered: boolean | null;
+  /** Stripe's cancel_at_period_end on the live row. This is the flag the badge reads:
+   *  a cancelling subscriber keeps `sub_status = 'active'` and full entitlement right up
+   *  to the day they go, so the status alone cannot show a churn in progress. */
+  cancelling: boolean;
+  /** When it ends. NULL means Stripe reported no date — it does NOT mean "not
+   *  cancelling", which is `cancelling` alone. */
+  cancel_at: string | null;
   live_watches: number;
   total_watches: number;
   alerts_sent: number;
@@ -98,6 +106,8 @@ export async function listAdminUsers(): Promise<AdminUserRow[]> {
            sub.status                    AS sub_status,
            sub.tier                      AS sub_tier,
            sub.grandfathered             AS grandfathered,
+           COALESCE(sub.cancel_at_period_end, false) AS cancelling,
+           sub.cancel_at::text           AS cancel_at,
            COALESCE(w.live, 0)           AS live_watches,
            COALESCE(w.total, 0)          AS total_watches,
            COALESCE(n.sent, 0)           AS alerts_sent,
@@ -204,6 +214,8 @@ export async function getAdminUser(id: string): Promise<AdminUserDetail | null> 
             sub.status                  AS sub_status,
             sub.tier                    AS sub_tier,
             sub.grandfathered           AS grandfathered,
+            COALESCE(sub.cancel_at_period_end, false) AS cancelling,
+            sub.cancel_at::text         AS cancel_at,
             sub.stripe_customer_id      AS stripe_customer_id,
             COALESCE(w.live, 0)         AS live_watches,
             COALESCE(w.total, 0)        AS total_watches,

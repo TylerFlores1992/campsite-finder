@@ -103,14 +103,121 @@ test('a subscription created outside checkout is still recorded', () => {
   );
 });
 
+/** The `catch` inside `subscriptionFacts` — the only fallback on this path.
+ *
+ *  RE-ANCHORED 2026-09-16, NOT RELAXED. It used to pin the whole return literal
+ *  `{ status: 'active', tier: 'base' }` up to its closing brace, so adding the
+ *  cancellation fields broke it over behaviour that had not changed. The rule it protects
+ *  is unchanged and is re-verified against the regression below. */
+function factsCatch(): string {
+  const fn = src.indexOf('async function subscriptionFacts');
+  assert.ok(fn > -1, 'subscriptionFacts not found — re-anchor this test');
+  const start = src.indexOf('catch', fn);
+  assert.ok(start > fn, 'no catch in subscriptionFacts — the fallback has moved');
+  const end = src.indexOf('\n}', start);
+  assert.ok(end > start, 'could not find the end of subscriptionFacts');
+  return src.slice(start, end);
+}
+
 test('the fallback status is entitled, not a silent downgrade', () => {
   // 'active' and 'trialing' are both entitled, so this fallback cannot change what a
   // subscriber can DO. Pinned so nobody "hardens" it to something unentitled — that
   // would turn an unreadable Stripe response into a revoked subscription.
   assert.match(
-    src,
-    /return\s*\{\s*status:\s*'active',\s*tier:\s*'base'\s*\}/,
+    factsCatch(),
+    /status:\s*'active'/,
     'The catch must fall back to an ENTITLED status. This is only reached from a ' +
       'completed subscription checkout, so the one certain fact is that they subscribed.'
+  );
+  assert.match(factsCatch(), /tier:\s*'base'/, 'and to the tier that fails LOUD, not free premium.');
+});
+
+// ── the cancellation schedule (migration 078) ────────────────────────────────────────
+//
+// The owner learned a subscriber had gone by opening Stripe. `cancel_at_period_end`
+// appeared NOWHERE in the codebase, and a cancelling subscriber reads `active` with full
+// entitlement right up to the day they leave — so every number we had was correct and
+// between them they hid the only thing worth acting on.
+
+test('ALL THREE WRITE PATHS carry the cancellation, not just the tidy one', () => {
+  // There are three, and they are reached by different events. Wiring the obvious one
+  // and missing a sibling is the recorded shape here: a subscriber whose events carry no
+  // clerk_user_id takes the legacy UPDATE, and that is exactly the long-standing account
+  // most likely to cancel.
+  const branch = checkoutBranch();
+  assert.match(branch, /cancelAtPeriodEnd:\s*facts\.cancelAtPeriodEnd/,
+    'checkout.session.completed must pass the cancellation through.');
+
+  const subBranch = src.slice(src.indexOf("case 'customer.subscription.created'"));
+  assert.match(subBranch, /cancelAtPeriodEnd:\s*cancel\.cancelAtPeriodEnd/,
+    'the subscription.* upsert must pass the cancellation through.');
+  assert.match(subBranch, /cancel_at_period_end\s*=\s*\$4/,
+    'the LEGACY no-metadata UPDATE must write the cancellation too — it is the path a ' +
+      'subscriber who predates clerk_user_id metadata takes, i.e. the oldest accounts.');
+});
+
+test('the upsert writes the cancellation in BOTH directions', () => {
+  // A resubscribe sends the flag back to false. An update set that only ever turns it ON
+  // badges a recovered customer as leaving for ever, and a badge that is wrong in the
+  // reassuring direction stops being read.
+  const upsert = src.slice(src.indexOf('async function upsertSubscription'));
+  assert.match(upsert, /DO UPDATE SET[\s\S]*cancel_at_period_end = EXCLUDED\.cancel_at_period_end/,
+    'cancel_at_period_end must be in the conflict update set.');
+  assert.match(upsert, /DO UPDATE SET[\s\S]*cancel_at = EXCLUDED\.cancel_at/,
+    'cancel_at must be in the conflict update set.');
+});
+
+test('grandfathered is STILL not in the update set', () => {
+  // The rule the upsert already obeyed, re-checked because a change to that statement is
+  // exactly when it would get swept in. Migration 032 set it once; a price that maps to
+  // 'base' must never strip the auto-cart those subscribers were promised.
+  const upsert = src.slice(src.indexOf('async function upsertSubscription'));
+  assert.doesNotMatch(upsert, /grandfathered\s*=/, 'the webhook must never write grandfathered.');
+});
+
+test('cancel_at is read as epoch SECONDS', () => {
+  // Stripe sends seconds. `new Date(sub.cancel_at)` is 1970, which renders as a
+  // cancellation that already happened — a date in the past reads as "they are gone"
+  // rather than "they are leaving", which is the opposite of the fact.
+  assert.match(
+    src,
+    /sub\.cancel_at\s*\?\s*new Date\(sub\.cancel_at\s*\*\s*1000\)/,
+    'cancel_at must be multiplied by 1000 before becoming a Date.'
+  );
+});
+
+test('the cancellation fallback is NOT SCHEDULED, never a guess', () => {
+  // The opposite direction from the status fallback, and for the same reason: this runs
+  // the instant somebody finishes checking out, nobody cancels in that window, and a
+  // false "cancelling" badge on a brand-new subscriber sends somebody chasing a churn
+  // that has not happened.
+  assert.match(
+    factsCatch(),
+    /cancelAtPeriodEnd:\s*false/,
+    'an unreadable Stripe response must not invent a cancellation.'
+  );
+  assert.match(factsCatch(), /cancelAt:\s*null/);
+});
+
+test('the flag is read, and the DATE is not what decides it', () => {
+  // Stripe's types do not promise `cancel_at` is populated whenever the flag is set, and
+  // it could not be checked from here — api.stripe.com is 403 at the agent proxy. So a
+  // page keyed on the date alone would report a cancelling subscriber as healthy on
+  // exactly the API version where that assumption does not hold.
+  assert.match(
+    src,
+    /cancelAtPeriodEnd:\s*sub\.cancel_at_period_end === true/,
+    "cancelAtPeriodEnd must come from Stripe's own boolean, not be derived from the date."
+  );
+});
+
+test('current_period_end is NOT reached for', () => {
+  // It is not on the Subscription object in stripe@22.3.0 — it moved onto items.data[] —
+  // so it reads `undefined` and writes NULL for ever, which is indistinguishable from
+  // nobody cancelling. Read out of the SDK's own types, not recalled.
+  assert.doesNotMatch(
+    src,
+    /sub\.current_period_end/,
+    'sub.current_period_end does not exist in this SDK version; use cancel_at.'
   );
 });

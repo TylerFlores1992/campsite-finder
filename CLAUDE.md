@@ -8344,6 +8344,93 @@ row status was the only lie.
   two calls. The fallback is pinned as ENTITLED: this path is only reached from a completed
   subscription checkout, so an unreadable Stripe response must not read as a revoked one.
 
+### A CHURN WAS INVISIBLE UNTIL THE DAY IT LANDED, AND EVERY NUMBER WAS RIGHT (migration 078, 2026-09-16)
+Reported as *"MMR on admin and stripe do not match. I didnt know we lost someone until i went
+on stripe."* **The MRR mismatch is not a bug** — that half is already recorded above (the
+status counts read OUR database, the MRR tile reads Stripe live via
+`subscriptions.list({status:'active'})`, which EXCLUDES trialing; two correct numbers about
+different things). **The real finding is the second sentence**, and it is a gap rather than a
+disagreement: `cancel_at_period_end` appeared **NOWHERE in the codebase**. The webhook wrote
+`sub.status` and nothing else, so a subscriber who cancels stays `status = 'active'` for the
+rest of their paid period — weeks — with no record anywhere that it ends.
+- **EVERY READING WAS TRUE AND THE PRODUCT STILL COULD NOT ANSWER THE QUESTION.** They ARE
+  active. They ARE entitled. The money IS still coming, so MRR counting them is correct.
+  The status breakdown filing them under Active is correct. **Between them they hid the one
+  fact worth acting on**, which is the `status = 'sent'` shape a layer up: the reading is
+  accurate and it is not what anybody is asking. A churn learned a month late is a churn
+  nobody had a chance to answer, and the whole point of noticing is the window in which an
+  email can still change the outcome.
+- **TWO COLUMNS, AND THE BOOLEAN IS THE LOAD-BEARING ONE.** `cancel_at_period_end` is Stripe's
+  own flag, always present, and is what the badge fires on; `cancel_at` is the date and is
+  NULLABLE. **Stripe's types decline to promise the date is populated whenever the flag is
+  set** — read out of `stripe@22.3.0`'s own `Subscriptions.d.ts`, not recalled — and it could
+  not be checked live, because `api.stripe.com` is 403 at the agent proxy. So the tidy
+  one-column version (non-null date ⇒ cancelling) reports a cancelling subscriber as **healthy**
+  on exactly the API version where that assumption fails. Keyed on the flag it says
+  "cancelling" and omits the date, which is knowing less rather than being wrong.
+- **`current_period_end` IS NOT ON THE SUBSCRIPTION OBJECT IN THIS SDK VERSION.** It moved onto
+  `items.data[]`. Reaching for it reads `undefined` and writes NULL for ever — indistinguishable
+  from nobody cancelling — so a guard fails on `sub.current_period_end` by name.
+- **THE WEBHOOK IS FORWARD-ONLY, SO THE RECONCILE CARRIES IT TOO.** Somebody who has ALREADY
+  cancelled generates no further event, so the webhook alone leaves **precisely the rows that
+  motivated the column** blank. That is the 2026-09-02 trial-status lesson arriving a second
+  time: **a fix to what gets WRITTEN repairs nothing already written.** Brent's row is the live
+  case — `active`/`autocart`, `cancel_at_period_end = false`, Stripe says it ends Oct 8 — and it
+  stays that way until somebody presses **Admin → "Does our table match Stripe?" → Apply**.
+- **THE DATE IS COMPARED AS AN INSTANT, NEVER AS TEXT.** Postgres returns
+  `2026-10-08T14:35:08.318+00:00` where Stripe's epoch seconds render as
+  `...08.000Z` — one moment, two spellings. A string compare reports a change on **every run**,
+  rewrites every row, and makes the reconcile permanently noisy; **a noisy reconcile is one
+  nobody reads**, which is how the real difference it exists to catch gets skimmed. The route
+  emits `to_char(cancel_at AT TIME ZONE 'UTC', …)` rather than a bare `::text`, which renders in
+  whatever the session's TimeZone happens to be.
+- **EPOCH SECONDS.** `new Date(sub.cancel_at)` is 1970, and a date in the past reads as *they
+  are gone* rather than *they are leaving* — the opposite of the fact.
+- **THE COUNT IS OVER LIVE ROWS, AND STRIPE'S OWN DOCSTRING IS WHY.** `cancel_at_period_end` is
+  *"whether this subscription **will** (if status=active) or **did** (if status=canceled) cancel
+  at the end of the current billing period"* — so a long-dead row keeps the flag from the
+  cancellation that killed it. An unfiltered count reports every churn that has ever happened as
+  one in progress, for ever, growing, and never actionable.
+- **CANCELLING IS NOT A STRIPE STATUS AND IS NOT A FIFTH `StatusRow`.** Those four partition the
+  table and a cancelling subscription is already counted under Active; a fifth row double-counts
+  it and stops the column summing — the sort of number somebody reconciles against Stripe and
+  cannot make add up. It sits below the list as a note about a subset, **and renders only when
+  non-zero**: "Cancelling 0" every day is a line nobody reads by the end of the week, and its
+  appearance IS the news.
+- **THE BADGE SITS BESIDE THE PLAN, NOT INSTEAD OF IT.** Replacing "Auto-Cart" with "Cancelling"
+  would lose which plan is ending — which is what decides whether the reply is worth writing —
+  and would read as revoked to anyone scanning, when they still have weeks of paid access.
+- **EVERY DATE RENDERS IN PACIFIC, AND THAT IS CORRECTNESS RATHER THAN POLISH.** `cancel_at` is
+  a real instant and **Vercel runs UTC**, so a cancellation at 02:00 UTC renders as the FOLLOWING
+  DAY to an owner in California — one day wrong on the date somebody decides whether to write an
+  email against, and **a date that is off by one is worse than no date, because it looks like an
+  answer.** Same family as `formatStayDates`, where `new Date('2026-09-04')` rendered as Sep 3 in
+  every US timezone. Every operational clock in this product is Pacific (the 08:00 releases, the
+  box's quiet window, `pacific()` in the hold suites), so the admin page reads the same one.
+- **25 MUTATIONS, EACH VERIFIED TO APPLY. ONE SURVIVED AND IT IS THE HOUSE SHAPE.** Deleting the
+  flag comparison from `sameFacts` outright left the suite green, because the test that was
+  supposed to catch it varied the flag **AND** the date, and `sameInstant(null, <a date>)` is
+  false — the date difference absorbed the flag's. **A guard that varies two things at once
+  measures neither.** Fixed with a case holding the instant identical on both sides, which is a
+  real Stripe state (a subscription scheduled to end on a specific date carries `cancel_at`
+  without `cancel_at_period_end`).
+- **AN EXISTING GUARD BROKE OVER UNCHANGED BEHAVIOUR AND WAS RE-ANCHORED, NOT RELAXED.**
+  `stripe-webhook-status.test.mts`'s fallback guard pinned the whole return literal up to its
+  closing brace, so appending two fields failed it over behaviour that had not moved. It slices
+  the `catch` block now, and was re-verified failing against the regression it exists for — a
+  fallback hardened to an unentitled status, which would turn an unreadable Stripe response into
+  a revoked subscription.
+- **AND TWO OF MY OWN NEW GUARDS WERE WRONG BEFORE THEY WERE RIGHT, BOTH CAUGHT BY RUNNING THEM.**
+  The Pacific one matched a window that stopped AT `toLocaleDateString` — so it never saw the
+  options object where the zone lives, and passed on code with no zone at all. Widened, it then
+  reached far enough on two files and not on the third, whose options block is indented
+  twenty-two columns. **A budget measured in characters is a guess about layout**, which this
+  repo already paid for in `rehearsal.test.mts`; whitespace is collapsed before matching now, so
+  the budget is about the CODE.
+- **THE UI GUARD IS UNDER `src/`, NOT `worker/`** — read out of `worker-deploy.yml`'s `paths:`
+  rather than remembered — so it restarts no poller. The two webhook/reconcile suites are in
+  `worker/` already and merging them DOES fire a worker deploy; check `poller.shards` after.
+
 ### DATES ARE EDITABLE ON `/manage/<token>` NOW — and the form was never the hard part (2026-09-02)
 
 `src/lib/watch-dates.ts` + a `setDates` op. The interesting half is that **`watch_site_alerts`
