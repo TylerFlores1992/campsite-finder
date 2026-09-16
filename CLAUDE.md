@@ -7576,9 +7576,14 @@ full Okta trip traces 112-239 responses. **The arithmetic does not close.**
 - **STOP CITING "the sections are NOT base shared memory".** That verdict came from the 09-07 VOID
   dump of a healthy REPLACEMENT browser; all four ramp dumps are `target-silent`, so `shared_memory`
   has never been read for a ramping renderer. The cap proves it IS base shared memory.
-- **The fix is not ours to make.** No flag shrinks the pipe, the drain is a posted task, and the
-  wedge is RC's own promise loop. **The containment we already have is what bounds it** — and it is
-  now a bounded problem rather than an open-ended one.
+- ~~**The fix is not ours to make.**~~ **TRUE OF THE ALLOCATION AND FALSE AS WRITTEN — see "THE
+  CURE" directly below (2026-09-16).** No flag shrinks the pipe, the drain is a posted task and
+  the wedge is RC's own promise loop, so none of the three *mechanisms* is ours. What does not
+  follow is that there is nothing to build: **the wedge can be ended from OUTSIDE the page**, and
+  closing the page releases every mapping it held. Struck rather than deleted, because "not ours
+  to make" is exactly the sentence a later reader quotes as a reason to stop looking. **The
+  containment we already have is what bounds it** — and it is now a bounded problem rather than
+  an open-ended one.
 - **BUT "CONTAINED" IS NOT "CURED", AND THE RESIDUAL IS COMMIT (measured 2026-09-11).** Six onsets
   in the following 48 hours, `bail:ramp` on all six, peak `rc_mb` down to **4,661 MB** from 8-9 GB
   — so the containment really does cut the private-byte climb every time. **It does not touch the
@@ -7588,6 +7593,113 @@ full Okta trip traces 112-239 responses. **The arithmetic does not close.**
   exhaustion is the only failure this box has had that needed a human. Four options, with their
   predicted readings and counter-arguments, are under **"THE RESIDUAL IS COMMIT, AND NOTHING
   WATCHES IT"** in the Open block.
+
+#### THE CURE: RECYCLE THE WEDGED **PAGE**, NOT THE BROWSER (2026-09-16) — measured, and bounded
+The mechanism was settled on 09-11 and named three things that are not ours. **It also named one
+that is: the wedge.** A renderer holds its mappings for as long as its page exists, so ending the
+page ends them — and a page close needs nothing from the main thread that is wedged.
+
+`scripts/auto-cart-bot/page-wedge.mjs` is one small module and one arm in the keep-warm's existing
+watchdog timer: probe the resident page, and after `WEDGE_STRIKES` (3) consecutive no-answers at
+`WEDGE_PROBE_EVERY_MS` (10 s), close the page and let the loop's own reopen path rebuild it.
+
+- **THE PROBE IS A BOUNDED `page.evaluate('1')`, AND THE BOUND IS THE WHOLE THING.** Playwright's
+  `evaluate` has **no timeout**, which this repo already recorded on 2026-08-17 when four keep-warm
+  wedges could not say which await hung and `evaluateWithin` was built. **The first draft of this
+  probe forgot it and hung for ever** — a detector that can hang takes the watchdog with it.
+- **THREE MEASUREMENTS, in the container, against the reproduction `scripts/leak-repro.mjs` makes:**
+  1. **The bounded evaluate IS a working wedge detector** — a wedged page times out every time while
+     a healthy one answers in a millisecond.
+  2. **`page.close({ runBeforeUnload: false })` released 1,052 mappings (2.06 GiB) in 86 ms** on a
+     page whose main thread would not answer a single CDP call.
+  3. **`page.reload({ timeout: 8000 })` on the SAME page HUNG past its own timeout** and had to be
+     killed at 70 s. **Close, not navigate** — a reload asks the renderer to do something and a
+     wedged renderer does nothing.
+- **`runBeforeUnload: false` IS LOAD-BEARING FOR THE SAME REASON.** An unload handler runs on the
+  thread that is wedged, so asking for one is how the close inherits the hang it exists to end.
+- **VALIDATED END TO END AGAINST THE REAL REPRODUCTION, using the SHIPPED exports rather than a
+  copy** (`node scripts/leak-repro.mjs wedge-and-fetch 30 --fix`): `peak = 233 <<< CLIMBING`, then
+  `probe=wedged strikes=3 act=recycle`, then `mappings 233 -> 0 in 2525ms <<< CURED`. **The verdict
+  refuses `CURED` unless the run CLIMBED first** — releasing nothing proves nothing, which is the
+  rule `rc-probe.mjs --concurrent-mint` learned by publishing a race that never raced.
+- **IT IS FIRST IN THE TIMER, AND THE ORDER IS THE DESIGN.** A page close costs one RC page load;
+  the `HUNG_MS` and ramp arms cost the RC SESSION (~11 minutes, measured). Giving the expensive
+  arms first refusal spends a session on something a close fixes. **And the thing it destroys is
+  already dead**: a wedged resident page answers no CDP, so `checkAndReport` cannot read it and
+  `readLiveToken` cannot reach `window.__camphawkRcToken`.
+- **THE TOKEN IS PERSISTED FIRST, bounded at 2 s** — the same `persistLiveToken` call, for the same
+  reason, that `reportAndBail` and the runner's preemption path make. The live token lives in PAGE
+  memory and dies with the page (2026-08-30).
+- **A REJECTION IS NOT A WEDGE.** "Target closed" and "Execution context was destroyed" reject
+  INSTANTLY and mean the page is CHANGING, which is the healthy case; counting them would rack up
+  three strikes during an ordinary reopen and recycle a page that was never wedged. Only silence
+  counts, and an inconclusive reading neither strikes nor clears.
+- **THREE STRIKES, NOT ONE.** A single miss is a GC pause, a heavy paint, or a same-site tab loading
+  Okta on the shared main thread. **The renewal is the case to survive and it is measured**: it
+  stalls the LOOP for 46-71 s across 133 tab closes while the resident renderer goes on answering
+  CDP throughout — which is how the heap trail samples it every 10 s during healthy renewals. So a
+  healthy renewal produces `alive` readings and never reaches a strike.
+- **THE RECYCLE BUDGET ESCALATES RATHER THAN LOOPING** (`WEDGE_MAX_RECYCLES` 3, per browser life).
+  Three fresh pages that all wedge is not a page fault, and a cheap action repeated for ever is the
+  crash-loop shape `supervise.ps1` stops loudly for. Past the budget it hands over to the bail,
+  whose diagnostics are worth more than a fourth attempt.
+
+**IT BOUNDS THE LEAK. IT DOES NOT ELIMINATE IT, AND THE MODULE'S OWN HEADER SAYS SO.** The
+production burst maps 16,384 sections in **≤34 s**, and a detector that must first observe
+unresponsiveness cannot beat all of that — at three strikes and a 10 s cadence it acts at ~30 s,
+so a fast burst still completes. What it changes is the DURATION: today a wedged page holds its
+32 GiB until the 120 s ramp arm or the 12-minute `HUNG_MS` arm kills the whole browser, and now it
+is released in seconds by closing a page nothing can use anyway. **Do not write this up as the leak
+being fixed.** The true cure is to stop RC's SPA running unattended for hours, and parking the
+resident page is already REFUSED for a different and still-valid reason (`checkAndReport`'s
+localStorage rule would silence `autocart.rc_session` and the phone alarm permanently).
+
+- **UNPROVEN IN PRODUCTION, and that is the honest state.** Every measurement above is a
+  container-local Chromium against a synthetic wedge. **It is BOT-SIDE, so it is inert until the
+  box updates** — confirm with `bot-ask git-status`, never `autocart.bot_version`. **HOW TO READ
+  THE FIRST FIRING:** a `♻` line in `logs\rc-keepwarm.log` naming the wedge, then
+  `closed the wedged page in Nms`, then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED`
+  beneath it. A `request-counts` event with `reason: 'wedge-recycle'` carries what that page was
+  asking for; the counter resets on the reopen, so it is the only record.
+
+##### AND THE REQUEST COUNTER IS BLIND TO A WEDGED PAGE — measured, and it may be the "quiet ramps"
+Found while building the above, and it was not the thing being looked for: with a page wedged and
+demonstrably making **hundreds** of fetches — the mappings climbing 2 MiB at a time is the proof —
+**`page.on('request')` and `ctx.on('request')` both reported ZERO.**
+
+- **SAME CAUSE AS EVERY CDP INSTRUMENT BEFORE IT.** Playwright's request events route through the
+  page's own target, which is serviced on the main thread, which is the thread that is wedged. The
+  09-09 VMTHREAD reading named that dispatcher; this is one more instrument on the wrong side of it.
+- **IT IS A CANDIDATE EXPLANATION FOR THE QUIET RAMPS, and is labelled as one.** Two recorded ramps
+  carried the full 32 GiB signature beside a counter reading **20 and 6 lifetime requests**
+  (09-11 05:28, 09-10 17:53), and the burst/leak decoupling rests on exactly those. **If the
+  counter goes blind the moment the page wedges, a "quiet" ramp is a ramp we could not see the
+  traffic of** — which would mean the decoupling is weaker than seven sightings make it look.
+- **NOT ESTABLISHED. Measured in-container on a synthetic wedge; never confirmed against a
+  production ramp**, and the two are different browsers on different platforms — the trap that
+  burned the native sampler twice. **Do not rewrite the decoupling entries on this.** What would
+  settle it is a `request-counts` event from a `wedge-recycle`, which is why the arm emits one.
+- It also sharpens the standing page-scoped-counter gap (workers and throwaway tabs are invisible):
+  a **third** blindness, and the only one of the three that arrives exactly when a reading matters.
+
+##### TWO DEFECTS THE MUTATION RUN FOUND, AND ONE WAS IN THE GUARD ITSELF
+- **A HUNG SUITE REPORTS `# fail 0` WITH EVERY TEST `cancelled`.** Deleting the probe's
+  `Promise.race` does not FAIL the bounded-probe guard — it HANGS it, node:test cancels the suite,
+  and anything counting failures reads a pass. **That included the mutation harness**, which
+  reported the mutation as SURVIVING with a straight face. The structural assertion that would have
+  caught it sat AFTER the await that hangs, i.e. was unreachable. **An assertion placed after a call
+  that can hang is not an assertion**; it goes first now, the test's own call is raced so a hang
+  arrives as a failed assertion, and the harness treats `fail 0` beside `cancelled > 0` as a hang
+  rather than a catch. ~30th time a guard here has anchored on the wrong thing.
+- **`tsc` CAUGHT WHAT THE SUITE COULD NOT, AND A PLAIN `@param` DOES NOT FIX IT.** TypeScript infers
+  a destructured signature from the **defaults**, and `wedgeDecision`'s `reading` deliberately has
+  none — so the one property the whole decision turns on was absent from the type and the ROOT
+  tsconfig rejected every caller. **`@param {object} [o]` with `[o.reading]` properties was tried
+  first and changed nothing**; it needs a named `@typedef`. Third time the typecheck has been the
+  thing that noticed.
+- **AND THE HARNESS'S OWN `git checkout -- <file>` DELETED AN UNCOMMITTED FIX**, for the fifth
+  recorded time — it reverts to HEAD, and HEAD did not have it. **Commit before mutating** is
+  written down, was read this session, and still cost a round trip.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
@@ -10723,6 +10835,22 @@ nothing useful rather than as a syntax preference. **Always `AS` in a `query()` 
 >
 > **Read `CLAUDE.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`" before doing
 > anything memory-related. Every open leak question above it is either answered or superseded.**
+>
+> #### AND SINCE 2026-09-16 THERE IS A CURE FOR THE *DURATION*, WHICH IS A DIFFERENT CLAIM
+> **Read "THE CURE: RECYCLE THE WEDGED **PAGE**, NOT THE BROWSER" for the measurements.** In one
+> line: probe the resident page with a **bounded** `page.evaluate`, and after three consecutive
+> no-answers close the page — measured at **1,052 mappings released in 86 ms**, and validated end
+> to end against the reproduction at `233 -> 0`. It is first in the watchdog timer because it is
+> the cheap arm: a page close costs one RC page load where both arms below it cost the session.
+> - **IT DOES NOT MAKE "CONTAINED" INTO "CURED", AND THE PARAGRAPH ABOVE STANDS UNCHANGED.** The
+>   burst still maps 16,384 sections in ≤34 s and a detector that must first observe silence acts
+>   at ~30 s. What it changes is how long a wedged page HOLDS them: seconds, instead of the 120 s
+>   ramp arm or the 12-minute `HUNG_MS` arm killing the whole browser.
+> - **UNPROVEN IN PRODUCTION.** Container-local Chromium, synthetic wedge, and it is **bot-side**
+>   so it is inert until the box updates. The first firing is a `♻` line in `logs\rc-keepwarm.log`
+>   with no `✗ RAMP` beneath it.
+> - **`page.reload()` IS NOT THE LEVER** — on the same wedged page it hung past its own timeout and
+>   had to be killed at 70 s. Close, not navigate.
 >
 > **THREE THINGS ARE PROVED, and none of them needed a ramp, a box update or an instrument.**
 > 1. **The 32 GiB ceiling is `base::SharedMemorySecurityPolicy::kTotalMappedSizeLimit`** — a
