@@ -7699,9 +7699,18 @@ demonstrably making **hundreds** of fetches — the mappings climbing 2 MiB at a
   tsconfig rejected every caller. **`@param {object} [o]` with `[o.reading]` properties was tried
   first and changed nothing**; it needs a named `@typedef`. Third time the typecheck has been the
   thing that noticed.
-- **AND THE HARNESS'S OWN `git checkout -- <file>` DELETED AN UNCOMMITTED FIX**, for the fifth
-  recorded time — it reverts to HEAD, and HEAD did not have it. **Commit before mutating** is
-  written down, was read this session, and still cost a round trip.
+- **AND THE HARNESS'S OWN `git checkout -- <file>` DELETED AN UNCOMMITTED FIX — TWICE IN ONE
+  SESSION, which is the fifth and sixth recorded times.** It reverts to HEAD, and HEAD did not
+  have it. **Commit before mutating** is written down, was read this session, was RECORDED here
+  after the first occurrence, and was broken again forty minutes later.
+  - **THE SECOND ONE FAILED IN THE DANGEROUS DIRECTION AND THAT IS THE PART WORTH KEEPING.** The
+    first cost a round trip and announced itself (the typedef was simply gone). The second
+    reverted the *subject* of the mutation run — so two mutations reported **`DID NOT APPLY`**
+    and a third reported **`ok … failed`** over a file that no longer contained the code under
+    test. **A harness that reverts uncommitted work reports its own damage as a result about the
+    guards**, and both readings were wrong: nothing had survived and nothing had been caught.
+  - The tell is the one the harness cannot give you: `git status --short` after the run, and the
+    suite failing on a tree it says is clean.
 
 #### AND TWO CORRELATIONS THAT DID NOT SURVIVE THEIR OWN CONTROLS (2026-09-09)
 Recorded because both are the obvious next thing to check, and re-deriving them costs an evening.
