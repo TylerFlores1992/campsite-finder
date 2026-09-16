@@ -7595,9 +7595,11 @@ full Okta trip traces 112-239 responses. **The arithmetic does not close.**
   WATCHES IT"** in the Open block.
 
 #### THE CURE: RECYCLE THE WEDGED **PAGE**, NOT THE BROWSER (2026-09-16) — measured, and bounded
-The mechanism was settled on 09-11 and named three things that are not ours. **It also named one
-that is: the wedge.** A renderer holds its mappings for as long as its page exists, so ending the
-page ends them — and a page close needs nothing from the main thread that is wedged.
+The mechanism was settled on 09-11 and named three things that are not ours — the 2 MiB pipe size
+(compile-time, no Finch flag), the drain (a posted task), and the wedge itself (RC's own promise
+loop). **It named a fourth thing that IS ours, and nobody had looked at it: the PAGE.** A renderer
+holds its mappings for as long as its page exists, so ending the page ends them — and a page close
+needs nothing from the main thread that is wedged.
 
 `scripts/auto-cart-bot/page-wedge.mjs` is one small module and one arm in the keep-warm's existing
 watchdog timer: probe the resident page, and after `WEDGE_STRIKES` (3) consecutive no-answers at
@@ -10837,7 +10839,7 @@ nothing useful rather than as a syntax preference. **Always `AS` in a `query()` 
 > anything memory-related. Every open leak question above it is either answered or superseded.**
 >
 > #### AND SINCE 2026-09-16 THERE IS A CURE FOR THE *DURATION*, WHICH IS A DIFFERENT CLAIM
-> **Read "THE CURE: RECYCLE THE WEDGED **PAGE**, NOT THE BROWSER" for the measurements.** In one
+> **Read "THE CURE: RECYCLE THE WEDGED PAGE, NOT THE BROWSER" for the measurements.** In one
 > line: probe the resident page with a **bounded** `page.evaluate`, and after three consecutive
 > no-answers close the page — measured at **1,052 mappings released in 86 ms**, and validated end
 > to end against the reproduction at `233 -> 0`. It is first in the watchdog timer because it is

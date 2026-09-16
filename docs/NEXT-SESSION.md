@@ -276,7 +276,7 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
 ### 2.6 THE CURE (2026-09-16) — it cures the DURATION, not the burst
 
 `scripts/auto-cart-bot/page-wedge.mjs` plus one arm in the keep-warm's existing watchdog timer.
-**`CLAUDE.md` → "THE CURE: RECYCLE THE WEDGED **PAGE**, NOT THE BROWSER" is the full account.**
+**`CLAUDE.md` → "THE CURE: RECYCLE THE WEDGED PAGE, NOT THE BROWSER" is the full account.**
 
 Probe the resident page with a **bounded** `page.evaluate('1')`; after **3 consecutive**
 no-answers at a **10 s** cadence, close the page. A renderer holds its mappings for as long as
