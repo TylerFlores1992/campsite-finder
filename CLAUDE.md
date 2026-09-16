@@ -15863,6 +15863,53 @@ for Review*, held by the banner *"no other items submitted can be accepted or ap
   reviewer raises it. **The Play description was not given the same links**; Google has never
   cited this and there is no evidence to encode.
 
+###### SAVING THE METADATA DOES NOT RESOLVE THE ITEM — `Update Review` DOES (2026-09-15, resubmitted)
+The entry above says the fix is two lines in one field, and it is. **Getting the fixed field back
+to Apple took a control nobody here had named**, and the sequence is worth having because the
+obvious reading of the UI is wrong at exactly one step.
+
+The Description was pasted, saved and confirmed — `Save` greyed out, counter reading 286 — and
+**`Resubmit to App Review` stayed GREY**, under *"Unresolved Issues"* and a banner reading *"Your
+app version was rejected and no other items submitted can be accepted or approved."* Saving
+metadata does not resolve the rejected ITEM; the version has to be pushed back into the
+submission, and **`Update Review` at the top right of the version page is what does it.** Resubmit
+went live the moment it was pressed.
+
+- **`docs/APP-STORE.md` §2e PREDICTED THE OPPOSITE AND IS STRUCK THERE.** It read *"the likeliest
+  reading is that it enables once the version's issue is addressed — i.e. after step 1"*, labelled
+  as an inference. **Written in the morning, falsified the same afternoon** — and it is the kind
+  that costs a session, because a reader who believes it concludes the save failed and re-pastes a
+  3,714-character field instead of looking at the other button.
+- **APPLE'S HELP CALLS IT `Add for Review`; THE CONSOLE CALLS IT `Update Review`.** *Manage a
+  submission with unresolved issues* gives step 4 as *"Make the necessary changes, then click **Add
+  for Review**"*, and a version already attached to a submission renders that same slot as **Update
+  Review**. **Match on POSITION, never the label** — top right of the version page, beside Save.
+- **TWO IRREVERSIBLE CONSTRAINTS, BOTH IN APPLE'S OWN TEXT.** *"You can edit items in a submission
+  only once before resubmission"* — so `Update Review` is a **one-shot** and everything must be
+  right before it is pressed; a greyed `Save` is the check that the edit is committed. And
+  *"Removed items cannot be added back to the same submission"* — **never press Remove**, which
+  would strand a subscription outside this submission permanently, i.e. the 09-14 draft trap made
+  unrecoverable.
+- **THE COUNTER READS REMAINING, NOT USED, AND 286 LOOKS LIKE A FAILED PASTE.** 4,000 − 286 =
+  **3,714**, which is `docs/appstore-description.txt` exactly minus its trailing newline. Same
+  behaviour the notes field showed on 08-17 (`-18` against a 4,018-character draft). **A number two
+  orders of magnitude below the expected one is the most re-pasteable false alarm available** —
+  state the expected REMAINING figure, not the used one.
+- **APPLE'S HELP PAGES ARE REACHABLE FROM A SESSION AND SETTLED THIS IN TWO CALLS.** The 09-14
+  lesson held: reading `developer.apple.com/help/app-store-connect/**` beats describing the UI from
+  a model of it. **One guessed URL returned a soft 404 with HTTP 200 first** — the recorded trap;
+  grep the body for `Page Not Found`, because the status code is a false positive here.
+- **AND THE APP INFORMATION PAGE ANSWERS THE CUSTOM-EULA QUESTION POSITIVELY.** §2e could only say
+  "confirm the License Agreement field is empty", which nobody here can read. It does not read
+  empty — it reads **"Apple's Standard License Agreement"**, which is the *positive* form and is
+  stronger: ASC is naming the same agreement the description now links to.
+
+**RESUBMITTED: `e77ec119-c61f-4e2c-87d0-da4f98859958`, all six items *Waiting for Review*, same
+binary `1.0 (27)`.** It is the identical container as the 09-14 six-item fix — confirmed by its id
+and its `Date Submitted Sep 14, 2026 at 9:35 PM`, not by counting the rows a second time. **This
+was the third submission in a row adjudicated by an automated pre-check**, so the IAP flow, the
+demo account and the replacement review notes are still unreviewed by a human.
+
 ### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
 **This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
 on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that

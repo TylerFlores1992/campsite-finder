@@ -281,22 +281,55 @@ proxy** (a policy denial, confirmed in `recentRelayFailures`, not a dead URL —
 a link being FUNCTIONAL, so a dead one fails the same check twice.** Open it once in a
 browser before submitting.
 
-### Resubmitting — the six items should stay six
+### Resubmitting — MEASURED 2026-09-15, and saving the Description is NOT enough
 
 Metadata is editable on a **Rejected** version, which is what makes this a text edit rather
-than a new build. The sequence:
+than a new build. **The sequence that actually worked**, in this order:
 
-1. App Store Connect -> the version page -> **Description** -> paste
-   `docs/appstore-description.txt` in full.
-2. Open the standard EULA URL in a browser and confirm it loads.
-3. App Review -> the submission -> **Resubmit to App Review**.
+1. App Information -> **License Agreement**: confirm it reads *"Apple's Standard License
+   Agreement"*. That is the **positive** form of "no custom EULA" and is stronger than an
+   empty field — ASC is naming the same agreement the description links to.
+2. Open the standard EULA URL and confirm it loads. Use **Apple's own hyperlink** in the
+   rejection, then check the URL bar matches what the description carries: the document
+   being right and *our URL* being right are two different claims.
+3. The version page -> **Description** -> select all, delete, paste
+   `docs/appstore-description.txt` in full -> **Save**.
+4. The version page -> **Update Review** (top right, beside a now-greyed Save).
+5. App Review -> the submission -> **Resubmit to App Review**, with `Items Submitted`
+   reading **6**.
 
-**That button was GREYED OUT in the rejection screenshot**, beneath *"Unresolved Issues"*.
-The likeliest reading is that it enables once the version's issue is addressed — i.e. after
-step 1 — but **that is an inference and nobody here can see the console.** If it stays grey
-after the Description is saved, do not hunt for a hidden control: the page's own footer and
-its ACTION column are where ASC keeps the ones that look absent, which cost two wrong
-answers on 09-14.
+**THE COUNTER READS REMAINING, NOT USED.** 3,714 characters pasted shows as **286**, and a
+number two orders of magnitude below the expected one is the most re-pasteable false alarm
+available. `4000 - 286 = 3,714` is the file exactly, minus its trailing newline. Same
+behaviour the notes field showed on 08-17 (`-18` against a 4,018-character draft).
+
+~~**That button was GREYED OUT in the rejection screenshot.** The likeliest reading is that
+it enables once the version's issue is addressed — i.e. after step 1.~~ **FALSIFIED THE SAME
+DAY.** The Description was pasted, saved and confirmed (`Save` greyed, counter 286) and
+**Resubmit stayed grey.** Saving metadata does not resolve the rejected ITEM — the version
+has to be pushed back into the submission, and **step 4 is what does it.** Struck rather
+than deleted: it was an inference recorded beside the warning not to trust inferences, and a
+reader who believes it concludes the save failed and re-pastes the field instead of looking
+at the other button.
+
+**APPLE'S HELP CALLS THAT BUTTON `Add for Review`; THE CONSOLE CALLS IT `Update Review`.**
+*Manage a submission with unresolved issues* gives step 4 as *"Make the necessary changes,
+then click **Add for Review**"*, and a version already attached to a submission renders that
+same slot as **Update Review**. **Match on POSITION, never the label.** The confirmation it
+was the right control is that Resubmit goes live immediately afterwards.
+
+**TWO IRREVERSIBLE CONSTRAINTS, BOTH IN APPLE'S OWN TEXT.**
+- *"You can edit items in a submission only once before resubmission."* **`Update Review` is
+  a one-shot**; everything must be right before it is pressed, and a greyed `Save` is the
+  check that the edit is committed.
+- *"Removed items cannot be added back to the same submission."* **Never press Remove.** It
+  strands a subscription outside this submission permanently — the 09-14 draft trap made
+  unrecoverable.
+
+**`developer.apple.com/help/app-store-connect/**` IS REACHABLE FROM A SESSION AND SETTLED
+THIS IN TWO CALLS**, after one guessed URL returned a **soft 404 with HTTP 200** — grep the
+body for `Page Not Found`, because a status code is a false positive on that host. The 09-14
+lesson held: read Apple's own pages rather than describing the UI from a model of it.
 
 **`Items Submitted (6)` IS THE TELL, AND IT IS THE ONE THAT WENT WRONG LAST TIME.** On
 2026-09-14 the four subscriptions sat in a separate draft, the rejection page's resubmit
@@ -305,6 +338,20 @@ see `CLAUDE.md` -> *"'ADD FOR REVIEW' PUTS A SUBSCRIPTION IN A DRAFT THAT NEEDS 
 VERSION"*. That is already fixed here: all six are in **this** submission, so resubmitting
 carries them. **Count them before pressing it.** Six means the earlier fix held; one means
 it has come apart again and the subscriptions are back in a draft.
+
+### SENT AND RESUBMITTED 2026-09-15 — owner-reported, six items
+
+Submission `e77ec119-c61f-4e2c-87d0-da4f98859958`, all six items **Waiting for Review**, the
+*Unresolved Issues* banner gone, **same binary `1.0 (27)`**. It is the identical container as
+the 09-14 six-item fix — confirmed by its id and its `Date Submitted Sep 14, 2026 at 9:35
+PM`, not by counting the rows a second time. The Resolution Center reply above was sent
+before the resubmit; every claim in it was verified first rather than asserted (App
+Information reads *"Apple's Standard License Agreement"*, and the EULA URL was opened and
+returned the real document).
+
+**THIS IS THE THIRD SUBMISSION RUNNING ADJUDICATED BY AN AUTOMATED PRE-CHECK**, so the IAP
+flow, the demo account and the replacement review notes are all still unreviewed by a human.
+A pass here is the first time any of them is actually looked at.
 
 ### What was NOT changed, and the risk that remains
 
