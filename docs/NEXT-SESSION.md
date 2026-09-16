@@ -37,7 +37,7 @@ Three things that will bite in the first ten minutes:
 
 | | |
 |---|---|
-| master | `800865b` (#343) — **verify against `origin/master`, this line ages** |
+| master | `9970a97` (#346) — **verify against `origin/master`, this line ages** |
 | mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11). **A BOT-SIDE UPDATE IS NOW GENUINELY OWED — #336 changed `ramp-bail.mjs`, `ramp-arm-probe.mjs` and `bot-commands.mjs`** — so `autocart.bot_version` correctly reads *"MISSING bot-side changes"*. **That is EXPECTED and is not a fault, and it needs NO action: the box updates itself in the 02:00-05:00 PT quiet window, which is how it took `a68a6d2` overnight on 09-11.** Do NOT press "Update now" — a forced update ends the RC session for nothing. Confirm arrival with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
 | last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
 | **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
@@ -287,26 +287,33 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
   later updated the SAME row (Apple keeps `original_transaction_id` stable inside a subscription
   group). CLAUDE.md → "THE APPLE PURCHASE CHAIN IS PROVEN". **What is still unexercised is a REAL
   `PRODUCTION` purchase**, carrying the two known gaps below.
-- **APPLE REJECTED `1.0 (27)` ON 2026-09-15 — 3.1.2, no Terms of Use (EULA) link in the App Store
-  metadata — AND THE FIX IS WAITING ON ONE CONSOLE PASTE.** An AUTOMATED pre-check, so **nothing
-  about the app was adjudicated** for the third submission running; the other five items are held
-  behind the version. The description genuinely carried no ToU, EULA or Privacy link at all —
-  checked, not conceded — and that requirement did not exist before the four IAP products joined a
-  submission, so nothing regressed. `docs/appstore-description.txt` now carries both links
-  (3,715/4,000) and `src/lib/store-listing.test.mts` guards it.
-  **THE OWNER'S THREE STEPS: paste the .txt into the version's Description; open the standard EULA
-  URL once to confirm it loads; Resubmit to App Review with `Items Submitted` reading SIX.**
-  Reply text and the standard-versus-custom EULA decision are in `docs/APP-STORE.md` §2e;
-  CLAUDE.md → "REJECTED A FIFTH TIME, BY A MACHINE, OVER TWO MISSING LINES" is the finding.
-  - **`www.apple.com` IS PROXY-BLOCKED, so the EULA URL cannot be verified from a session** —
-    take it from the letter's own hyperlink in Resolution Center. The rejection is about a link
-    being FUNCTIONAL, so a dead one fails the same check twice. (`developer.apple.com` answers,
-    **and serves its "Page Not Found" with HTTP 200** — grep the body, do not trust the status.)
-  - **`Items Submitted (6)` is the tell.** Six means the 09-14 draft fix held; one means the
-    subscriptions are back in a separate draft — CLAUDE.md → "\"ADD FOR REVIEW\" PUTS A
-    SUBSCRIPTION IN A DRAFT".
-  - **The plausible NEXT rejection is the in-app disclosure**, which was deliberately not touched;
-    it is `1.0 (27)`'s web layer, so a push fixes it with no rebuild.
+- **iOS `1.0 (27)` IS BACK IN THE QUEUE — RESUBMITTED 2026-09-15, SIX ITEMS, NOTHING OUTSTANDING.**
+  Apple rejected it that morning on **3.1.2**, no Terms of Use (EULA) link in the App Store
+  metadata — an AUTOMATED pre-check, so **nothing about the app was adjudicated** for the third
+  submission running. The description genuinely carried no ToU, EULA or Privacy link at all
+  (checked, not conceded), and the requirement did not exist before the four IAP products joined a
+  submission, so nothing regressed. Fixed with two lines in one field; `src/lib/store-listing.test.mts`
+  guards it. Submission `e77ec119-c61f-4e2c-87d0-da4f98859958`, all six **Waiting for Review**,
+  same binary. **There is no console work pending — do not go looking for any.**
+  - **THE STEP THAT IS NOT OBVIOUS, AND WHICH §2e PREDICTED WRONG: saving the Description does NOT
+    enable `Resubmit to App Review`.** The version has to be pushed back into the submission with
+    **`Update Review`** (top right of the version page; Apple's help calls that slot *Add for
+    Review* — **match on POSITION, not the label**). Resubmit went live the instant it was pressed.
+    CLAUDE.md → "SAVING THE METADATA DOES NOT RESOLVE THE ITEM".
+  - **`Update Review` IS A ONE-SHOT** (*"you can edit items in a submission only once before
+    resubmission"*) and **Remove is irreversible** (*"removed items cannot be added back to the same
+    submission"*). Both are Apple's own words; the second would make the 09-14 draft trap permanent.
+  - **The Description counter reads REMAINING**: 3,714 pasted shows as **286**, which looks exactly
+    like a truncated paste and is not one.
+  - **`www.apple.com` IS PROXY-BLOCKED** — the EULA URL cannot be verified from a session; take it
+    from the letter's own hyperlink. (`developer.apple.com` IS reachable and settled the resubmit
+    question in two calls — **but serves its "Page Not Found" with HTTP 200**, so grep the body.)
+  - **The plausible NEXT rejection is the in-app disclosure**, deliberately not touched: 3.1.2 also
+    wants title, length, price and Privacy/Terms links in the BINARY, and `StorePaywall` plus the
+    `(app)` footer put all five on screen **by layout rather than by design**, guarded by nothing.
+    It is `1.0 (27)`'s web layer, so a push fixes it with no rebuild.
+  - **WHAT IS STILL UNVERIFIED AND MATTERS IF IT PASSES:** build 27 has **zero installs**, so
+    nobody has walked the paywall on the binary the reviewer gets. Worth doing while it queues.
   Standing facts, unchanged — and read CLAUDE.md → "THE SUBMISSION STATE, WRITTEN DOWN BECAUSE IT
   LIVED ONLY IN A CHAT" before touching anything: **SBP approved at 15%** (no price change needed
   — the four products were already on the 15% column), **§4e is 7-of-7** while that file still
