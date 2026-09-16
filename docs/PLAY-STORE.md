@@ -350,6 +350,100 @@ identity and then refused the action, so steps 3 and 5 are already correct.
 very first release for a package that Play has never seen; that only applies once, and
 CampHawk is already past it (`app.camphawk.mobile`, last upload 2026-08-04).
 
+## 0e. The Google Cloud side — THREE projects, and the live one is the unbilled one (2026-09-16)
+
+§0b tells you to create the publisher service account in the Firebase project and not to
+make a second one. **That instruction was not followed at some point, or predates some
+earlier attempts: there are THREE Cloud projects with near-identical names, and two of
+them have a billing account attached.** Read off the console 2026-09-16:
+
+| Name | Project ID | Billing |
+|---|---|---|
+| Camp Hawk | `camp-hawk` | **My Billing Account** |
+| Camp Hawk | `camp-501802` | **My Billing Account** |
+| CampHawk | `campapp-39c4b` | **Billing is disabled** ← the live one |
+
+**THE ONE WE ACTUALLY USE IS THE ONE WITH NO BILLING, AND PRODUCTION SAYS SO ITSELF** —
+this is not inferred from the console, it is what the running app reports:
+
+```
+$ curl -s https://camphawk.app/api/health/status
+delivery:push_web | ok | FCM service account loads (project campapp-39c4b), matching the worker
+delivery:push     | ok | FCM credential valid — access token minted for project campapp-39c4b
+```
+
+That is `push.ts` printing `sa.project_id` out of the live `FCM_SERVICE_ACCOUNT` credential,
+so it is the project the FCM calls actually go to. **Re-check it with that one curl** rather
+than by opening a console — the health route names it on every read.
+
+- **`FCM_SERVICE_ACCOUNT` IS A VERCEL ENV VAR AND IS NOT IN AN AGENT SESSION'S ENVIRONMENT.**
+  `printenv` finds nothing, so a session cannot read the project id locally and must ask
+  production. That is worth knowing before concluding the credential is missing — the
+  CLAUDE.md rule that "the credentials are process env vars, there is no `.env` file" is
+  true of the DB and Twilio keys and **not** of this one.
+- Firebase's own **Usage and billing** for that project reads **Spark / Project cost:
+  No-cost / "hasn't used any billable Firebase services recently"**, which agrees.
+- **"Billing is disabled" is a STRONGER statement than "$0.00 this month."** It means the
+  project structurally cannot charge, not that it happened not to. Do not settle for the
+  cost figure when the billing column is right there.
+
+### The billing account is a FREE TRIAL, expiring ~2026-09-28
+
+One billing account, type **Direct**, status Active, showing **`$0.00` cost for September
+1-16** and a banner: *"Upgrade your account to avoid a break in service ($300.00 credit and
+12 days left in your trial)."* **12 days from 2026-09-16 is ~2026-09-28** — that date is
+arithmetic off a banner, not a date the console stated, so treat it as approximate.
+
+- **A TRIAL CANNOT CHARGE THE CARD.** Google requires an explicit *Upgrade* click before any
+  charge is possible, so "has Google Cloud ever cost us anything" is answered by the ACCOUNT
+  TYPE and not by the $0.00 — the same shape as the billing-disabled reading above. The
+  $0.00 is corroboration, and it covers only the current month.
+- **THE BILLING ACCOUNT ID IS DELIBERATELY NOT RECORDED HERE.** It appears in the console URL
+  and it is an identifier rather than a credential, but **this repository is public**, and a
+  Firebase project id is public by construction (it ships inside `google-services.json` in
+  the app binary) where a billing account id is not. Find it at
+  <https://console.cloud.google.com/billing>.
+
+### RECOMMENDATION: let the trial lapse. Do NOT upgrade.
+
+Nothing CampHawk uses needs a billing account:
+
+- **FCM push** already runs with billing disabled, on Spark, verified working above.
+- **The Play Developer API** (`androidpublisher.googleapis.com`) has no charge.
+
+**Upgrading is the act that creates the ability to be charged.** The trial expiring returns
+the two stray projects to the state the live project is already in and has always been in.
+
+**THE ONE THING TO CHECK FIRST — where does the publisher service account live?**
+<https://console.cloud.google.com/iam-admin/serviceaccounts>, switched across all three
+projects; you want the account you invited into Play Console (§0b step 4), not the default
+Firebase ones. It is also recoverable from the `client_email` inside the JSON pasted into
+Codemagic, which ends `@<project-id>.iam.gserviceaccount.com`.
+
+- **In `campapp-39c4b`** → nothing to think about; that project has no billing to lose.
+- **In `camp-hawk` or `camp-501802`** → note which, and treat **the first `android-release`
+  build after the trial lapses as the test.** Service accounts and no-charge APIs are
+  expected to survive a billing account closing — **that is general Google behaviour and has
+  NOT been tested on this setup, so do not write it down as established.** If the publish
+  step returns *"The caller does not have permission"*, re-enabling billing on that one
+  project is the fix, and §0b's warning applies: that wording reads like a Play permissions
+  problem and sends you to the wrong console.
+
+**The failure mode is a red CI step, not a silent one**, which is what makes "let it lapse
+and watch" an acceptable trade rather than a gamble.
+
+**PREFER UNLINKING BILLING TO DELETING A PROJECT.** Deleting takes any service account inside
+it along with it, and that surfaces weeks later as a broken Android publish with no obvious
+cause. The trial lapsing unlinks both stray projects for you, so the likely correct action is
+**none at all**.
+
+### A session cannot read any of this
+
+`gcloud` is not installed and the billing console is human-only, so every figure above came
+from owner screenshots. **The one machine-readable fact is the FCM project id**, from the
+health route. Everything else needs somebody at a console — which is why it is written down
+here rather than re-derived.
+
 ## 1. Country availability — US only
 
 **IT CANNOT BE SET UNTIL PRODUCTION ACCESS IS GRANTED.** Verified in the console
