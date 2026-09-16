@@ -7663,6 +7663,39 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
   `closed the wedged page in Nms`, then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED`
   beneath it. A `request-counts` event with `reason: 'wedge-recycle'` carries what that page was
   asking for; the counter resets on the reopen, so it is the only record.
+- **THE LEVER FOR THE FIRST FIRING IS `restart-rc`, NOT A TEST HOLD.** A forced restart makes a
+  COLD browser loading RC's home page — the shape the 02:0x cluster turned out to be — and it is
+  **2-for-2** against a 10% pooled base rate, with no campsite locked, no password submitted and
+  no Okta precondition. The warm-up route is 3-in-7 and spends a password submission from an
+  address that has eaten a twelve-hour block. **Pace forced restarts at ~15 minutes**:
+  `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves the RC pair dead.
+- **THE SERIES IS THE CORROBORATING INSTRUMENT HERE, NOT THE PRIMARY ONE.** The ~32 GiB commit
+  step still happens — the burst completes in ≤34 s, faster than any detector — but a ramp cleaned
+  up at ~30 s can fit **entirely between two two-minute samples**, leaving one elevated row or
+  none. **Do not read a quiet `chromium_memory_samples` as the arm not firing**; read the log and
+  `bot_events` first. What the series should show if it does fire is a peak **below the 3,000 MB
+  the bail arm has been capping at**, and a return to baseline within about one tick rather than
+  after ~2 minutes.
+- **TWO PREDICTED FAILURE MODES, WRITTEN DOWN BEFORE THE FIRST RUN SO THEY CAN BE FALSIFIED.**
+  1. **A FLAPPING PAGE NEVER REACHES THREE STRIKES.** One `alive` reading resets the counter to
+     zero by design — `wedgeDecision`'s own words are *"a page that answered is the end of the
+     episode, whatever came before it"* — so a renderer that answers once between two silences can
+     ramp indefinitely with no recycle. **The container wedge was TOTAL** (`evaluate` answered
+     before and was silent after), so flapping was never exercised and this is untested in both
+     directions. The repair, if it happens, is a decaying counter rather than a reset — and that is
+     a deliberate change, because the reset is what stops an ordinary reopen being read as a wedge.
+  2. **THE ARM IS SILENT ON THE HEALTHY PATH, so "ran and found the page alive" and "never ran"
+     write the same nothing.** That is the house shape, accepted here only because the
+     discriminator is free: the arm runs unconditionally on every tick while not bailing, so
+     **`bot-ask git-status` showing the new sha rules out "never ran"** without a log line. What
+     it cannot separate is `alive` from `inconclusive`; that is worth one line only if a later
+     firing is genuinely ambiguous.
+- **AND A PROBE THAT KEEPS ANSWERING THROUGH A RAMP WOULD BE A FINDING, NOT A BROKEN ARM.** It
+  would mean the mapping happens while the resident page is still responsive to CDP, against the
+  09-09 VMTHREAD reading (main thread `Running`, 1,203 ms of a 1,200 ms window, four for four) and
+  against `alloc trail [resident]: EMPTY` over a whole 165 s browser life. **Expected not to
+  happen** — a wedged main thread is per-renderer and same-site pages share it — which is exactly
+  what makes it worth recording if it does.
 
 ##### AND THE REQUEST COUNTER IS BLIND TO A WEDGED PAGE — measured, and it may be the "quiet ramps"
 Found while building the above, and it was not the thing being looked for: with a page wedged and
@@ -10857,9 +10890,14 @@ nothing useful rather than as a syntax preference. **Always `AS` in a `query()` 
 >   burst still maps 16,384 sections in ≤34 s and a detector that must first observe silence acts
 >   at ~30 s. What it changes is how long a wedged page HOLDS them: seconds, instead of the 120 s
 >   ramp arm or the 12-minute `HUNG_MS` arm killing the whole browser.
-> - **UNPROVEN IN PRODUCTION.** Container-local Chromium, synthetic wedge, and it is **bot-side**
->   so it is inert until the box updates. The first firing is a `♻` line in `logs\rc-keepwarm.log`
->   with no `✗ RAMP` beneath it.
+> - **UNPROVEN IN PRODUCTION, AND VERIFYING IT IS THE NEXT ACTION.** Container-local Chromium
+>   (141/Linux) against a synthetic wedge, against a box running 149/Windows — the platform pair
+>   that burned the native sampler twice. It is **bot-side**, so it is inert until the box takes
+>   it, and **`autocart.bot_version` now genuinely reads "MISSING bot-side changes"**: that warn is
+>   real for the first time in a fortnight and is worth acting on. **Update the box, confirm with
+>   `bot-ask git-status`, then force a ramp with `restart-rc`** (2-for-2, no campsite, no password
+>   submission), and read the log. The predicted readings and the two predicted failure modes are
+>   written down in the cure's own section so they can be falsified.
 > - **`page.reload()` IS NOT THE LEVER** — on the same wedged page it hung past its own timeout and
 >   had to be killed at 70 s. Close, not navigate.
 >

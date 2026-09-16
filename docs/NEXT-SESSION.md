@@ -33,20 +33,42 @@ Three things that will bite in the first ten minutes:
 
 ---
 
+## 0.5 DO THIS FIRST — the cure is merged and has never run in production
+
+**There is genuine bot-side code in the gap for the first time in a fortnight** (the page-wedge
+arm, #355), so the standing *"never press Update now"* advice does not apply to this one. The
+ordered task, and **§2.6 is the full account of what it is and how to read it**:
+
+1. **Update the box**, then confirm with `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts
+   git-status` — **never `autocart.bot_version`**. Check `autocart.rc_runner` says **no holds
+   due** first: an update inside 6h of a release is refused, and it ends the RC session either
+   way (~11 min to repair itself unattended).
+2. **Force a ramp.** `restart-rc` is the cheap lever and is **2-for-2** against a 10% pooled base
+   rate — no campsite, no password submission, no Okta precondition. **Pace it at ~15 minutes**:
+   `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves the RC pair dead.
+3. **Read the first firing** — §2.6 states the three outcomes and what each one means, with the
+   predicted readings written down *before* the run so they can be falsified.
+
+**If it does not fire, that is a reading and not a dead end** — §2.6 names what each silence
+would mean and which instrument answers it.
+
+---
+
 ## 1. State — re-verified 2026-09-16, 09:20 PT
 
 | | |
 |---|---|
-| master | `e92a5a6`. **No open PRs. One open issue, #243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). **Verify against `origin/master`, this line ages.** |
-| mini-PC | **`7bce397`; web is `e92a5a6`. `autocart.bot_version` WARNS, and as of #355 it will read "MISSING bot-side changes" rather than "no bot-side code in the gap" — because there now genuinely IS some: `page-wedge.mjs` and the arm in `rc-keepwarm.mjs`. That is expected and is still NOT a reason to force an update.** No hold is queued, so the 02:00-05:00 PT quiet window is open and the box takes it by itself overnight — which is how the last bot-side change arrived. The 09-11 handover said a bot-side update was owed; **that one arrived by itself in the quiet window**, which is the mechanism working. **Do NOT press "Update now"** — a forced update ends the RC session for nothing. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
-| health | **16 of 19 ok.** Overall reads `degraded`, which is simply what three warns render as. All three are the documented-benign set — see below. |
+| master | `1b877df`. **No open PRs. One open issue, #243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). **Verify against `origin/master`, this line ages.** |
+| mini-PC | **`7bce397`; web is `1b877df`.** `autocart.bot_version` warns, and as of #355 it reads **"MISSING bot-side changes"** rather than "no bot-side code in the gap" — because for the first time in a fortnight there genuinely IS some: `page-wedge.mjs` and the arm in `rc-keepwarm.mjs`. **So this is the one warn that IS worth acting on, and §0.5 is the ordered task.** It still costs the RC session (~11 min to repair itself unattended) and is still refused inside 6h of a release, so check `autocart.rc_runner` says *no holds due* first. The box also takes it by itself in the 02:00-05:00 PT quiet window — which is how the last bot-side change arrived — so waiting is free if nothing needs testing; **the cure needs testing.** Confirm with `bot-ask git-status`, never this column (it COALESCEs and can show a stale sha beside a live heartbeat). |
+| health | **16 of 19 ok.** Overall reads `degraded`, which is simply what three warns render as. **Two of the three are the documented-benign set; `bot_version` is not, as of #355** — see below. |
 | fleet | worker heartbeat **6s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**; watchdog **both tasks firing**. |
 | holds | **none live, and none at all in the last 24h** — the readout prints `0 row(s)`, which is the ordinary quiet state and not a broken query. So the **02:00–05:00 PT update window is open**. |
 | login rehearsal | **PASSING four nights running** — ✓ 09-13, 09-14, 09-15 and **09-16 03:00**. The bot can still sign itself in; this is the standing evidence for it. |
 | the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* IS CURED — still NOT eliminated.** §2. The page-wedge arm (2026-09-16) closes a wedged page and releases its mappings in seconds; A is built, B is answered and off, **C is now built**. |
 | migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left in it** — the main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 
-**ALL THREE WARNS ARE ORDINARY AND EACH HAS A DESTRUCTIVE-LOOKING REMEDY — do not act on any of them.**
+**TWO OF THE THREE WARNS ARE ORDINARY AND EACH HAS A DESTRUCTIVE-LOOKING REMEDY — do not act on
+those two. The third changed on 2026-09-16 and is now real.**
 
 - **`autocart.rc_session` — dead 3h00m, `okta session GONE (404)`.** This is the ordinary
   between-releases state with nothing queued: the RC token lives ~1h, and `maybeAutoLogin` gets a
@@ -56,10 +78,11 @@ Three things that will bite in the first ten minutes:
 - **`autocart.rc_login` — "no rehearsal has PASSED in 12h25m".** A 03:53 run **skipped** because the
   browser had just been killed (*"a rehearsal now would test the restart, not the login"*), so the
   last PASS is 03:00 the same morning. A stand-down is not a failure.
-- **`autocart.bot_version` — box `7bce397`, web `71c4afc`.** Its own detail reads *"No bot-side code
-  in the gap"*, and the gap really is three docs PRs. **Do not press "Update now"** — a forced
-  update ends the RC session to ship nothing, and a genuine bot-side change arrives by itself in
-  the quiet window. Confirm with `bot-ask git-status`, never this column.
+- **`autocart.bot_version` — box `7bce397`, web `1b877df`. THIS ONE IS NO LONGER BENIGN, and it is
+  the only one of the three that changed.** Its detail read *"No bot-side code in the gap"* while
+  the gap was three docs PRs; #355 put real bot-side code in it, so it now reads **"MISSING
+  bot-side changes"** and means what it says. **Act on it — §0.5.** The other two bullets above
+  stand unchanged, and their remedies are still the destructive ones not to reach for.
 
 **AND DO NOT READ A RED `autocart.rc_session` WITHIN A FEW MINUTES OF A MERGE AS A REAL DEAD
 SESSION.** A numeric `carted` test fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT`, so
@@ -213,9 +236,11 @@ what would settle it.
   never been read for a ramping renderer, and the cap proves it is base shared memory.
 - **Spending a ramp on the memory dump.** A wedged renderer contributes ZERO allocator dumps at
   every level — settled off-box by `dump-wedge-probe.mjs`.
-- **Forcing a ramp.** It is 3-in-6, spends the warm-up's one turn per Okta lifetime, and costs a
-  password submission from an address that has eaten a twelve-hour block. Nothing outstanding
-  needs one.
+- **Forcing a ramp *through the warm-up*.** That route is **3-in-7**, spends the warm-up's one
+  turn per Okta lifetime, and costs a password submission from an address that has eaten a
+  twelve-hour block. **`restart-rc` is a different lever with different costs and is NOT covered
+  by this line** — it is 2-for-2, needs no Okta precondition and locks no campsite, and §0.5 is
+  the one thing outstanding that needs a ramp.
 - **Lowering `LOW_RAM_MB`, lowering `MEM_DUMP_STALL_MS`, parking the resident page, building
   Track B.** Each is refused for a recorded reason in `CLAUDE.md`.
 - **Enlarging the pagefile. The precondition was settled on 2026-09-11 and the answer is
@@ -302,11 +327,53 @@ its page exists, and a close needs nothing from the thread that is wedged.
 - **IT DOES NOT ELIMINATE THE LEAK, and §2.0 stands unchanged.** The burst maps 16,384 sections in
   ≤34 s; a detector that must first observe silence acts at ~30 s. What changes is how long a
   wedged page HOLDS them.
-- **UNPROVEN IN PRODUCTION.** Container-local Chromium (141/Linux) against a synthetic wedge, and
-  it is **bot-side** — inert until the box updates, which it does in its own quiet window.
-  **Confirm with `bot-ask git-status`, never `autocart.bot_version`.** First firing: a `♻` line in
-  `logs\rc-keepwarm.log`, then `closed the wedged page in Nms`, with **no** `✗ RAMP` beneath it.
-  A `request-counts` event with `reason: 'wedge-recycle'` carries what that page was asking for.
+- **UNPROVEN IN PRODUCTION.** Container-local Chromium (141/Linux) against a synthetic wedge,
+  against a box running 149/Windows — the platform pair that burned the native sampler twice.
+  It is **bot-side**, so it is inert until the box takes it. **Confirm with `bot-ask
+  git-status`, never `autocart.bot_version`.**
+
+#### How to force the first firing, and what each outcome means
+
+**The lever is `restart-rc`, not a test hold.** A forced restart makes a COLD browser loading
+RC's home page, which is the shape the 02:0x cluster turned out to be, and it is **2-for-2**
+against a 10% pooled base rate — no campsite, no password submission, no Okta precondition.
+**Pace it at ~15 minutes**: `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves
+the RC pair dead. n=2, so it is a working lever and not a rate.
+
+**The predictions are written down BEFORE the run, per the house rule, so they can be falsified:**
+
+| | expected |
+|---|---|
+| `logs\rc-keepwarm.log` | `♻ no answer in 3 consecutive probes…`, then `token on the way out: …`, then **`closed the wedged page in Nms`** — the container measured 86 ms |
+| the arms below it | **NO `✗ RAMP` and NO `✗ WEDGED`.** The arm acts at ~30 s (3 strikes × 10 s); the ramp arm needs 120 s and `HUNG_MS` twelve minutes |
+| `bot_events` | a `request-counts` row with `reason: 'wedge-recycle'`, rendered **with the bails** rather than below the teardown baseline |
+| `chromium_memory_samples` | **the ~32 GiB commit step still happens** — the burst completes in ≤34 s, faster than any detector — but it should return to baseline within about one sampler tick instead of staying up for ~2 minutes, and the `rc_mb` peak should sit **below the 3,000 MB the bail arm has been capping at**, plausibly below 1,500 |
+
+**A 2-minute sampler can miss a ramp that is cleaned up in 30 seconds entirely**, leaving one
+elevated sample or none. So the series is the *corroborating* instrument here and the log and
+`bot_events` are the primary ones — do not read a quiet series as the arm not firing.
+
+**THREE WAYS IT CAN STAY SILENT, and they need different responses:**
+
+1. **`✗ RAMP` with no `♻` above it — the probe kept ANSWERING.** That is a real finding rather
+   than a broken arm: it would mean the mapping happens while the resident page is still
+   responsive to CDP, which contradicts the 09-09 VMTHREAD reading (main thread `Running`, 4
+   for 4) and the `alloc trail [resident]: EMPTY` line. **Expected not to happen**, because a
+   wedged main thread is per-renderer and same-site pages share it — but it is the interesting
+   outcome if it does.
+2. **A FLAPPING page never reaches three strikes.** One `alive` reading resets the counter to
+   zero by design (`wedgeDecision`: *"a page that answered is the end of the episode"*), so a
+   renderer that answers once between two silences can ramp indefinitely without a recycle.
+   **The container wedge was total** — `evaluate` answered before and was silent after — so
+   flapping was never exercised. If this is what happens, the fix is a decaying counter rather
+   than a reset, and it is a deliberate change, not a tweak: resetting is what stops an ordinary
+   reopen being read as a wedge.
+3. **The arm is SILENT on the healthy path, so "ran and found the page alive" and "never ran"
+   write the same nothing.** That is the house shape and it is accepted here, because the
+   discriminator costs nothing: the arm runs unconditionally every tick while not bailing, so
+   **`bot-ask git-status` showing the new sha is what rules out "never ran"**. What it cannot
+   tell apart is `alive` from `inconclusive`. Worth one log line if a second firing is ever
+   ambiguous; not worth building before the first one.
 
 ## 3. Other things open — all detail is in `CLAUDE.md`
 
