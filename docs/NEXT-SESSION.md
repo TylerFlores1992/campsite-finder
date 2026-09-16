@@ -33,29 +33,33 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — verified 2026-09-16, 05:30 PT
+## 1. State — re-verified 2026-09-16, 09:20 PT
 
 | | |
 |---|---|
-| master | `7bce397`. **No open PRs. One open issue, #243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). **Verify against `origin/master`, this line ages.** |
-| mini-PC | **`7bce397` — box and web AGREE**, `autocart.bot_version` **ok**. The 09-11 handover said a bot-side update was owed; **it arrived by itself in the quiet window**, which is the mechanism working. **Do NOT press "Update now"** — a forced update ends the RC session for nothing. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
-| health | **17 of 19 ok.** Overall reads `degraded`, which is simply what two warns render as. Both warns are the documented-benign set — see below. |
-| fleet | worker heartbeat **1s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**; watchdog **both tasks firing**. |
-| holds | **none live.** One row in the last 24h — Carpinteria SB #R331, released 09-15 08:00 PT, `expired`, **never tapped**, which is not a fault. So the **02:00–05:00 PT update window is open**. |
-| login rehearsal | **PASSING daily** — ✓ 09-13, 09-14, 09-15 and **09-16 03:00**. The bot can still sign itself in; this is the standing evidence for it. |
+| master | `71c4afc`. **No open PRs. One open issue, #243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). **Verify against `origin/master`, this line ages.** |
+| mini-PC | **`7bce397`; web is `71c4afc`, so `autocart.bot_version` WARNS — and its own detail says "No bot-side code in the gap", which is the documented not-worth-acting-on case. Everything between the two shas is docs.** The 09-11 handover said a bot-side update was owed; **that one arrived by itself in the quiet window**, which is the mechanism working. **Do NOT press "Update now"** — a forced update ends the RC session for nothing. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
+| health | **16 of 19 ok.** Overall reads `degraded`, which is simply what three warns render as. All three are the documented-benign set — see below. |
+| fleet | worker heartbeat **6s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**; watchdog **both tasks firing**. |
+| holds | **none live, and none at all in the last 24h** — the readout prints `0 row(s)`, which is the ordinary quiet state and not a broken query. So the **02:00–05:00 PT update window is open**. |
+| login rehearsal | **PASSING four nights running** — ✓ 09-13, 09-14, 09-15 and **09-16 03:00**. The bot can still sign itself in; this is the standing evidence for it. |
 | the leak | **DIAGNOSED AND CONTAINED, NOT FIXED** — unchanged. §2. Option A is built, option B is answered and off; what remains is §2.5. |
-| migrations | highest **`078`**. **Main's block is `077-079`, so exactly ONE number is left in it** — the main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
+| migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left in it** — the main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 
-**BOTH WARNS ARE ORDINARY AND BOTH HAVE A DESTRUCTIVE-LOOKING REMEDY — do not act on either.**
+**ALL THREE WARNS ARE ORDINARY AND EACH HAS A DESTRUCTIVE-LOOKING REMEDY — do not act on any of them.**
 
-- **`autocart.rc_session` — dead 7h23m, `okta session GONE (404)`.** This is the ordinary
+- **`autocart.rc_session` — dead 3h00m, `okta session GONE (404)`.** This is the ordinary
   between-releases state with nothing queued: the RC token lives ~1h, and `maybeAutoLogin` gets a
   new one at T−30 of a real hold. **The hold readout prints "only a human sign-in restores it" and
   that line must not be acted on** — `rc-login.bat` force-kills the Chromium the token lives in,
   and that reading has sent people to the box twice over sessions that repaired themselves.
-- **`autocart.rc_login` — "no rehearsal has PASSED in 8h37m".** A 03:53 run **skipped** because the
+- **`autocart.rc_login` — "no rehearsal has PASSED in 12h25m".** A 03:53 run **skipped** because the
   browser had just been killed (*"a rehearsal now would test the restart, not the login"*), so the
   last PASS is 03:00 the same morning. A stand-down is not a failure.
+- **`autocart.bot_version` — box `7bce397`, web `71c4afc`.** Its own detail reads *"No bot-side code
+  in the gap"*, and the gap really is three docs PRs. **Do not press "Update now"** — a forced
+  update ends the RC session to ship nothing, and a genuine bot-side change arrives by itself in
+  the quiet window. Confirm with `bot-ask git-status`, never this column.
 
 **AND DO NOT READ A RED `autocart.rc_session` WITHIN A FEW MINUTES OF A MERGE AS A REAL DEAD
 SESSION.** A numeric `carted` test fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT`, so
@@ -267,6 +271,20 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
   - **The Oct 8 deadline is real but not urgent** — three weeks of margin, and the row is right,
     so nothing is lost by taking it deliberately.
 
+- **THE ANDROID "SEP 30" DEADLINE EMAIL IS ANSWERED — REGISTERED, 3 KEYS, ALL VERIFIED. DO NOT
+  RE-OPEN IT (2026-09-16).** Google sent a final reminder threatening *"removed from Google Play
+  globally"*; the Play Console reads **✓ Registered, `app.camphawk.mobile`, Keys 3, all Verified,
+  updated Aug 1** — a month before the reminder. It was auto-registered because the app publishes
+  an **AAB** and therefore necessarily uses Play App Signing. **Nothing is owed.**
+  - **The email and the docs describe TWO mechanisms sharing one date, and quoting either alone
+    misleads.** *Registration* is global and its consequence is removal; *install-time
+    enforcement* is BR/ID/SG/TH-only until 2027. **Quote the row, not the date** — CLAUDE.md →
+    "ANDROID DEVELOPER VERIFICATION".
+  - Open only if the sideload APK ever becomes a real channel: three registered keys is more than
+    the app signing key alone, so the `camphawk_upload` key is very likely among them — **Play
+    Console → Setup → App integrity** lists both certificates in full and would settle it in one
+    look. Not now.
+
 - **One screenshot outstanding, and only the owner can take it.** The Android 16 safe-area fix is
   deployed and web-side, but `env()` is 0 in headless Chromium and this container cannot reach the
   live site, so **nothing has seen it on a phone.** Open `/claim` or `/privacy` on the Pixel; the
@@ -391,6 +409,20 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
   touches neither the assertion nor the release timing. **Do NOT instead push the fixture's
   `release_at` out**; the near release is load-bearing and moving it makes the guard flaky in the
   direction that reads green. It is `worker/**`, so verifying restarts all three pollers.
+- **`hold-line.test.mts` FAILS 4-11 TESTS AGAINST PRODUCTION AND THE DIFF IS USUALLY INNOCENT
+  (2026-09-16).** A docs-only branch came back `# fail 4`; the same suite alone gave **8 on
+  master, then 0 on the very next run**, with different test NAMES each time. The failing names
+  are all `dueHolds` and `rankHoldLine` — **both of which run in production against the same
+  table** (`rankHoldLine` every poller cycle, `dueHolds` every 15s from the box), so this is the
+  `reclaimLapsedHolds` test-versus-production class and serializing the lanes cannot prevent it.
+  - **I NEARLY FILED #343 AS THE CAUSE and the evidence was excellent** — the commit before it
+    passed 28/28 while master failed 8, and #343 touches `auth.ts`, `poller.ts` and adds a
+    migration. **Master then passed 28/28 on the next run.** One extra command separated a
+    regression from timing. Re-run before believing a pairing.
+  - **Do NOT loosen the assertions.** They cover the 08-26 double-cart, where the bot carted one
+    campsite twice for two different users. Why it got heavier is **not established** — the
+    obvious candidate is live hold rows, and nobody looked.
+
 - **Recorded, not fixed — do not drive-by any of these:** neither containment arm can fire during
   a ramp; the RDR request burst (69,060 asks, zero answers of any kind); the fixed-sentinel test
   fixtures in `sync-claim`/`ridb-photos`/the hold suites; a pre-migration-070 watch silently
@@ -409,6 +441,17 @@ that restarts the box, `sms-link-test.mts --send`.
   push has a named cause: re-run in a clean window rather than hunting.
 - **A third writer no lane starts:** the Nightly RIDB Sync writes the catalog for ~38 minutes and
   is started by nobody. Check `actions_list` before reading a red CI as a regression.
+- **AND THE TWO LANES' CI RUNS OVERLAP FOR THE FULL SUITE — MEASURED 2026-09-16, 9m09s.**
+  Different branches are different concurrency groups, so **nothing cancels either**: a side-lane
+  run (16:22:07→16:33:07) and a main-lane run (16:21:54→16:31:16) both ran `npm test` against the
+  production DB start to finish, and mine came back `# fail 1` of 2207 on a **one-Markdown-file
+  diff**. The same tree passed **2207/2207 locally in a clean window**, and the re-run was green.
+  - **This is the branch-vs-branch case**, not the push-vs-pull_request one above and not the
+    Nightly Sync — check `actions/runs?per_page=12` for the OTHER lane's window before blaming
+    either. **Both lanes being active is the normal state**, so this is not an edge case.
+  - **The failing NAME was below `get_job_logs`' cap** (the visible window opened at `ok 2160`),
+    so the name is unreachable through CI and `npm test > log 2>&1` locally is the only route —
+    which doubles as the clean-window evidence a legitimate re-run needs.
 - **Two sessions can be the SAME lane** — the branch name does not distinguish them and
   `ListAgents` cannot see a sibling elsewhere. An empty list is not exclusive use of the database.
 
