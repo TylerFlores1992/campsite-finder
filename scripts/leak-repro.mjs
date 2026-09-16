@@ -43,6 +43,11 @@
 import { chromium } from 'playwright-core';
 import { readFileSync, readdirSync } from 'node:fs';
 import http from 'node:http';
+// THE CURE, exercised here rather than described. These are the SHIPPED exports, not a copy:
+// a rig that reimplements the decision proves the rig works.
+import {
+  probeResidentPage, wedgeDecision, WEDGE_STRIKES,
+} from './auto-cart-bot/page-wedge.mjs';
 
 const CAND = process.argv[2] ?? 'control-idle';
 const SECS = Number(process.argv[3] ?? 20);
@@ -129,11 +134,11 @@ try {
   // Fire and forget: the main thread may never return, so this promise may never settle.
   page.evaluate(CANDIDATES[CAND]).catch(() => {});
 
+  const top = () => Math.max(0, ...chromeProcesses().map(([p]) => count2MiBShared(p)?.n ?? 0));
   const series = [];
   for (let t = 2; t <= SECS; t += 2) {
     await new Promise((r) => setTimeout(r, 2000));
-    const top = Math.max(0, ...chromeProcesses().map(([p]) => count2MiBShared(p)?.n ?? 0));
-    series.push(`${t}s:${top}`);
+    series.push(`${t}s:${top()}`);
   }
   console.log('  series:', series.join(' '));
   console.log('  per process:');
@@ -153,6 +158,38 @@ try {
     (peak >= 200 ? '  <<< CLIMBING — reproduces'
       : peak > 0 ? '  (a handful — in-flight pipes, not the shape)'
         : '  FLAT'));
+
+  /**
+   * AND NOW THE CURE, ON THE SAME WEDGED PAGE (`--fix`).
+   *
+   * The control for this arm is the run above: unless it CLIMBED there is nothing to cure and
+   * a `0` afterwards would be the question never having been reached. Refuses on that.
+   */
+  if (process.argv.includes('--fix')) {
+    {
+      let strikes = 0, reading = null;
+      const t0 = Date.now();
+      for (let i = 0; i < WEDGE_STRIKES + 2 && strikes < WEDGE_STRIKES; i++) {
+        reading = await probeResidentPage(page);
+        ({ strikes } = wedgeDecision({ reading, strikes }));
+      }
+      const d = wedgeDecision({ reading, strikes: strikes - 1 });
+      console.log(`  FIX: probe=${reading} strikes=${strikes} act=${d.act} after ${Date.now() - t0}ms`);
+      const before = top();
+      const closeT0 = Date.now();
+      await page.close({ runBeforeUnload: false }).catch((e) => console.log('       close threw:', e.message.split('\n')[0]));
+      await new Promise((r) => setTimeout(r, 2500));
+      const after = top();
+      // THE VERDICT REFUSES WHAT IT HAS NOT EARNED. Releasing nothing proves nothing, so a
+      // run the reproduction never got going on reports that rather than a cure — the same
+      // rule `rc-probe.mjs --concurrent-mint` learned by publishing a race that never raced.
+      const cured = after === 0 && before >= 200;
+      console.log(`  FIX: mappings ${before} -> ${after} in ${Date.now() - closeT0}ms`
+        + (cured ? '   <<< CURED'
+          : before < 200 ? '   <<< THE QUESTION WAS NEVER REACHED (it was not leaking)'
+            : '   <<< DID NOT RELEASE'));
+    }
+  }
 } finally {
   await browser.close().catch(() => {});
   srv.close();

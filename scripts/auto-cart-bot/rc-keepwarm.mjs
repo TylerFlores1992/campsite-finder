@@ -99,6 +99,9 @@ import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
 import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
+import {
+  probeResidentPage, wedgeDecision, WEDGE_PROBE_EVERY_MS, WEDGE_MAX_RECYCLES,
+} from './page-wedge.mjs';
 import { createRequestCounter, describeRequestCounts } from './rc-request-count.mjs';
 import { readLatestMemory, rampBailDecision, rampBailLine, rampDumpGrace, MEM_DUMP_GRACE_MS_DEFAULT, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
 import { takeMemoryDump, renderMemDump, summariseMemDump } from './rc-mem-dump.mjs';
@@ -2654,6 +2657,12 @@ async function warmResident() {
     // there; null until then, which `collectHeapFacts` reports as "no page to ask" rather
     // than throwing inside a setInterval where nothing would catch it.
     let residentPage = null;
+    /**
+     * THE WEDGE ARM'S STATE. See page-wedge.mjs for why this arm exists and what was measured.
+     * `inFlight` is not optional: once the page goes quiet EVERY probe costs its full timeout,
+     * so without it they pile up one per tick — the lesson the heap trail already paid for.
+     */
+    let wedge = { strikes: 0, recycles: 0, inFlight: false, lastProbe: 0 };
     // Opened at launch while the browser is healthy — see collectHeapFacts. Negotiating a new
     // CDP session at trip time is what produced `no answer in 3000ms` on the first real firing.
     let heapProbe = null;
@@ -2893,6 +2902,42 @@ async function warmResident() {
         })();
       };
       /**
+       * CLOSE THE WEDGED PAGE. This is the cure, and it is three lines of consequence.
+       *
+       * THE TOKEN GOES FIRST, BOUNDED — the same call and the same reason as `reportAndBail`
+       * and the runner's preemption path. It will usually time out here, because a page that
+       * will not answer a probe will not answer this either; that is correct rather than
+       * wasteful, and 2 s is the price of the case where the page is slow rather than gone.
+       *
+       * THE CLOSE IS `runBeforeUnload: false` AND BOUNDED. A wedged renderer cannot run an
+       * unload handler, so asking it to is how a close inherits the hang it is meant to end.
+       *
+       * IT ALSO UNSTICKS THE LOOP, WHICH IS WHY NOTHING HERE HAS TO KNOW HOW TO REBUILD A
+       * BROWSER. Whatever the loop is awaiting on this page rejects with "Target closed", it
+       * falls into its own `catch`, and the existing reopen path runs — the same one the
+       * post-Okta recycle and the size guard use. And with the page gone the renderer is gone,
+       * so `ctx.close()` in that `finally` has nothing left to wait for: a `browser.close()`
+       * against a still-wedged renderer is what hung the probe this arm was measured with.
+       */
+      const recycleWedgedPage = async (why) => {
+        log(`♻ ${why}`);
+        const kept = await Promise.race([
+          persistLiveToken(residentPage).catch(() => 'error'),
+          new Promise((r) => setTimeout(() => r('timeout'), 2000)),
+        ]);
+        log(`  token on the way out: ${kept}`);
+        const t0 = Date.now();
+        await Promise.race([
+          residentPage?.close({ runBeforeUnload: false }).catch(() => {}),
+          new Promise((r) => setTimeout(r, 5000)),
+        ]);
+        log(`  closed the wedged page in ${Date.now() - t0}ms — the loop reopens from here`);
+        // The counts are the only record of what that page was asking for, and the reopen
+        // resets the counter. Fire-and-forget: a diagnostic that delays the cure has
+        // inverted the priority, which is the rule the bail's own block is careful about.
+        void reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'wedge-recycle' }));
+      };
+      /**
        * THE STALL TRIGGER, BEFORE EVERY ARM AND CONSULTING NO FILE.
        *
        * See MEM_DUMP_STALL_MS for why this exists at all: four ramps were lost to a trigger
@@ -2917,6 +2962,53 @@ async function warmResident() {
         memDump.ramp = false;
         memDump.landed = false;
         memDump.graceUntil = null;
+      }
+      /**
+       * THE PAGE-WEDGE ARM — FIRST, CHEAPEST, AND THE ONLY ONE THAT ASKS THE PAGE ITSELF.
+       *
+       * Every arm below reads the LOOP's clock, and two of them additionally read a file
+       * another process writes every two minutes. None of them can see a wedged page inside
+       * the <=34 s the 32 GiB burst takes. This one asks the renderer directly, needs no file,
+       * and its action is a page close rather than a process exit — see page-wedge.mjs for
+       * the measurements (1,052 mappings released in 86 ms on a page that would not answer,
+       * and `page.reload()` on the same page hanging past its own timeout).
+       *
+       * IT IS FIRST BECAUSE IT IS CHEAP. The arms below cost the RC session ~11 minutes; this
+       * costs one RC page load, and the thing it destroys is already dead — a wedged resident
+       * page answers no CDP, so `checkAndReport` cannot read it and `readLiveToken` cannot
+       * reach `window.__camphawkRcToken`. Giving the expensive arms first refusal would mean
+       * spending a session on something a close fixes.
+       *
+       * FIRE-AND-FORGET WITH AN IN-FLIGHT FLAG, like the heap trail beside it. The timer must
+       * never await — that is its whole value — and once the page goes quiet every probe costs
+       * its full timeout, so without the flag they pile up one per tick.
+       */
+      if (!bailing && !wedge.inFlight && Date.now() - wedge.lastProbe >= WEDGE_PROBE_EVERY_MS) {
+        wedge.inFlight = true;
+        wedge.lastProbe = Date.now();
+        void probeResidentPage(residentPage)
+          .then((reading) => {
+            const d = wedgeDecision({
+              reading, strikes: wedge.strikes, recycles: wedge.recycles,
+              maxRecycles: WEDGE_MAX_RECYCLES,
+            });
+            wedge.strikes = d.strikes;
+            if (d.act === 'recycle') {
+              // Count it BEFORE the await, or two overlapping recycles both read the old
+              // count and the budget never binds.
+              wedge.recycles += 1;
+              wedge.strikes = 0;
+              void recycleWedgedPage(d.why);
+            } else if (d.act === 'escalate' && !bailing) {
+              reportAndBail(
+                `✗ WEDGED PAGE — still unresponsive after ${wedge.recycles} page recycle(s).`,
+                '  (see the wedged-page lines above)',
+                'wedge-page',
+              );
+            }
+          })
+          .catch(() => {})
+          .finally(() => { wedge.inFlight = false; });
       }
       /**
        * THE WEDGE ARM, CHECKED FIRST. A twelve-minute stall is the more specific diagnosis
@@ -3111,6 +3203,11 @@ async function warmResident() {
       // context, a new page and a new renderer, so last life's baseline describes nothing.
       browserLifeSince = Date.now();
       memDump = { baseline: false, ramp: false, inFlight: false, landed: false, graceUntil: null };
+      // PER BROWSER LIFE, for the same reason memDump is: a reopen is a new page and a new
+      // renderer, so last life's strikes describe a page that no longer exists — and the
+      // recycle budget has to start over or three recycles across a long night would retire
+      // the arm permanently.
+      wedge = { strikes: 0, recycles: 0, inFlight: false, lastProbe: 0 };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
       mark('initial RC load');
