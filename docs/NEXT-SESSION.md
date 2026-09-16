@@ -33,25 +33,29 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 1. State — 2026-09-11 (leak session)
+## 1. State — verified 2026-09-16, 05:30 PT
 
 | | |
 |---|---|
-| master | `9970a97` (#346) — **verify against `origin/master`, this line ages** |
-| mini-PC | **`a68a6d2`** (`bot-ask git-status`, 2026-09-11). **A BOT-SIDE UPDATE IS NOW GENUINELY OWED — #336 changed `ramp-bail.mjs`, `ramp-arm-probe.mjs` and `bot-commands.mjs`** — so `autocart.bot_version` correctly reads *"MISSING bot-side changes"*. **That is EXPECTED and is not a fault, and it needs NO action: the box updates itself in the 02:00-05:00 PT quiet window, which is how it took `a68a6d2` overnight on 09-11.** Do NOT press "Update now" — a forced update ends the RC session for nothing. Confirm arrival with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
-| last ramp | **2026-09-11 05:28 UTC, on a browser 611 MINUTES OLD** — five times older than any previously recorded, because ten hours of renewal silence meant nothing recycled it. **It breaks the age framing**: old and burst-free on both axes that defined the 09-10 17:53 JIT outlier, yet its `VMSTACK` reads like a young one (22 distinct of 48, JIT down to 2, `HandlerAdded` carrying 28). So neither age nor burst presence predicts the stack profile, and trip type is the only surviving candidate. Walk: 14,434 regions / 14,433 bases / 28,868 MB, all anonymous — a `middle` event that stopped **1,950 short of 2^14 with thousands of MB of headroom**. Ramp dump `target-silent` for the **fourth** time (`MDPROC` has 8 pids, the walk's TARGET 14676 is not one) — **do not spend another ramp on it.** See CLAUDE.md → "AND THE BROWSER THAT RAMPED WAS 611 MINUTES OLD". |
-| **the overnight answer** | **TAKEN, and it is the strongest form: 599.8 minutes — ten hours — with ZERO `bot_events` of any kind** (19:31:28 → 05:31:15 UTC), while `chromium_memory_samples` posted **312 samples** across the same window. That is the healthy self-renewing regime holding overnight, and **the silence is itself the proof the token never lapsed** — `planRenewal` acts on `leftS <= 0`, so ten hours of no trips means every poll found a live token, i.e. RC's SPA re-minted silently and unaided. *(It proves a non-expired token was present, not that RC would have ACCEPTED one — `session_ok` is a different fact.)* Then it **resumed and failed exactly as predicted**: 11.5m, 11.3m (minGap), then **31.5-minute backoffs for six hours straight**. The 96% failure rate watched forward instead of computed backward. CLAUDE.md → "THE OVERNIGHT ANSWER IS IN". |
-| health | 16 of 19 ok, **and all three warns are the documented-benign set**: `autocart.rc_session` (RC rejects the token — the ordinary between-releases state, the token lives ~1h and `maybeAutoLogin` restores it at T−30), `autocart.bot_version` (the box has not picked up #336 yet — see the mini-PC row), and `autocart.rc_login` (a rehearsal STAND-DOWN, not a failure). **Above all do not run `rc-login.bat`** — it force-kills the Chromium the token lives in, and that reading has sent people to the box twice over sessions that repaired themselves. |
-| fleet | 3/3 shards held, 12 watches, heartbeat 5s — checked after #336's worker deploy |
-| holds | **none live**, so the 02:00-05:00 PT update window is open |
-| **the leak** | **DIAGNOSED AND CONTAINED, NOT FIXED.** 6 onsets in the 48h to 09-11, `bail:ramp` on all 6, peak `rc_mb` 4,661 MB (was 8-9 GB), free RAM never under 5,140 MB. **The residual is COMMIT**, and as of #336 **option A is BUILT and option B is ANSWERED AND OFF** — §2.2. What is left is a named, measured, NOT-STARTED piece of work: §2.5. |
-| migrations | highest `076`; **main's block `077-079`, side lane `080+`** |
+| master | `7bce397`. **No open PRs. One open issue, #243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). **Verify against `origin/master`, this line ages.** |
+| mini-PC | **`7bce397` — box and web AGREE**, `autocart.bot_version` **ok**. The 09-11 handover said a bot-side update was owed; **it arrived by itself in the quiet window**, which is the mechanism working. **Do NOT press "Update now"** — a forced update ends the RC session for nothing. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
+| health | **17 of 19 ok.** Overall reads `degraded`, which is simply what two warns render as. Both warns are the documented-benign set — see below. |
+| fleet | worker heartbeat **1s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**; watchdog **both tasks firing**. |
+| holds | **none live.** One row in the last 24h — Carpinteria SB #R331, released 09-15 08:00 PT, `expired`, **never tapped**, which is not a fault. So the **02:00–05:00 PT update window is open**. |
+| login rehearsal | **PASSING daily** — ✓ 09-13, 09-14, 09-15 and **09-16 03:00**. The bot can still sign itself in; this is the standing evidence for it. |
+| the leak | **DIAGNOSED AND CONTAINED, NOT FIXED** — unchanged. §2. Option A is built, option B is answered and off; what remains is §2.5. |
+| migrations | highest **`078`**. **Main's block is `077-079`, so exactly ONE number is left in it** — the main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 
-**ALL THREE WARNS ARE ORDINARY AND EACH HAS A DESTRUCTIVE-LOOKING REMEDY — do not act on any of
-them.** `autocart.bot_version` says *"MISSING bot-side changes"* because #336 is bot-side and the
-box has not reached its quiet window yet; it clears by itself. `autocart.rc_session` reading dead
-between releases is the RC token's ~1h life. `autocart.rc_login` standing down inside its own
-once-per-20h gate is a stand-down, not a failure. **Above all do not run `rc-login.bat`.**
+**BOTH WARNS ARE ORDINARY AND BOTH HAVE A DESTRUCTIVE-LOOKING REMEDY — do not act on either.**
+
+- **`autocart.rc_session` — dead 7h23m, `okta session GONE (404)`.** This is the ordinary
+  between-releases state with nothing queued: the RC token lives ~1h, and `maybeAutoLogin` gets a
+  new one at T−30 of a real hold. **The hold readout prints "only a human sign-in restores it" and
+  that line must not be acted on** — `rc-login.bat` force-kills the Chromium the token lives in,
+  and that reading has sent people to the box twice over sessions that repaired themselves.
+- **`autocart.rc_login` — "no rehearsal has PASSED in 8h37m".** A 03:53 run **skipped** because the
+  browser had just been killed (*"a rehearsal now would test the restart, not the login"*), so the
+  last PASS is 03:00 the same morning. A stand-down is not a failure.
 
 **AND DO NOT READ A RED `autocart.rc_session` WITHIN A FEW MINUTES OF A MERGE AS A REAL DEAD
 SESSION.** A numeric `carted` test fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT`, so
@@ -247,6 +251,22 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
 
 ## 3. Other things open — all detail is in `CLAUDE.md`
 
+- **THE CANCELLATION BADGE STILL CANNOT SEE THE ONE CANCELLING SUBSCRIBER — NAMED, MEASURED, AND
+  NOT STARTED ON THE OWNER'S INSTRUCTION (2026-09-16).** Migration 078 is merged and deployed, the
+  owner has run the reconcile, it changed **exactly one row**, and **the data in the database is
+  correct**. Every admin surface still shows nothing, because all four gates read
+  `cancel_at_period_end` and Stripe reports this one as a **dated** cancellation:
+  `cancel_at = 2026-10-08`, flag **false**. Stripe has two independent ways to end a subscription
+  and a non-null `cancel_at` does not imply the flag.
+  - **IT IS NOT A RECONCILE BUG AND NOT A DATA BUG** — both fields are read off one Stripe object
+    in one statement, checked in source. **Do not go looking there.**
+  - The repair is `COALESCE(cancel_at_period_end, false) OR cancel_at IS NOT NULL`, and the three
+    caveats that make it more than a one-liner (four copies of the predicate, the live-row filter,
+    the missing mirror fixture) are in CLAUDE.md → **"THE CANCELLATION BADGE MISSES THE ONLY
+    CANCELLING SUBSCRIBER"**.
+  - **The Oct 8 deadline is real but not urgent** — three weeks of margin, and the row is right,
+    so nothing is lost by taking it deliberately.
+
 - **One screenshot outstanding, and only the owner can take it.** The Android 16 safe-area fix is
   deployed and web-side, but `env()` is 0 in headless Chromium and this container cannot reach the
   live site, so **nothing has seen it on a phone.** Open `/claim` or `/privacy` on the Pixel; the
@@ -295,6 +315,13 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
   submission, so nothing regressed. Fixed with two lines in one field; `src/lib/store-listing.test.mts`
   guards it. Submission `e77ec119-c61f-4e2c-87d0-da4f98859958`, all six **Waiting for Review**,
   same binary. **There is no console work pending — do not go looking for any.**
+  - **ONE UNREAD SIGNAL QUALIFIES THAT SENTENCE, AND ONLY THE OWNER CAN SETTLE IT.** An Apple email
+    dated **Sep 15**, *"There's an issue with your CampHawk: Campsite Alerts (iOS) submission"*,
+    sits against a build submitted **Sep 14 21:35 PT**. On the dates it is most likely the 3.1.2
+    rejection already described above arriving by mail — but it could equally be newer, and
+    **nobody in a session can open App Store Connect to tell the two apart.** One look at the
+    submission's state answers it. Recorded rather than resolved; do not guess a verdict into the
+    docs. (The store consoles are the SIDE lane's surface.)
   - **THE STEP THAT IS NOT OBVIOUS, AND WHICH §2e PREDICTED WRONG: saving the Description does NOT
     enable `Resubmit to App Review`.** The version has to be pushed back into the submission with
     **`Update Review`** (top right of the version page; Apple's help calls that slot *Add for
@@ -393,6 +420,12 @@ that restarts the box, `sms-link-test.mts --send`.
   `not ok` line. Two false greens from one command.
 - **Read the instrument before reasoning about the code.** The failures here are overwhelmingly
   instruments that were running and unread.
+- **Check a Sentry issue's TIMESTAMP before reading it as live.** CAMPHAWK-N (*"no unique or
+  exclusion constraint matching the ON CONFLICT specification"* on `/api/webhooks/revenuecat`) is
+  dated **Sep 14 — before #340 added the partial-index predicate that fixes it.** CAMPHAWK-M and
+  CAMPHAWK-K are Server Action staleness, the ordinary consequence of a deploy. **`sentry` is an
+  unauthorized MCP server here** — it needs an interactive `/mcp` authorization, so those readings
+  came from the web UI and cannot be re-taken in a session.
 - **Compute elapsed time in SQL**, never by subtracting a rendered label from a clock read
   elsewhere. This produced a wrong "1h50m" against a true 6.09h on 09-10.
 - **`GITHUB_TOKEN` is a 14-character placeholder and `/user` returns 200** — a false positive.
