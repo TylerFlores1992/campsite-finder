@@ -441,6 +441,17 @@ that restarts the box, `sms-link-test.mts --send`.
   push has a named cause: re-run in a clean window rather than hunting.
 - **A third writer no lane starts:** the Nightly RIDB Sync writes the catalog for ~38 minutes and
   is started by nobody. Check `actions_list` before reading a red CI as a regression.
+- **AND THE TWO LANES' CI RUNS OVERLAP FOR THE FULL SUITE — MEASURED 2026-09-16, 9m09s.**
+  Different branches are different concurrency groups, so **nothing cancels either**: a side-lane
+  run (16:22:07→16:33:07) and a main-lane run (16:21:54→16:31:16) both ran `npm test` against the
+  production DB start to finish, and mine came back `# fail 1` of 2207 on a **one-Markdown-file
+  diff**. The same tree passed **2207/2207 locally in a clean window**, and the re-run was green.
+  - **This is the branch-vs-branch case**, not the push-vs-pull_request one above and not the
+    Nightly Sync — check `actions/runs?per_page=12` for the OTHER lane's window before blaming
+    either. **Both lanes being active is the normal state**, so this is not an edge case.
+  - **The failing NAME was below `get_job_logs`' cap** (the visible window opened at `ok 2160`),
+    so the name is unreachable through CI and `npm test > log 2>&1` locally is the only route —
+    which doubles as the clean-window evidence a legitimate re-run needs.
 - **Two sessions can be the SAME lane** — the branch name does not distinguish them and
   `ListAgents` cannot see a sibling elsewhere. An empty list is not exclusive use of the database.
 
