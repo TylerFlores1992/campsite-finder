@@ -15910,6 +15910,41 @@ and its `Date Submitted Sep 14, 2026 at 9:35 PM`, not by counting the rows a sec
 was the third submission in a row adjudicated by an automated pre-check**, so the IAP flow, the
 demo account and the replacement review notes are still unreviewed by a human.
 
+###### `hold-line.test.mts` FAILS 4-11 TESTS AGAINST PRODUCTION NOW, AND I NEARLY FILED A REGRESSION ON ONE PAIRING (2026-09-16)
+A docs-only branch — three Markdown files — came back `# fail 4` on a full `verify`. The diff
+cannot reach `worker/`, so the three conditions were applied, and the second one is where this
+gets interesting: **the suite does not pass alone, reliably, on ANY commit.** Same command, same
+sha, minutes apart:
+```
+origin/master  hold-line alone   # fail 8      then, re-run   # fail 0
+branch         hold-line alone   # fail 4
+branch         three suites      # fail 9      then, re-run   # fail 11  (different NAMES each time)
+89fa077        hold-line alone   # fail 0
+```
+- **THE FAILING NAMES ARE ALL `dueHolds` AND `rankHoldLine`** — *"dueHolds serves ONE hold per
+  campsite"*, *"ONCE THE WINNER IS CARTED, THE RUNNER-UP IS NOT SERVED"*, *"A HOLD TAPPED AFTER THE
+  LINE WAS RANKED"*, and the errors are `Cannot read properties of undefined` on a row the test
+  had just written. **Both of those run in PRODUCTION against the same table**: `rankHoldLine` on
+  every poller cycle since the 2026-08-28 fix moved it above the claim gate, and `dueHolds` every
+  15s from the mini-PC runner. That is the `reclaimLapsedHolds` test-versus-production class, and
+  its own entry already says serializing the lanes cannot prevent it.
+- **I NEARLY FILED #343 AS THE CAUSE, AND THE EVIDENCE FOR IT WAS EXCELLENT.** `89fa077` (before
+  it) passed 28/28 while master failed 8 — a clean pairing, and #343 touches `src/lib/auth.ts`,
+  `worker/poller.ts` and adds migration 077, so a plausible mechanism was right there. **Master
+  then passed 28/28 on the very next run.** One more command separated a code regression from
+  timing, and without it the next session would have been sent to bisect a PR that is innocent.
+  Exactly the 2026-09-10 shape: *a named, true, self-implicating mechanism sitting right there is
+  the most convincing wrong answer available.*
+- **WHAT IS NEW IS THE RATE, NOT THE CLASS.** #346's own `verify` was **2182/2182** twelve hours
+  earlier. Eight of twenty-eight failing ALONE is not a flake to shrug at — it is most of the
+  suite that guards who gets a campsite when two people want it. **Why it got heavier is NOT
+  established and must not be guessed**; the obvious candidate is live hold rows in play, and
+  nobody looked.
+- **DO NOT "FIX" IT BY LOOSENING THE ASSERTIONS.** They cover the 08-26 double-cart, where the bot
+  carted one campsite twice for two different users. The honest repairs are to scope the fixtures
+  out of the production queries' reach, or to accept the race and say so — both are changes to
+  release-critical SQL and neither belongs in a docs PR.
+
 ### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
 **This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
 on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that
