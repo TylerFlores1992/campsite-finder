@@ -38,7 +38,7 @@ Three things that will bite in the first ten minutes:
 | | |
 |---|---|
 | master | `71c4afc`. **No open PRs. One open issue, #243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). **Verify against `origin/master`, this line ages.** |
-| mini-PC | **`7bce397`; web is `71c4afc`, so `autocart.bot_version` **warns** — and its own detail says *"No bot-side code in the gap"*, which is the documented not-worth-acting-on case. Everything between the two shas is `docs/**`.** The 09-11 handover said a bot-side update was owed; **that one arrived by itself in the quiet window**, which is the mechanism working. **Do NOT press "Update now"** — a forced update ends the RC session for nothing. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
+| mini-PC | **`7bce397`; web is `71c4afc`, so `autocart.bot_version` WARNS — and its own detail says "No bot-side code in the gap", which is the documented not-worth-acting-on case. Everything between the two shas is docs.** The 09-11 handover said a bot-side update was owed; **that one arrived by itself in the quiet window**, which is the mechanism working. **Do NOT press "Update now"** — a forced update ends the RC session for nothing. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
 | health | **16 of 19 ok.** Overall reads `degraded`, which is simply what three warns render as. All three are the documented-benign set — see below. |
 | fleet | worker heartbeat **6s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**; watchdog **both tasks firing**. |
 | holds | **none live, and none at all in the last 24h** — the readout prints `0 row(s)`, which is the ordinary quiet state and not a broken query. So the **02:00–05:00 PT update window is open**. |
@@ -48,7 +48,7 @@ Three things that will bite in the first ten minutes:
 
 **ALL THREE WARNS ARE ORDINARY AND EACH HAS A DESTRUCTIVE-LOOKING REMEDY — do not act on any of them.**
 
-- **`autocart.rc_session` — dead 7h23m, `okta session GONE (404)`.** This is the ordinary
+- **`autocart.rc_session` — dead 3h00m, `okta session GONE (404)`.** This is the ordinary
   between-releases state with nothing queued: the RC token lives ~1h, and `maybeAutoLogin` gets a
   new one at T−30 of a real hold. **The hold readout prints "only a human sign-in restores it" and
   that line must not be acted on** — `rc-login.bat` force-kills the Chromium the token lives in,
