@@ -502,8 +502,8 @@ if (closes.length === 0) {
 }
 
 /**
- * REQUEST COUNTS. Bails first — they are the reading taken during a ramp — then hung closes,
- * then the newest few teardowns as the baseline to read them against.
+ * REQUEST COUNTS. Bails and wedge recycles first — they are the readings taken DURING the
+ * event — then hung closes, then the newest few teardowns as the baseline to read them against.
  */
 type TopRow = { key: string; recent: number; lifetime: number; statuses?: Record<string, number> };
 const LOOP_HITS = 100;
@@ -519,10 +519,12 @@ if (counts.length === 0) {
   // teardowns. See `requestCountReason`.
   const byReason = (r: RequestCountReason) => counts.filter((c) => requestCountReason(d(c).reason) === r);
   const bails = byReason('bail');
+  const wedges = byReason('wedge-recycle');
   const hungs = byReason('hung-close');
   const tears = byReason('teardown');
   const other = byReason('other');
-  console.log(`  ${bails.length} at a bail, ${hungs.length} on a hung close, ${tears.length} at a teardown${other.length ? `, ${other.length} other` : ''}.`);
+  console.log(`  ${bails.length} at a bail, ${wedges.length} at a wedge recycle, ${hungs.length} on a hung close, `
+    + `${tears.length} at a teardown${other.length ? `, ${other.length} other` : ''}.`);
   const show = (c: BotEventRow, full: boolean) => {
     const x = d(c);
     const top = (Array.isArray(x.top) ? x.top : []) as TopRow[];
@@ -568,6 +570,9 @@ if (counts.length === 0) {
     }
   };
   for (const c of bails) show(c, true);
+  // WITH THE BAILS, NOT WITH THE BASELINE. A wedge recycle is a reading taken DURING the event
+  // and is the only record of what that page was asking for — the counter resets on the reopen.
+  for (const c of wedges) show(c, true);
   for (const c of hungs) show(c, true);
   const baseline = showAll ? tears : tears.slice(0, 3);
   if (baseline.length) {
