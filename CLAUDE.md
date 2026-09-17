@@ -10877,6 +10877,24 @@ renewals in a throwaway tab, auto-login and warm-up stand-downs, keepalive check
   on an event. A detector that never fires is consistent with a perfect detector and with a dead
   one; only the sha separates them today.
 
+##### AND THE CLOSE HALF HAS 430 PRODUCTION CLOSES ON WINDOWS/149, NONE HUNG
+`tab-close` carries `closeMs` and `hung`, and the renewal has been closing a throwaway tab on the
+box since migration 075. Over twelve days:
+```
+430 closes   hung: 0   min 8 ms   median 14 ms   p95 16 ms   max 628 ms
+```
+- **`page.close()` COMPLETES ON THE PRODUCTION PLATFORM, EVERY TIME, IN MILLISECONDS.** That is
+  the cure's lever exercised 430 times on Windows/149 — not the container — and it removes any
+  residual doubt that the Playwright close path itself works there.
+- **THE CAVEAT IS THE WHOLE CAVEAT: every one of those pages was HEALTHY.** Closing a WEDGED page
+  is measured only in the container (1,052 mappings in 86 ms, and 1,877 in 2,532 ms). What makes
+  the transfer plausible is the mechanism rather than the sample: a close is a browser-process
+  operation and asks the wedged renderer for nothing, which is the same property that makes the
+  probe's silence diagnosable in the first place.
+- **SO A FIRING'S `closeMs` HAS A BASELINE TO BE READ AGAINST.** 8-16 ms is an ordinary close;
+  the container's wedged closes ran 86-2,532 ms; anything at the 5,000 ms bound is the race
+  timing out, which is a finding rather than a success.
+
 ##### THE DETECTION HALF HAS ONE PRODUCTION-PLATFORM ARGUMENT, AND IT IS AN IMPLICATION
 The probe is `page.evaluate` = `Runtime.evaluate`, which is **main-thread-bound** — measured
 against a control in `scripts/cdp-thread-probe.mjs`, on Chromium 141/Linux, which is the pair
