@@ -7677,13 +7677,104 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
   the bail arm has been capping at**, and a return to baseline within about one tick rather than
   after ~2 minutes.
 - **TWO PREDICTED FAILURE MODES, WRITTEN DOWN BEFORE THE FIRST RUN SO THEY CAN BE FALSIFIED.**
-  1. **A FLAPPING PAGE NEVER REACHES THREE STRIKES.** One `alive` reading resets the counter to
-     zero by design — `wedgeDecision`'s own words are *"a page that answered is the end of the
-     episode, whatever came before it"* — so a renderer that answers once between two silences can
-     ramp indefinitely with no recycle. **The container wedge was TOTAL** (`evaluate` answered
-     before and was silent after), so flapping was never exercised and this is untested in both
-     directions. The repair, if it happens, is a decaying counter rather than a reset — and that is
-     a deliberate change, because the reset is what stops an ordinary reopen being read as a wedge.
+  1. ~~**A FLAPPING PAGE NEVER REACHES THREE STRIKES** … untested in both directions.~~
+     **ANSWERED 2026-09-17 OUT OF DATA ALREADY IN `bot_events`, AND NOT BY AN EXPERIMENT.** The
+     mechanism stands as written — one `alive` reading resets the counter, by design, and the
+     repair would be a decaying counter — but **no production reading supports a flapping wedge
+     and three independent instruments point against it.** Joining every `phase: ramp` memory
+     dump against the `ramp-scan` for the same event, which nobody had done:
+     ```
+     ramp dump            ms   lead_pid  lead_shmMB   walk TARGET   verdict
+     09-07 09:04:03Z     234       7316           2          9912   DIFFERENT renderer
+     09-09 04:43:42Z   20011       9472           5          7644   DIFFERENT renderer
+     09-10 19:18:21Z   20003      11628           8         11912   DIFFERENT renderer
+     09-11 05:28:53Z   20000       1864          12         14676   DIFFERENT renderer
+     09-11 11:00:18Z     479       4996          18             -   no walk to join
+     09-15 15:16:09Z   15367       1012          10          5720   DIFFERENT renderer
+     ```
+     - **THE RAMPING RENDERER CONTRIBUTED TO NONE OF THEM, FIVE FOR FIVE.** Every dump's lead is
+       a different pid from the walk's target, holding 2-18 MB of shared memory — a healthy peer,
+       not a renderer holding 16k mappings. That is the `target-silent` shape, and it is now
+       countable rather than anecdotal.
+     - **FOUR OF THE FIVE SPENT 15-20 SECONDS WAITING.** `no answer in 20000ms` three times and
+       `Chromium refused the dump (success: false)` at 15,367 ms once — the coordinator's own
+       ~15,050 ms give-up. **Those are LOWER bounds on unbroken silence, not measurements of it:
+       the instrument stopped asking, the renderer did not start answering.**
+     - **THE DIRECT EVIDENCE IS THE ALLOC TRAIL, because it alone probes at this arm's cadence.**
+       It samples on the same watchdog tick every 10 s, and on 2026-09-09 11:30 it read
+       `EMPTY — that renderer answered no CDP call at all` **over a whole 165-second browser
+       life**. A page that answered one probe in three cannot produce that line.
+     - **AND `VMTHREAD` IS FOUR-FOR-FOUR at 100% of a core** (1,203 ms of a 1,200 ms window, main
+       thread `Running`). A thread pinned in a tight native loop does not intermittently service
+       CDP, which is the mechanism under all three readings.
+     **SO THE CURE NEEDS 30 SECONDS OF CONTINUOUS SILENCE AND THE EVIDENCE SAYS IT LASTS MINUTES.**
+     Stated at its limit: this retires flapping as a PREDICTED failure, on five joined events; it
+     is not a guarantee about an event nobody has watched with this arm armed.
+     - **AND THE ONE APPARENT PRODUCTION COUNTER-EXAMPLE IS NOT ONE — I ALMOST PUBLISHED THE
+       ONE-SIDED VERSION.** `rc-keepwarm.mjs`'s own ramp-arm comment records that on 2026-09-05 a
+       ramp ran to 8,879 MB while *"the renderer kept answering `Performance.getMetrics` all the
+       way up"*, which is why the ramp arm's condition A was inert and `HUNG_MS` ended that ramp
+       instead. Read at face value that is a responsive renderer during a ramp, i.e. a
+       `probeResidentPage` reading of `alive` and a cure that never fires. **`heapProbe` really is
+       attached to the RESIDENT page** (`attachHeapProbe(ctx, page)` on the line after
+       `residentPage = page`), so the target was right and the objection was real.
+     - **IT DIES ON WHICH THREAD SERVICES THE CALL, AND THAT IS NOW MEASURED WITH A CONTROL**
+       (`scripts/cdp-thread-probe.mjs`, Chromium 141/Linux):
+       ```
+       CONTROL healthy page              WEDGED main thread in a microtask loop
+         page.evaluate(1)      answered    page.evaluate(1)        SILENT >2000ms
+         Performance.getMetrics answered   Performance.getMetrics  ANSWERED
+         Runtime.getHeapUsage  answered    Runtime.getHeapUsage    SILENT >3000ms
+         Memory.getDOMCounters answered    Memory.getDOMCounters   SILENT >3000ms
+       ```
+       **`Performance.getMetrics` DOES NOT NEED THE MAIN THREAD.** So the 09-05 line is not
+       evidence that the main thread was running, and it is not a counter-example — **it is the
+       explanation of why condition A was blind**, which that comment records as never
+       established. `page.evaluate` is `Runtime.evaluate`: it runs JavaScript, so it is
+       main-thread-bound by construction, and of the four it is the only one that is both
+       main-thread-bound and cheap. **The cure's probe is the right call for a stated reason
+       rather than by luck.**
+     - **THE PROBE REFUSES A VERDICT IT HAS NOT EARNED, AND BOTH ARMS WERE FIRED BEFORE IT WAS
+       TRUSTED** — a method already silent on a HEALTHY page (`THE QUESTION WAS NEVER REACHED`),
+       and a wedge that did not take (`evaluate` answered when it should not have). A probe
+       nobody has seen fail proves nothing; that rule cost `--concurrent-mint` a published race
+       that never raced.
+     - **PLATFORM CAVEAT, because this file has been burned by it twice:** 141/Linux against a
+       149/Windows box. What transfers is the THREADING of a CDP domain, which is architectural.
+       **Do not read a byte count out of that probe.**
+     - **IT LIVES IN `scripts/`, NOT `scripts/auto-cart-bot/`, AND THAT IS DELIBERATE.**
+       `CH_BOT_CODE_AT` is `git log -1 -- scripts/auto-cart-bot`, so a file there makes
+       `autocart.bot_version` report the box as missing bot-side code — and the honest response
+       to that warn is a box update, **which ends the RC session**. `leak-repro.mjs` is out of
+       that directory for the same reason and says so.
+  1b. **AND A THIRD ONE NOBODY PREDICTED: `WEDGE_MAX_RECYCLES` CANNOT BIND, SO THE
+     CRASH-LOOP PROTECTION DOES NOT EXIST (found by reading, 2026-09-17).** Three facts, each
+     read in source rather than inferred:
+     - `wedge = { strikes: 0, recycles: 0, … }` is reset **on every browser reopen**
+       (`rc-keepwarm.mjs`, beside `browserLifeSince` and `memDump`), with a comment choosing
+       that deliberately — *"the recycle budget has to start over or three recycles across a
+       long night would retire the arm permanently."*
+     - **every recycle PRODUCES a reopen.** `recycleWedgedPage` closes the page precisely so
+       that whatever the loop awaits rejects with "Target closed" and the existing reopen path
+       runs; that is the arm's own stated design and why it needs no code to rebuild a browser.
+     - therefore `recycles` is **0 every time `wedgeDecision` is consulted**, and
+       `recycles >= maxRecycles` is unreachable. **`WEDGE_MAX_RECYCLES` and the `escalate`
+       branch are inert in production.**
+     **THE UNIT TEST PASSES BY SUPPLYING A VALUE PRODUCTION CANNOT** — it calls the pure
+     function with `recycles: WEDGE_MAX_RECYCLES` directly — and the guard two tests along
+     **REQUIRES the reset** (`resets.length >= 2`). So one guard asserts the branch works while
+     its sibling pins the thing that makes it unreachable: the fix-present-and-inert shape and
+     the `held-offer-scope` shape at once, in the same file.
+     **WHAT IT COSTS, STATED AT ITS SIZE:** a page that wedges immediately on every fresh
+     browser recycles → relaunches → wedges → recycles for ever, with nothing escalating to the
+     bail whose diagnostics are the whole point of escalating. `supervise.ps1`'s
+     five-exits-in-ten-minutes rule cannot catch it either, because the process never exits.
+     Reachable during an RC outage, which is a state this file records three times.
+     **RECORDED, NOT FIXED.** The honest repair is a counter that survives a reopen and
+     **DECAYS** — reset after a stretch of healthy page, not after every reopen — which
+     satisfies both the comment's concern and the budget's. That is the same shape as the
+     repair for (1) above, it is bot-side, it is on the one path between a queued hold and a
+     cart, and it was found fourteen hours before a release. Neither is a drive-by.
   2. **THE ARM IS SILENT ON THE HEALTHY PATH, so "ran and found the page alive" and "never ran"
      write the same nothing.** That is the house shape, accepted here only because the
      discriminator is free: the arm runs unconditionally on every tick while not bailing, so
