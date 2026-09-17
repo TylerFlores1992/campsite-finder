@@ -10950,6 +10950,85 @@ renewals in a throwaway tab, auto-login and warm-up stand-downs, keepalive check
   on an event. A detector that never fires is consistent with a perfect detector and with a dead
   one; only the sha separates them today.
 
+###### AND "ZERO FALSE POSITIVES" IS A BINARY WHILE THE BUDGET IS A NUMBER — THE MARGIN IS MEASURED NOW (2026-09-17)
+The entry above is the strongest thing the drought has produced and it is a **count of events that
+did not happen**. `WEDGE_PROBE_TIMEOUT_MS` is **2,000 ms**, and not one of those ~2,400 healthy
+probes said how close it came: **a page answering in 4 ms and one answering in 1,900 ms are the
+same `alive` reading**, and only the second is a detector one degraded browser away from recycling
+a healthy page — which costs an RC page load on the page an 08:00 cart depends on.
+- **IT IS THE ONLY EVIDENCE ABOUT THE CURE OBTAINABLE WITHOUT A WEDGE**, which is why it was worth
+  building during a drought rather than waiting: wedges have been absent 27+ hours and the
+  true-positive half cannot be advanced at all.
+- **THE TIMER STARTS BEFORE THE PROBE IS ISSUED.** Stamped inside the `.then` every reading is
+  ~0 ms and the instrument reports a perfect margin it never measured — the same shape as the
+  renewal measuring itself against the token it meant to replace.
+- **HEALTHY READINGS ONLY.** A `wedged` reading is ~the budget **by construction** (the race
+  resolves on the timer), so folding it in reports the timeout back as if it had measured the
+  page. Guarded, because it is the tempting simplification.
+- **ONE LINE PER BROWSER LIFE, NOT A SLOWNESS BAR.** A bar that is never crossed writes the same
+  nothing as an arm that never ran, which is the merge this instrument exists to undo. One line
+  per life is 1-3 a day against a `tail-log` window holding ~31 minutes, so it costs nothing it is
+  measuring — and it sits **inside the `worthReporting` gate**, because the hold runner's
+  preemption can run that `finally` a hundred times in twenty-one minutes.
+- **ZERO PROBES REPORTS AS AN ABSENCE, NEVER AS `0ms`.** *"The arm took no healthy reading"* and
+  *"it answered instantly every time"* are opposite facts and a bare zero merges them.
+- **BOTH FIELDS RIDE THE `tab-close` EVENT.** The log rolls in ~31 minutes; Postgres does not —
+  the lesson PR #169 already bought for the alloc readings and never applied to this.
+- **AND A FIRING NOW CARRIES THE MARGIN AT THE MOMENT IT FIRED.** A page that went from instant to
+  silent and a page that had been degrading for an hour are different events, and the first firing
+  would otherwise have been unable to tell them apart.
+- **HOW TO READ THE FIRST TEARDOWN AFTER THE BOX UPDATES:** `resident-page probe: N healthy
+  answer(s), slowest Xms of a 2000ms budget` in `logs\rc-keepwarm.log`, and `probes` /
+  `slowestAliveMs` on the `tab-close` event. **A slowest in single-digit milliseconds is the
+  detector with three orders of magnitude of headroom; a slowest in the high hundreds is a
+  warning about the threshold**, and it is a reading nobody has ever taken.
+- `src/lib/page-wedge.test.mts`, **five mutations, each verified to APPLY and to fail** — the
+  timer moved inside the `.then`, a `wedged` reading folded in, the line hoisted out of the gate,
+  zero probes rendering as `0ms`, and both fields dropped from the event. **Guards under `src/`,
+  in neither of `worker-deploy.yml`'s `paths:` lists — read, not remembered.**
+
+###### `line > gate` IS ORDERING AND READS LIKE CONTAINMENT — AND THE FIRST MUTATION FOR IT WAS A NO-OP
+Two defects in the guards above, both found by mutation-testing them twenty minutes after writing
+them, and both are shapes this file has paid for before in other costumes.
+- **THE GUARD.** It asserted the margin line's index was greater than the `if (worthReporting) {`
+  index. **That is ORDERING**, and a line moved below the `} else {` — i.e. hoisted out of the
+  gate entirely, the exact regression it exists for — satisfies it perfectly. **Verified: the
+  first version passed against that move.** It slices the gate's BODY now (`if (worthReporting) {`
+  to the `} else {` that closes it). ~30th time a guard here has anchored on the wrong thing, and
+  the first where the wrong anchor was a RELATION rather than a string.
+- **THE MUTATION.** The first attempt at that move inserted a `void 0;` beside the line instead of
+  moving it — so the file changed, the harness reported `APPLIED`, and the green proved nothing.
+  **A mutation that applies is not the same as a mutation that expresses the rule**, and the
+  harness can only check the first. Read the mutated region, not the exit status.
+
+###### AND A 300-CHARACTER WINDOW BROKE OVER A COMMENT — FOURTH TIME, AND THERE ARE ~18 SIBLINGS
+CI failed 1 of 2244 on this branch and `not ok` sat outside the log window, so it was reproduced
+locally per the recorded rule (`npm test > log 2>&1`, then `grep '^not ok'`) — which named it in
+one run. **`worker/rc-request-count.test.mts` → "the counter is attached where residentPage is
+assigned"**, and **behaviour had not moved at all**: `requestCounter.attach(page)` still follows
+the assignment, in the same block, before the navigation. It is now **1,618 characters** along
+instead of under 300, because this branch's decay fix and its comment landed between the two
+anchors.
+- **RE-ANCHORED ON THE FIRST `await`, AND THAT IS THE RULE RATHER THAN A STURDIER GUESS.** The
+  first await after the assignment is `page.goto(RC_HOME)`, so an attach placed after it **misses
+  the very page load the counter exists to count** — a real defect, where "more than 300
+  characters later" is not. A missing await now fails loudly rather than slicing to EOF.
+  Three mutations, each verified to apply: the attach deleted, the attach moved below `page.goto`,
+  and the counter hoisted out of `warmResident` so "lifetime" spans browsers.
+- **FOURTH TIME A CHARACTER WINDOW HAS BROKEN OVER UNCHANGED LAYOUT** — after
+  `rehearsal.test.mts`'s 220, `rc-login-script.test.mts`'s 500 and the US-spelling guard's
+  indentation. **A window measured in characters is a guess about layout**, and a comment is
+  exactly what this repo adds most.
+- **~18 MORE ARE IN THE TREE**, found by one grep
+  (`slice(x, x + NNN)` and `[\s\S]{0,NNN}` across `worker/**` and `src/**` test files):
+  `update-guard` (four), `okta-net-trace` (three), `keepwarm-recycle` (three),
+  `control-channel`, `held-offer-scope`, `load-env-fallback`, `native-form-submit`,
+  `rc-cart-timeout`, `claim-release-truth`, `holds-panel-layout`, `autologin-tab`.
+  **RECORDED, NOT REWRITTEN.** A sweep of them is its own change with its own mutation runs, and
+  making it while chasing a red is how a guard gets relaxed rather than re-anchored. **What it
+  buys the next reader: a red in one of those files whose diff did not touch the behaviour is
+  very likely this, and the fix is a structural bound rather than a bigger number.**
+
 ##### AND THE CLOSE HALF HAS 430 PRODUCTION CLOSES ON WINDOWS/149, NONE HUNG
 `tab-close` carries `closeMs` and `hung`, and the renewal has been closing a throwaway tab on the
 box since migration 075. Over twelve days:
