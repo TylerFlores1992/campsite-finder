@@ -11015,8 +11015,29 @@ a healthy page — which costs an RC page load on the page an 08:00 cart depends
   preemption can run that `finally` a hundred times in twenty-one minutes.
 - **ZERO PROBES REPORTS AS AN ABSENCE, NEVER AS `0ms`.** *"The arm took no healthy reading"* and
   *"it answered instantly every time"* are opposite facts and a bare zero merges them.
-- **BOTH FIELDS RIDE THE `tab-close` EVENT.** The log rolls in ~31 minutes; Postgres does not —
-  the lesson PR #169 already bought for the alloc readings and never applied to this.
+- **BOTH FIELDS RIDE THE `request-counts` EVENT** (reason `teardown`), not `tab-close` — an
+  earlier draft of this entry said `tab-close` and was wrong; they are set on the `teardown`
+  object that `reportBotEvent('request-counts', teardown)` posts. The log rolls in ~31 minutes;
+  Postgres does not — the lesson PR #169 already bought for the alloc readings and never applied
+  to this.
+  - **AND ADDING A FIELD TO ANY `bot_events` DETAIL CAN NULL THE *WHOLE* DETAIL, SILENTLY.**
+    `cleanDetail` returns `null` — not a truncation — when the serialised object exceeds
+    `MAX_DETAIL_CHARS` (**8,000**), so one field too many destroys every other field on that
+    event rather than itself. That is the `notePlatform` shape (a fact emitted into a region that
+    then discarded it) with the cliff at the other end. **MEASURED BEFORE SHIPPING, because the
+    field this would have destroyed is `ramMb`, which the attribution rule two entries up
+    depends on:**
+    ```
+    request-counts  n=147  max=1850  avg=1506   <- the big one; headroom 6,150
+    mem-dump        n= 77  max= 572
+    ramp-scan       n= 29  max= 229
+    tab-close       n=433  max= 105
+    NULL details across all 686 events: 0
+    ```
+    Two numeric fields add ~45 characters against 6,150 of headroom, so it is safe by a factor
+    of 130. **Measure it again for anything that adds a LIST** — the top-ten path array is what
+    makes `request-counts` an order of magnitude larger than its siblings, and it is the one
+    that could grow.
 - **AND A FIRING NOW CARRIES THE MARGIN AT THE MOMENT IT FIRED.** A page that went from instant to
   silent and a page that had been degrading for an hour are different events, and the first firing
   would otherwise have been unable to tell them apart.
