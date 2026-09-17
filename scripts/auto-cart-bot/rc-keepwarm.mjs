@@ -100,7 +100,8 @@ import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
 import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
 import {
-  probeResidentPage, wedgeDecision, WEDGE_PROBE_EVERY_MS, WEDGE_MAX_RECYCLES,
+  probeResidentPage, wedgeDecision, decayedRecycles,
+  WEDGE_PROBE_EVERY_MS, WEDGE_MAX_RECYCLES,
 } from './page-wedge.mjs';
 import { createRequestCounter, describeRequestCounts } from './rc-request-count.mjs';
 import { readLatestMemory, rampBailDecision, rampBailLine, rampDumpGrace, MEM_DUMP_GRACE_MS_DEFAULT, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
@@ -2662,7 +2663,7 @@ async function warmResident() {
      * `inFlight` is not optional: once the page goes quiet EVERY probe costs its full timeout,
      * so without it they pile up one per tick — the lesson the heap trail already paid for.
      */
-    let wedge = { strikes: 0, recycles: 0, inFlight: false, lastProbe: 0 };
+    let wedge = { strikes: 0, recycles: 0, lastRecycleAt: 0, inFlight: false, lastProbe: 0 };
     // Opened at launch while the browser is healthy — see collectHeapFacts. Negotiating a new
     // CDP session at trip time is what produced `no answer in 3000ms` on the first real firing.
     let heapProbe = null;
@@ -3044,7 +3045,12 @@ async function warmResident() {
         void probeResidentPage(residentPage)
           .then((reading) => {
             const d = wedgeDecision({
-              reading, strikes: wedge.strikes, recycles: wedge.recycles,
+              reading,
+              strikes: wedge.strikes,
+              // DECAYED, NEVER THE RAW FIELD. The budget is about a page that cannot stay up,
+              // which is a rate — see decayedRecycles for why a reopen is not evidence of
+              // health and why this is read here rather than only at the reset.
+              recycles: decayedRecycles(wedge),
               maxRecycles: WEDGE_MAX_RECYCLES,
             });
             /*
@@ -3078,6 +3084,9 @@ async function warmResident() {
               // Count it BEFORE the await, or two overlapping recycles both read the old
               // count and the budget never binds.
               wedge.recycles += 1;
+              // Stamped with the count, or the budget has no clock to decay against and
+              // `decayedRecycles` correctly refuses to age it — which would make it permanent.
+              wedge.lastRecycleAt = Date.now();
               wedge.strikes = 0;
               void recycleWedgedPage(d.why, d.strikes, wedge.recycles);
             } else if (d.act === 'escalate' && !bailing) {
@@ -3284,11 +3293,25 @@ async function warmResident() {
       // context, a new page and a new renderer, so last life's baseline describes nothing.
       browserLifeSince = Date.now();
       memDump = { baseline: false, ramp: false, inFlight: false, landed: false, graceUntil: null };
-      // PER BROWSER LIFE, for the same reason memDump is: a reopen is a new page and a new
-      // renderer, so last life's strikes describe a page that no longer exists — and the
-      // recycle budget has to start over or three recycles across a long night would retire
-      // the arm permanently.
-      wedge = { strikes: 0, recycles: 0, inFlight: false, lastProbe: 0 };
+      /*
+       * STRIKES ARE PER BROWSER LIFE; THE RECYCLE BUDGET IS NOT, AND THAT ASYMMETRY IS THE FIX.
+       *
+       * Strikes reset for the same reason memDump does — a reopen is a new page and a new
+       * renderer, so last life's strikes describe a page that no longer exists.
+       *
+       * `recycles` MUST SURVIVE, because every recycle CAUSES a reopen: zeroing it here made
+       * `WEDGE_MAX_RECYCLES` structurally unable to bind and left `escalate` as dead code (see
+       * page-wedge.mjs). The concern the old comment names — three recycles across a long night
+       * retiring the arm — is answered by decayedRecycles, which hands the budget back after a
+       * stretch of healthy page rather than after a reopen the recycle itself produced.
+       */
+      wedge = {
+        strikes: 0,
+        recycles: decayedRecycles(wedge),
+        lastRecycleAt: wedge.lastRecycleAt,
+        inFlight: false,
+        lastProbe: 0,
+      };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
       mark('initial RC load');

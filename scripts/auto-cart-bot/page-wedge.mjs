@@ -97,14 +97,65 @@ export const WEDGE_PROBE_EVERY_MS = Number(process.env.RC_WEDGE_PROBE_EVERY_MS |
  */
 export const WEDGE_STRIKES = Number(process.env.RC_WEDGE_STRIKES || 3);
 /**
- * Recycles per browser life before giving up and letting the expensive arm have it.
+ * Recycles before giving up and letting the expensive arm have it.
  *
  * A recycle that does not cure the wedge and is simply repeated is the crash-loop shape —
  * `supervise.ps1` stops loudly after five exits in ten minutes for the same reason. If three
  * fresh pages all wedge, the fault is not the page and the bail's diagnostics are worth more
  * than a fourth attempt.
+ *
+ * IT WAS "PER BROWSER LIFE" AND THAT MADE IT STRUCTURALLY UNABLE TO BIND (found by reading,
+ * 2026-09-17). Three facts, each read in source rather than inferred: the caller resets its
+ * whole wedge object on every browser reopen; `recycleWedgedPage` closes the page PRECISELY SO
+ * THAT the loop's `page.isClosed()` check reopens; therefore every recycle produces a reopen,
+ * therefore `recycles` was 0 at every consultation and `escalate` was dead code. A page that
+ * wedges immediately on each fresh browser would have recycled, relaunched and re-wedged for
+ * ever — with nothing escalating to the bail whose diagnostics are the whole point of
+ * escalating, and with `supervise.ps1` unable to catch it because the process never exits.
+ *
+ * SHIPPING THE CURE IS WHAT CREATED THAT HAZARD, so it is not a pre-existing bug to file.
  */
 export const WEDGE_MAX_RECYCLES = Number(process.env.RC_WEDGE_MAX_RECYCLES || 3);
+/**
+ * How long a healthy page must go before the recycle budget is handed back.
+ *
+ * THE RESET WAS NOT SIMPLY WRONG, WHICH IS WHY THE FIX IS DECAY RATHER THAN "STOP RESETTING".
+ * The caller's own comment states the concern it was serving — "three recycles across a long
+ * night would retire the arm permanently" — and that is real: the arm must not be spent by
+ * three unrelated events days apart. What it got wrong is the AXIS. The budget is about a page
+ * that cannot stay up, which is a RATE, and a reopen is not evidence of health.
+ *
+ * BOUNDED FROM BOTH SIDES BY MEASURED NUMBERS, not chosen. Below it must clear several probe
+ * cycles (`WEDGE_PROBE_EVERY_MS` x `WEDGE_STRIKES` is ~30 s) or the budget decays between the
+ * strikes of a single episode and can never reach three. Above it must stay under the SHORTEST
+ * observed gap between ramps — 2.3 h over eleven onsets across four days — or two independent
+ * ramps accumulate against each other and the arm retires on events that had nothing to do with
+ * one another. Thirty minutes sits an order of magnitude inside both.
+ */
+export const WEDGE_RECYCLE_DECAY_MS = Number(process.env.RC_WEDGE_RECYCLE_DECAY_MS || 30 * 60_000);
+
+/**
+ * The live recycle count, with a stale budget handed back. Pure so the caller cannot get the
+ * arithmetic wrong where nothing tests it.
+ *
+ * A COUNT WITH NO TIMESTAMP IS NOT DECAYED, AND THE DIRECTION IS DELIBERATE. `lastRecycleAt`
+ * of 0 is an absent reading about WHEN, not a claim that it was long ago — and this budget
+ * exists to STOP a loop, so preserving it is the side that fails safe. Clearing an undateable
+ * budget is how the crash-loop protection would come back inert wearing a fix's clothes.
+ *
+ * @param {{recycles?: number, lastRecycleAt?: number, now?: number, decayMs?: number}} [input]
+ * @returns {number}
+ */
+export function decayedRecycles({
+  recycles = 0,
+  lastRecycleAt = 0,
+  now = Date.now(),
+  decayMs = WEDGE_RECYCLE_DECAY_MS,
+} = {}) {
+  if (!recycles) return 0;
+  if (!lastRecycleAt) return recycles;
+  return now - lastRecycleAt >= decayMs ? 0 : recycles;
+}
 
 /**
  * Ask the page whether its main thread is running. Returns one of:

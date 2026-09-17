@@ -17,8 +17,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const {
-  probeResidentPage, wedgeDecision,
+  probeResidentPage, wedgeDecision, decayedRecycles,
   WEDGE_STRIKES, WEDGE_MAX_RECYCLES, WEDGE_PROBE_TIMEOUT_MS, WEDGE_PROBE_EVERY_MS,
+  WEDGE_RECYCLE_DECAY_MS,
 } = await import('../../scripts/auto-cart-bot/page-wedge.mjs');
 
 const wedgeSrc = readFileSync('scripts/auto-cart-bot/page-wedge.mjs', 'utf8');
@@ -200,12 +201,21 @@ test('the probe is fire-and-forget behind an in-flight flag', async () => {
   assert.doesNotMatch(kw, /await probeResidentPage\(/, 'the timer must not await the probe');
 });
 
-test('the strike and recycle state resets per browser life', async () => {
-  // A reopen is a new page and a new renderer, so last life's strikes describe a page that no
-  // longer exists — and a budget that never resets retires the arm after one long night.
-  assert.match(kw, /wedge = \{ strikes: 0, recycles: 0, inFlight: false, lastProbe: 0 \}/);
-  const resets = kw.match(/wedge = \{ strikes: 0, recycles: 0/g) ?? [];
-  assert.ok(resets.length >= 2, 'it must be reset on reopen, not only declared once');
+// INVERTED 2026-09-17, NOT RELAXED. This guard USED TO PIN THE BUG — it asserted the literal
+// `wedge = { strikes: 0, recycles: 0, ... }` at the reopen, which is precisely what made
+// `WEDGE_MAX_RECYCLES` structurally unable to bind: every recycle causes a reopen, so the
+// budget read 0 at every consultation and `escalate` was dead code. A test that REQUIRES the
+// defect is the held-offer-scope shape, and the remedy there was the same one — invert it and
+// write the reason in, so reinstating the zero reads as the regression it is.
+//
+// The half it was right about is kept and is now asserted separately: strikes MUST reset,
+// because they describe a page that no longer exists.
+test('the wedge state is declared once and reset on reopen', async () => {
+  const declarations = kw.match(/wedge = \{/g) ?? [];
+  assert.ok(declarations.length >= 2,
+    'the wedge state must be reset on reopen, not only declared once');
+  assert.match(kw, /let wedge = \{ strikes: 0, recycles: 0, lastRecycleAt: 0,/,
+    'the initial declaration must start from a clean budget WITH a timestamp field');
 });
 
 /**
@@ -417,4 +427,87 @@ test('a near miss and its recovery are BOTH reported, and the flag is read befor
     'the entry line must be gated on NOT already striking, or it repeats every probe and buries the log');
   assert.match(arm, /wasStriking && d\.strikes === 0/,
     'the recovery line must be gated on having been striking — it is the near miss, and the only evidence of the `wedged` branch that does not need a full ramp');
+});
+
+// ── THE RECYCLE BUDGET COULD NEVER BIND (2026-09-17) ───────────────────────────────────────
+//
+// `WEDGE_MAX_RECYCLES` and the whole `escalate` branch were DEAD CODE, and the unit test that
+// covers them passes by supplying a value production cannot: it calls `wedgeDecision` with
+// `recycles: WEDGE_MAX_RECYCLES` directly, while the caller reset its wedge object on every
+// browser reopen and every recycle PRODUCES a reopen. So one guard asserted the branch works
+// while its sibling pinned the thing that made it unreachable — the fix-present-and-inert
+// shape and the held-offer-scope shape at once, in one file.
+//
+// The hazard is created by shipping the cure: a page that wedges on each fresh browser
+// recycles, relaunches and re-wedges for ever, with nothing escalating and `supervise.ps1`
+// unable to catch it because the process never exits.
+
+test('a stale recycle budget is handed back, and an undateable one is NOT', () => {
+  const now = 1_000_000_000;
+  assert.equal(decayedRecycles({ recycles: 0, lastRecycleAt: now - 1, now }), 0,
+    'no recycles is no recycles');
+  assert.equal(decayedRecycles({ recycles: 2, lastRecycleAt: now - 60_000, now }), 2,
+    'a recent budget must be kept, or three strikes of one episode can never accumulate');
+  assert.equal(
+    decayedRecycles({ recycles: 2, lastRecycleAt: now - WEDGE_RECYCLE_DECAY_MS, now }), 0,
+    'a budget older than the decay window must be handed back — the boundary counts as stale');
+  // AN ABSENT TIMESTAMP IS NOT "LONG AGO". This budget exists to STOP a loop, so keeping it is
+  // the side that fails safe; clearing it is how the crash-loop protection comes back inert.
+  assert.equal(decayedRecycles({ recycles: 3, lastRecycleAt: 0, now }), 3,
+    'a count with no timestamp must be preserved, never decayed on an absent reading');
+});
+
+test('the decay window is bounded by the two measured numbers on either side of it', () => {
+  // Below: it must clear a whole episode, or the budget decays between the strikes that make
+  // one and can never reach three.
+  const episodeMs = WEDGE_PROBE_EVERY_MS * WEDGE_STRIKES;
+  assert.ok(WEDGE_RECYCLE_DECAY_MS >= 5 * 60_000 && WEDGE_RECYCLE_DECAY_MS > episodeMs * 5,
+    `the decay window (${WEDGE_RECYCLE_DECAY_MS}ms) must comfortably exceed one episode (${episodeMs}ms)`);
+  // Above: the SHORTEST observed gap between ramps is 2.3 h over eleven onsets across four
+  // days. Past that, two unrelated ramps accumulate against each other and the arm retires on
+  // events that had nothing to do with one another.
+  assert.ok(WEDGE_RECYCLE_DECAY_MS <= 120 * 60_000,
+    `the decay window (${WEDGE_RECYCLE_DECAY_MS}ms) must stay under the shortest observed ramp gap (2.3h)`);
+});
+
+test('the caller decays the budget rather than reading the raw field', () => {
+  const arm = (() => {
+    const from = kw.indexOf('const d = wedgeDecision({');
+    assert.ok(from > -1, 'the wedge arm moved — this guard is measuring nothing');
+    const to = kw.indexOf('.finally(() => { wedge.inFlight = false; });', from);
+    assert.ok(to > from, 'could not bound the wedge arm — this guard is measuring nothing');
+    return kw.slice(from, to);
+  })();
+  // THE PURE FUNCTION CAN BE PERFECT AND UNREACHABLE. Every behavioural guard above calls it
+  // directly, so only this sees the wiring.
+  assert.match(arm, /recycles:\s*decayedRecycles\(wedge\)/,
+    'the arm must pass the DECAYED count — reading wedge.recycles raw restores a budget that never ages');
+  assert.doesNotMatch(arm, /recycles:\s*wedge\.recycles\b/,
+    'the arm must not read the raw recycle count');
+  // A count with no clock is never decayed, so a recycle that forgets to stamp makes the
+  // budget permanent — which is the opposite failure and just as silent.
+  assert.match(arm, /wedge\.lastRecycleAt = Date\.now\(\);/,
+    'a recycle must stamp when it happened, or decayedRecycles has nothing to age against');
+});
+
+test('a browser reopen resets the STRIKES and carries the recycle budget forward', () => {
+  const reset = (() => {
+    const from = kw.indexOf('wedge = {', kw.indexOf('browserLifeSince = Date.now();'));
+    assert.ok(from > -1, 'the per-life wedge reset moved — this guard is measuring nothing');
+    const to = kw.indexOf('};', from);
+    assert.ok(to > from, 'could not bound the wedge reset — this guard is measuring nothing');
+    return kw.slice(from, to);
+  })();
+  // THE BUG, VERBATIM. Every recycle causes a reopen, so a zero here is a budget that is 0 at
+  // every consultation and an `escalate` branch that can never be reached.
+  assert.doesNotMatch(reset, /recycles:\s*0/,
+    'the reopen must NOT zero the recycle budget — every recycle causes a reopen, so that makes WEDGE_MAX_RECYCLES unable to bind');
+  assert.match(reset, /recycles:\s*decayedRecycles\(wedge\)/,
+    'the reopen must carry the budget forward, decayed');
+  assert.match(reset, /lastRecycleAt:\s*wedge\.lastRecycleAt/,
+    'the reopen must carry the timestamp forward, or the budget it carries can never age');
+  // THE RESET'S CORRECT HALF MUST SURVIVE THE FIX. Strikes describe a page that no longer
+  // exists; carrying them forward would recycle a fresh page on its first missed probe.
+  assert.match(reset, /strikes:\s*0/,
+    'strikes must still reset per browser life — they describe a page that no longer exists');
 });
