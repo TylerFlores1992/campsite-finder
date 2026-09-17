@@ -8019,6 +8019,21 @@ QUESTION.**
    failing about ten seconds after load. The 3 × 10 s design is the whole reason it acted at 30 s
    rather than instantly.
 
+**AND THE PAGE ANSWERED A MAIN-THREAD EVALUATE MOMENTS BEFORE IT WENT SILENT, WHICH IS THE
+STRONGEST FACT AGAINST THE FALSE-POSITIVE READING.** `token source: live` is `primeToken` →
+`readLiveToken` → `evaluateWithin`, i.e. `page.evaluate`, i.e. `Runtime.evaluate` — **the same
+main-thread-bound call the cure's probe makes**. `primeToken` polls for up to 15 s and returns
+what it has at the deadline, so the last known-answering moment is somewhere in
+**09:49:20-09:49:35**, and the first silent probe is ~09:49:45. **The page went from answering to
+permanently silent inside about twenty-five seconds, bounded.** A page merely busy with RC's
+initial WebGL render does not answer `Runtime.evaluate` and then stop; it has not answered yet.
+
+**AND `token source: none` ALONE WOULD NOT HAVE ESTABLISHED THAT THE SESSION WAS LOST** — that is
+exactly the reading `readLiveToken`'s own comment says collapses "no token" into "we could not
+tell". What settles it is that the REPLACEMENT browser is demonstrably healthy: a baseline memory
+dump answered **in 229 ms** at 09:53:31, and `okta session GONE (404)` is an HTTP answer rather
+than an evaluate. Two instruments that do not share the wedged page's failure mode.
+
 **AND IT IS THE FIRST PRODUCTION CONFIRMATION OF THE REOPEN MECHANISM, which is not the one the
 module's own header claims.** `⚠ the RC window was closed — reopening it` is the explicit
 `!ctx.pages().length || page.isClosed()` check at the top of the 1-second loop — the line recorded
