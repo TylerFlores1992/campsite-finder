@@ -578,6 +578,14 @@ test('the leak probes parse and keep their deliberate playwright-core import', (
     'scripts/auto-cart-bot/mem-dump-probe.mjs',
     'scripts/auto-cart-bot/alloc-trail-probe.mjs',
     'scripts/leak-repro.mjs',
+    // `cdp-thread-probe.mjs` was measured and written up on 2026-09-17 and never added here —
+    // it is the probe that established WHICH CDP domains survive a wedged main thread, and
+    // therefore why `page.evaluate` is the cure's detector and `Performance.getMetrics` is not.
+    'scripts/cdp-thread-probe.mjs',
+    // The cure's end-to-end run: the CDP signature, the mappings and the release on ONE page,
+    // with the healthy-page control arm that caught its own first version reading `wedged` off
+    // a responsive page.
+    'scripts/cure-end-to-end.mjs',
   ];
   let checked = 0;
   for (const name of probes) {
