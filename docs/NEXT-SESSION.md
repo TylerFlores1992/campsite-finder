@@ -18,6 +18,32 @@ rc-357) releases then. Both PRs rewrite `rc-keepwarm.mjs` and both carry `worker
 each merge fires a worker deploy and restarts all three pollers. **Check `poller.shards` after
 each.**
 
+> **AND THE BOX UPDATE AFTERWARDS CARRIES A NAMED RISK, BECAUSE `stop-all` IS CURRENTLY BLIND.**
+> The per-process scan cannot read the 8 Chromium command lines (since 04:15:31 UTC), and
+> `stop-all`, `stop-rc` and `orphan-sweep.mjs` **all kill Chromium by matching
+> `--user-data-dir`**. So an update stops the node/powershell payloads — those ARE readable —
+> and may leave the browser orphaned; the new keep-warm then meets a `user-data-dir` a live
+> Chromium still holds, which is `exitCode=21` (PROFILE IN USE), and five such exits in ten
+> minutes makes `supervise.ps1` **stop loudly and leave the RC pair dead.** That is worse than
+> the ~11 minutes an update normally costs.
+>
+> **IT IS BOUNDED BY TWO PRECEDENTS FROM TODAY, AND THEY POINT THE OTHER WAY.** The `restart-rc`
+> runs at **04:14:05 and 04:29:05 UTC** each killed **zero** chrome.exe — blind, exactly this
+> state — and the pair came back healthy both times; the keep-warm has run unbroken since
+> 04:29:05. The likeliest reason is that Playwright drives Chromium over `--remote-debugging-pipe`
+> and the browser exits when its node parent dies, so the 2026-08-18 orphan (a keep-warm
+> restarting MID-LOGIN) is a narrower path than "any kill".
+>
+> **SO: proceed, and watch for the specific failure rather than assuming it.** After the update,
+> `bot-ask list-processes` should show ONE `rc-keepwarm.mjs` node and one `rc-hold-runner.mjs`;
+> repeated `starting: node rc-keepwarm.mjs` lines in `restarts.log` (Pacific!) inside ten minutes
+> is the crash-loop, and the remedy is a human at the box — `stop-rc.ps1` from an ELEVATED
+> prompt, which is the one thing that can see those command lines.
+>
+> **AND THE UPDATE IS ALSO THE FREE EXPERIMENT ON THE BLIND SCAN.** It either clears it or does
+> not, and either answer narrows a question nothing else can reach. Read `rc_mb` in
+> `chromium_memory_samples` within two minutes of the box coming back.
+
 1. **#358** (`claude/keepwarm-skip-dedupe`) — green, `unstable` only because of the cancelled CI
    twin, which is the documented one-push-two-runs behaviour and not a failure.
 2. **#360** (`claude/cure-forcing-readings`) — rebase onto master after #358 lands.
