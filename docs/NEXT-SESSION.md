@@ -42,7 +42,7 @@ watchdog timer. So "it never ran" is ruled out structurally. **§2.6 is the full
 **Ask this ONE query before anything else. It is the whole state of the proof:**
 
 ```sql
-SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 04:45
+SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 05:10
 ```
 
 - **A ~30 s cure can fit entirely between two two-minute memory samples, so the SERIES IS THE
@@ -81,6 +81,57 @@ OLD    52-611 min    distinct=76-79  busiest path 3-24 lifetime            x8   
   26 over nine days. **09-16 was 8% and 09-17 is 0% across 20 lives**, which at 30% is P ~ 0.0008
   — so something changed, and **no mechanism is written in.** RDR's `futurebookingstartsendsdates`
   answers **200 in 1.2 s** from a session right now, so "the endpoint broke" is ruled out.
+
+### THE SCAN IS BLIND — READ `commit_used_mb`, NOT `rc_mb`
+
+`chromium_memory_samples.rc_mb` has been **NULL since 09-17 04:15:30** and the sampler names its
+own cause on every tick in the `bot` log: *"8 Chromium had an unreadable command line — this
+process may not be elevated"*. One contiguous run after 398 clean samples. `commit_used_mb` is
+`Win32_OperatingSystem` and answers perfectly throughout (**~7,040 MB of 43,774** at baseline; a
+ramp charges ~32 GiB in ≤34 s and takes it to 35-47 GB).
+
+- **So a ramp check keyed on `rc_mb` cannot see one right now.** The armed watcher already uses
+  `rc_mb >= 1500 OR commit_used_mb >= 15000`.
+- **AND IT DISABLES THE WHOLE RAMP ARM, INCLUDING ITS COMMIT BAR.** `readLatestMemory` refuses
+  the entire reading on a missing rc figure and both arms gate on `known`, so the bar built
+  because commit crosses its threshold while private bytes are still under theirs is gated on
+  the rc figure existing. Verified against the real functions. **The cure, `HUNG_MS` and the RAM
+  arm are unaffected**, so the protection order is cure → HUNG_MS → (ramp arm, dead) → RAM arm.
+  Recorded and deliberately NOT fixed: it is the arm that exits the process, it needs a box
+  update, and a real user hold releases at 15:00 UTC.
+- **A RESTART IS A CANDIDATE CAUSE, NOT ESTABLISHED.** Blindness resumed five seconds after
+  `restart-rc (#428)`; the first run began 13 minutes after the 04:02 restart and cleared on its
+  own. **So do not run one to "clear" it** — it is as likely to cause it.
+
+### THE BROWSER'S CLOCK IS THE EXPERIMENT — it started at/after **04:29:26 UTC**
+
+`restart-rc (#428)` is the last thing that touched it, and a kill leaves no teardown, so there is
+no `ageMs` to read and that command log entry is the start time. It **enters the 52-611 minute
+band at ~05:21 UTC** and is inside it through the hold's **14:30 UTC** T−30 auto-login.
+
+- **The old-browser population is still running: 8 ramps, one every 1-2 days, last 09-16 03:52**
+  — which is also the last ramp of any kind. **One is due.**
+- **Since the box took the cure there have been 13 Okta navigations and zero ramps** (7 renewals
+  at 68.6-69.6 s, 5 at 46.7-49.0 s, 1 auto-login at 45.2 s), with commit flat across the last.
+  **None of the drought is creditable to the cure** — the last ramp was eighteen hours before
+  the box had the code.
+
+### WHAT IS PROVEN, AND THE ONE THING THAT IS NOT
+
+`node scripts/cure-end-to-end.mjs` measures the three legs on **one page in one run**, through
+the shipped exports, with the control arm that matters:
+
+```
+healthy  : evaluate answered, probe alive/alive/alive, strikes 0, 0 mappings
+wedged   : evaluate SILENT >2000ms, getMetrics answered   <- production's own signature
+the cure : 3 strikes -> recycle, 243 -> 0 mappings in 520ms
+```
+
+- It **refuses** four ways and the refusal was fired (`CURE_PROBE_MS=1` exits 1) — the healthy
+  page must accrue NO strike, which is the defect its own first version had.
+- **Unproven: a single end-to-end firing in production.** That needs a wedge, and wedges have
+  been absent for 25+ hours. Everything else — the mechanism, the detector on Windows/149, the
+  release path — is measured.
 
 ### If a reading IS wanted at a known moment, in order of cost
 
