@@ -141,7 +141,22 @@ test('the pre-release hold TICKS — three minutes of waiting is not a stall', (
   const end = RUNNER.indexOf('mark(`carting', at);
   assert.ok(end > at, 'the hold must still be followed by the carting breadcrumb');
   const block = RUNNER.slice(at, end);
-  assert.ok(block.split('\n').length < 20, `the hold slice ran on (${block.split('\n').length} lines)`);
+  // BOUNDED STRUCTURALLY, NOT BY A LINE COUNT (re-anchored 2026-09-17, NOT relaxed).
+  // This was `block.split('\n').length < 20`, and twenty lines of burst instrumentation
+  // landing legitimately inside the same region took it to twenty-nine — so it failed over
+  // behaviour that had not moved. A window measured in lines is a guess about layout, which
+  // is the fourth time that shape has broken a guard in this repo. The runaway it was really
+  // protecting against is the slice swallowing a DIFFERENT ticking sleep and satisfying
+  // itself from unrelated code, and counting the sleeps says that directly.
+  const ticks = block.match(/await sleepTicking\(/g) ?? [];
+  assert.equal(ticks.length, 1,
+    `the pre-release hold must contain exactly one ticking sleep (found ${ticks.length}) — `
+    + 'more than one means the slice ran away and is being satisfied by unrelated code');
+  // And it must still be GATED, or a hold that ticks on every ordinary retry bursts against
+  // RC a hundred times — the distinction cart-burst.mjs exists to draw.
+  const gate = block.indexOf('if (waitedForRelease) {');
+  assert.ok(gate > -1 && gate < block.indexOf('await sleepTicking('),
+    'the pre-release hold must sit inside the waitedForRelease gate');
   // RE-ANCHORED 2026-09-03, NOT RELAXED. This pinned `sleepTicking(wait)` by its ARGUMENT,
   // and the fast lane now sleeps to T minus a lead — `sleepTicking(early)` — so it broke
   // over behaviour that had not changed at all. The property is the ticking SLEEP, never
