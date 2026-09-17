@@ -10781,6 +10781,86 @@ label is American and which ships to the **United States storefront only**.
   comment stripping removed (the guard then fails on its own prose) and `copyOnly`
   returning nothing (the guard blind while reading green).
 
+### THE RAMPS STOPPED BEFORE THE CURE DID, AND THE RENEWAL NEVER REACHES OKTA (2026-09-17)
+
+Asked to prove the page-wedge cure in production. **It has still never fired — `wedge-recycle`
+events, all time: ZERO** — and the reason is not that it is broken. It is that **there have been
+no ramps for 23.5 hours**, and the last one predates the cure by eighteen.
+
+```
+last sample over 1500 MB   09-16 03:51   4,692 MB   pid 336      <- 23.5h ago
+last bail:ramp             09-16 03:52:51                        <- 18h BEFORE the cure
+cure live                  09-16 21:50:59  (box took 6fc7292)
+wedge-recycle events       0, all time
+```
+
+- **THE ARM IS RUNNING — that is structural, not hopeful.** `git merge-base --is-ancestor
+  e92a5a6 6fc7292` is true, so the box's HEAD contains the cure, and the arm is unconditional in
+  the watchdog timer (`!bailing && !wedge.inFlight && now - lastProbe >= WEDGE_PROBE_EVERY_MS`).
+  So "the arm never ran" is ruled out by the sha; what is missing is an EVENT.
+- **DO NOT READ THE QUIET SERIES AS THE CURE WORKING.** A ~30 s cure can fit between two
+  two-minute samples — but it would still emit `request-counts` with `reason: 'wedge-recycle'`,
+  which is in Postgres and cannot roll out of a log window. Zero of those and zero `bail:ramp` is
+  **no event**, not a silent success. That query is the first one to run, and it is the one this
+  session should have run before spending two forcing attempts on the memory series.
+
+#### THE RENEWAL ENDS AT `no-signin-control`, SO NOTHING NAVIGATES TO OKTA
+Straight off `tail-log rc-keepwarm`:
+```
+03:12:53 renewing the session — the token has -2m left (src=live)
+03:13:04   ✗ no fresher token (none → none), got as far as: no-signin-control
+03:13:04     cleared 3 storage key(s): accessToken, okta-original-uri-storage, ssoAccessToken
+```
+**`no-signin-control` means the click stage found no sign-in anchor, so the trip never left RC.**
+The 2026-08-18 controlled comparison is exactly this cell: three token-less renewals ten minutes
+apart, and the two that reached `no-signin-control` **allocated nothing** while the one that
+clicked through to Okta cost 2,331 MB. **The Okta navigation is the ESTABLISHED trigger, and it
+is not happening.**
+- **WHY the SPA renders signed-in is the mechanism, and it is NOT established here.** `src=live`
+  means `window.__camphawkRcToken` held a token off RC's own outbound header, so the SPA looks
+  signed in and shows no "Log in" anchor — even with the stored token expired (`-2m`, then
+  `-13m`). Consistent with the 08-22 finding that the stale token comes from the SERVER, and
+  **not demonstrated to be the same thing.** Do not write one in.
+
+#### AND THE TRIP DURATION STEPPED DOWN 21 SECONDS AT THE SAME TIME — observation, no mechanism
+`bot_events` carries `tripMs` on every `tab-close`, and nobody had plotted it:
+```
+09-16 20:17 .. 22:43   TEN trips, every one 68.6-69.6s
+09-17 00:13 .. 03:24   47s, 49s, 47s, 49s, 11s, 49s
+per day, trips over 60s:  09-15 23/26 · 09-16 51/52 · 09-17 0/6
+```
+- **Nineteen hours of 68-69 s, then nothing over 60 s.** That is a step, not variance — and
+  **duration and cost track each other seven for seven** in this file, so a 21-second-cheaper
+  trip is exactly the shape of a trip that stopped ramping.
+- **IT IS NOT THE BOX UPDATE, AND IT IS NOT THE CURE.** The box took `6fc7292` at 21:50:59 and
+  **69 s trips continued for another 52 minutes**, through 22:43:28. And #355's diff to
+  `rc-keepwarm.mjs` is **purely additive** — the arm and nothing else; it touches no line of the
+  renewal path. The transition sits in the 22:43→00:13 gap, alongside a `teardown` at 22:49 and a
+  burst of short-lived browser generations.
+- **THE OBVIOUS JOIN IS UNAVAILABLE: `tab-close` carries no STAGE.** `tripMs`, `closeMs`, `hung`
+  and `ramMb`, no verdict — this file already records that. So "the 69 s trips reached Okta and
+  the 47 s ones stop at `no-signin-control`" fits both readings and **cannot be checked against
+  the stored events.** One observation of `no-signin-control` is not a regime.
+- **RAM DELTAS DID NOT MOVE WITH IT**, which is the caveat against the tidy story: before the cut
+  `ramMb` averaged −159 (min −270), after it −131 (min −254). If the long trips were the ones
+  loading Okta, a bigger difference would be expected there.
+
+#### `restart-rc` IS 2-FOR-4 NOW, AND BOTH MISSES WERE MINE
+Fired 03:02:24 and 03:12:48 UTC with the box quiet at ~300 MB and the release twelve hours out.
+Both replaced the browser (pid 14496 → 10076 → 7480) and **neither ramped** — peaks 316 MB and
+355 MB against the 2,297 MB the 09-09 21:26 attempt reached in ninety seconds.
+- **The pooled base rate was always ~10%**, so two misses are unremarkable on their own. What
+  makes them worth recording is the `no-signin-control` reading: a cold browser whose SPA renders
+  signed-in produces a renewal that never navigates, and a lever that cannot reach Okta cannot
+  force the trigger. **Quote 2-for-4, not 2-for-2.**
+- **`test-login` IS THE LEVER THAT DOES NOT DEPEND ON THAT**, because `withForcedLoginPrompt`
+  intercepts RC's own `/oauth2/v1/authorize` and adds `prompt=login` — so the navigation happens
+  whatever the SPA thinks, **and it happens on the RESIDENT renderer**, which is the renderer
+  2026-09-04 measured as the one that ramps (the renewal's throwaway tab read −4 MB).
+  It has **deliberately no `sessionLive` gate** (`rehearsal.mjs`, "unlike the nightly"), so a live
+  session does not block it. It is rationed to **one per 6 h on the box's own clock** and refuses
+  with the age, which is how that ration was read rather than guessed.
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
