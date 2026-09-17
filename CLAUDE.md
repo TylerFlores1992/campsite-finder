@@ -11410,6 +11410,36 @@ production — and that needs a wedge, and wedges have been absent for 25+ hours
 13 Okta navigations.** The cure cannot be credited with that absence: the last ramp was eighteen
 hours before the box had the code.
 
+#### THE OLD-BROWSER POPULATION IS STILL RUNNING, AND ITS AGE BAND IS 52-611 MINUTES (2026-09-17)
+The burst population's disappearance is recorded; the other one's cadence never was, and it is
+what decides whether waiting is worth anything. Every `bail:ramp` on record, split on `ageMs`:
+```
+OLD browser (distinct 76-79, busiest path 3-24 lifetime requests)   8 ramps
+  09-06 03:29  124.6 min     09-11 05:30  610.8 min     09-15 15:16  372.2 min
+  09-08 03:42   85.4 min     09-12 15:26  383.0 min     09-16 03:52   52.0 min
+  09-10 17:53   57.5 min     09-14 16:00  253.0 min
+BURST (distinct 16, busiest path 16,583-80,244)                    18 ramps
+  ... 09-13 06:44, 09-14 09:04, 09-14 11:47, 09-15 09:04  <- and then nothing
+```
+- **THE OLD POPULATION FIRES ABOUT ONCE EVERY 1-2 DAYS AND THE LAST WAS 09-16 03:52** — which
+  is also **the last ramp of any kind**, 25 hours ago. So one is due, and the thing that has
+  actually stopped is the burst half.
+- **THE AGE BAND IS 52 TO 611 MINUTES, median ~190.** A browser younger than that has never
+  produced one; a browser is inside it for about ten hours.
+- **SO EVERY `restart-rc` RESETS THE ONLY CLOCK THAT CAN STILL FIRE.** The recorded reasoning
+  for stopping the campaign was that it targeted the absent population; the numbers say it did
+  something worse — the restart puts the browser back to age zero, which is the one age at which
+  the surviving population never fires. **Five forced restarts is five times the clock was
+  reset.** Leaving the box alone is not passive here; it is the experiment.
+- **THE CURRENT BROWSER STARTED AT OR AFTER 04:29:26** (`restart-rc (#428)` — a kill leaves no
+  teardown, so there is no `ageMs` to read and the start time comes from the command log). It
+  enters the band at **~05:21 UTC** and is inside it through the hold's **14:30 UTC** T−30
+  auto-login, which is itself an Okta navigation on a ~10-hour-old browser — the 09-11 611-minute
+  ramp's exact profile.
+- **READ `commit_used_mb`, NOT `rc_mb`, WHILE THE SCAN IS BLIND.** Baseline is ~7,040 MB of
+  43,774; a ramp charges ~32 GiB in ≤34 s and takes it to 35-47 GB. `rc_mb` has been NULL since
+  04:15:30 and cannot see one.
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
