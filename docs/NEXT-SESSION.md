@@ -150,6 +150,33 @@ The cure's event now reports `commitUsedMb` even while the scan is blind, and th
 - **The update window shuts at 09:00 UTC anyway** (6 h before the release), and the box takes
   updates itself in the 02:00-05:00 PT quiet window once nothing is queued.
 
+### CALIBRATE THE 14:30 EXPECTATION — it is the cheap variant, and both PRs are held
+
+Two corrections to this session's own plan, written down because both are the optimistic reading.
+
+- **THE 14:30 AUTO-LOGIN IS ALMOST CERTAINLY THE 11-SECOND COOKIE-ANSWERED SIGN-IN, NOT THE
+  12-MINUTE PASSWORD TRIP.** Okta's window has read **11.9998 h** all morning, which is the
+  ROLLING signature (`okta_expires_at − okta_checked_at` pinned at +12.0000h means our own
+  `/api/v1/sessions/me` probe is refreshing it); a frozen, shrinking window is what says the
+  absolute cap has bitten and the expensive trip is reachable. So Okta will be ALIVE at T−30 and
+  the sign-in is answered from the `idx` cookie. **The expensive variant is the one that has
+  ramped 3 times in 7; the cheap one has never been observed to.**
+  - It will still very likely FIRE — `requiredTokenSeconds` at T−30 is `LEAD(30) + CART_HOLD(15)
+    + MARGIN(15) = 60 min`, and the token's whole life is ~60, so the odds of it holding a full
+    hour at that instant are slim.
+  - **So call it the day's one GUARANTEED Okta navigation, which it is, and not the day's
+    highest-probability ramp trigger, which is an inference.** The old population's trigger is
+    recorded as NOT established; what the 14:30 window has going for it is the browser's age
+    (~10 h, spanning the whole 52-611 min band) and the 09-11 05:28 precedent, not the trip's
+    cost.
+- **BOTH PRs ARE GREEN AND BOTH ARE HELD UNTIL 15:00 UTC.** #358 (the stand-down dedupe, which
+  is what stops `tail-log` rolling in 20 minutes) carries its own dated instruction in its body —
+  **"DO NOT MERGE BEFORE 2026-09-17 08:00 PT"** — because a real user's hold releases then and it
+  touches `worker/**`. #360 touches `worker/rc-mem-dump.test.mts`, so it fires the same deploy
+  and waits for the same reason. **Nothing is lost by waiting: neither can reach the box before
+  the post-release update anyway**, and #358 must land FIRST because both rewrite
+  `rc-keepwarm.mjs`.
+
 ### DO NOT UPDATE THE BOX BEFORE 15:00 UTC — the trade, settled, having been reversed twice
 
 The near-miss logging and the six event fields both reach the box only on an update, and an
