@@ -11359,6 +11359,57 @@ in flight at 04:31:56. That is the documented numeric-fixture trap:
 - **What it did spend is an unattended Okta password trip from the household address**, which
   is the reason the budget exists at all. Second sighting after 2026-09-10 17:53.
 
+#### THE CURE'S THREE LEGS ARE MEASURED ON ONE PAGE NOW, WITH THE CONTROL THAT MATTERS (2026-09-17)
+The cure's production case has never occurred, so **the transfer argument is what carries it** —
+and its legs were measured on three different pages: `leak-repro.mjs` (a wedged page maps 2 MiB
+shared regions and gives them back on close), `cdp-thread-probe.mjs` (a wedged page answers
+`Performance.getMetrics` and NOT `Runtime.evaluate`), and ~2,400 healthy production probes.
+The first two share a wedge construction and the joint claim followed **"by construction"**,
+which is the reasoning this file has been burned by. `scripts/cure-end-to-end.mjs` measures all
+three on ONE page in ONE run, through the SHIPPED exports:
+```
+healthy  : evaluate answered, probe alive/alive/alive, strikes 0, 0 mappings
+wedged   : evaluate SILENT >2000ms, getMetrics answered   <- production's own signature
+the cure : 3 strikes -> recycle, 243 -> 0 mappings in 520ms
+```
+- **THE SIGNATURE IS THE LOAD-BEARING HALF.** `Runtime.evaluate` silent while
+  `Performance.getMetrics` answers is what production shows on Windows/149 — `alloc trail
+  [resident]: EMPTY — that renderer answered no CDP call at all` over a whole 165-second browser
+  life, taken by the heap trail, which samples `Performance.getMetrics`. So the page the cure
+  was measured releasing mappings from is in the state the box's ramping renderer is in.
+- **THE CONTROL ARM CAUGHT A REAL DEFECT IN THE SCRIPT'S OWN FIRST VERSION.**
+  `probeResidentPage` takes a **NUMBER**; the first version passed `{ timeoutMs: 2000 }`, which
+  coerces to ~0 — so every probe timed out instantly and read `wedged`, **on the healthy page
+  too**. That run printed a confident pass and proved nothing whatever about the detector. **A
+  healthy page must accrue NO strike**, and it is the FIRST refusal checked: a cure that fires
+  on a responsive page costs an RC page load every thirty seconds and reads in the event stream
+  exactly like the cure working.
+- **THE REFUSAL WAS FIRED, NOT ASSUMED.** `CURE_PROBE_MS=1` reproduces that defect and exits 1
+  quoting the healthy page's own readings. Four arms: a non-discriminating probe, a page never
+  wedged, a decision that never reached `recycle`, and a count that never climbed.
+- **AND READING THE EXIT CODE THROUGH A PIPE REPORTED 0 OVER A REFUSAL** — `… | tail -6; echo $?`
+  is `tail`'s status. The recorded rule, paid for again in the same hour it was being applied.
+  Redirect to a file.
+- **PLATFORM, STATED IN THE HEADER: 141/Linux, memfd-backed, against 149/Windows,
+  pagefile-backed.** What transfers is the MECHANISM — `kTotalMappedSizeLimit` and
+  `kLargerDataPipeAllocationSize` are cross-platform, and **which PROCESS services a CDP domain
+  is architectural**: `page.close` is `Target.closeTarget` to the BROWSER process, which is why
+  it answers in 520 ms against a renderer that will not run a line of JavaScript, and why
+  `page.reload()` on the same page hung past its own timeout. **Do not quote a byte count from
+  here as a production figure.**
+- **`cdp-thread-probe.mjs` WAS NEVER IN THE PROBE-ROT GUARD** — measured and written up the same
+  day, and the guard's list stopped at five. Both it and the new script are in it now, with both
+  mutations (a probe removed, the import "fixed" to bare `playwright`) verified caught.
+
+**SO WHAT IS AND IS NOT PROVEN, STATED PLAINLY.** The mechanism is proven with controls both
+ways. The detector is proven live on the box (~2,400 probes, zero false positives) and its
+wedge-silence half is corroborated by production's own alloc trail. The release half rests on
+the browser-process/renderer split, which is architectural, plus 430 healthy Windows closes
+showing that call path is sound there. **What remains unproven is a single end-to-end firing in
+production — and that needs a wedge, and wedges have been absent for 25+ hours across at least
+13 Okta navigations.** The cure cannot be credited with that absence: the last ramp was eighteen
+hours before the box had the code.
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
