@@ -33,7 +33,7 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 0.5 DO THIS FIRST — the cure is live, has never fired, and **DO NOT RUN `restart-rc`**
+## 0.5 DO THIS FIRST — the cure is live, has never fired, and forcing it is DENIED to an unattended session
 
 **The box is on the cure** (`6fc7292` contains `e92a5a6`/#355, checked with `git merge-base
 --is-ancestor` rather than by reading a version field), and the arm is unconditional in the
@@ -57,30 +57,38 @@ SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 
   is the half of the cure that costs an RC page load if it is wrong, measured in production on
   Windows/149. It says nothing about the true-positive half.
 
-### DO NOT FORCE WITH `restart-rc` — it is aimed at a population that is absent
+### FORCING A RAMP IS **DENIED** TO AN UNATTENDED SESSION — this is the blocker
 
-`bail:ramp` carries the request counter, and reading it beside `ageMs` splits **all 26 ramps
-with nothing on the off-diagonal**:
+`restart-rc` is refused by the harness classifier as **"Interfere With Workloads"**. That is a
+permission denial, not a technical failure, and it is not to be worked around. `test-login` is
+not a substitute (below). **So a session with no human present cannot produce the event the cure
+needs**, and the proof waits on either a natural ramp or somebody with permission.
 
-```
-YOUNG  2.3-3.3 min   distinct=16     busiest path 16,583-80,244 lifetime   x18   (the RDR burst)
-OLD    52-611 min    distinct=76-79  busiest path 3-24 lifetime            x8    (no burst)
-```
+- **A HUMAN CAN DO IT IN ONE COMMAND**, and this is the single highest-value thing to ask for:
+  `npx tsx scripts/bot-ask.mts restart-rc`, which makes a COLD browser loading RC's home page —
+  the young-population shape, **2-for-4** as a deliberate lever. **Pace at ~15 minutes**:
+  `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves the RC pair dead. Never
+  inside the T−3h warm-up window of a real release.
+- **Do not quote the 2-for-4 as today's rate.** The two hits were 09-09 and 09-10, while the
+  young/burst population was live; it has not occurred naturally since **09-15 09:04**.
 
-- **The burst population has not occurred since 2026-09-15 09:04 — 43 hours.** `restart-rc`
-  produces exactly that young cold-load shape, which is why it was 2-for-2 historically and why
-  09-17 ran it five times for nothing. **Do not quote the 2-for-2 as today's rate.**
-- **And restarting every ~11 minutes STRUCTURALLY FORBIDS the other population**, which needs a
-  browser alive for 52 to 611 minutes (median ~190).
-- **So the lever today is to LEAVE THE BROWSER ALONE.** No `restart-rc`, no `kill-chrome`, no box
-  update, until the browser has aged. The free scheduled event is **`maybeAutoLogin` at T−30 of a
-  real release**, which navigates to Okta on the RESIDENT page — the 09-11 05:28 ramp's exact
-  profile (610.8 min old, `distinct=79`, busiest path 20 lifetime).
-- **The per-browser-life ramp rate is ~30%, not 10%.** A browser that ramps at 2.3 min never
-  reaches the 3-minute baseline dump, so baselines count the lives that did NOT ramp: 61 against
-  26 over nine days. **09-16 was 8% and 09-17 is 0% across 20 lives**, which at 30% is P ~ 0.0008
-  — so something changed, and **no mechanism is written in.** RDR's `futurebookingstartsendsdates`
-  answers **200 in 1.2 s** from a session right now, so "the endpoint broke" is ruled out.
+### THE DROUGHT IS THE SELF-SUSTAINING REGIME — waiting is waiting for it to end
+
+**26 hours with no ramp** (last 09-16 03:51) against a 2.3-18.6 h gap range, and hourly peak
+commit flat at **7,200-7,800 MB** throughout. The explanation is read off three instruments:
+
+- **TRIPS FIRED CONSTANTLY AND THEN STOPPED.** `bot_events` carries 33 `tab-close` events in 30
+  hours — eleven at 68.3-69.6 s (09-16 17:39 to 22:43), then eight at <=49 s (09-17 00:13 to
+  04:31), then **nothing**. The 21-second step-down is now nineteen samples rather than one, and
+  **even the 69 s band did not ramp.**
+- **THE SILENCE IS THE SPA RE-MINTING, IN THE KEEP-WARM'S OWN LOG.** `token exp in 2m` at
+  05:29:26 then `token exp in 41m` at 05:49:26 with **`renewed=no`**. `planRenewal` stands down
+  while a token is alive, so there is no Okta trip to be the trigger. **That regime has been
+  measured to run TEN HOURS.**
+- **AND THE OLD-BAND WAIT HAS ALREADY BEEN RUN AND LOST.** `request-counts` carries `ageMs` at
+  every graceful teardown: **a browser lived 704.2 minutes on 09-16 and produced nothing** — the
+  longest life on record, the top of the 52-611 min band. So "let a browser age" is not an
+  experiment waiting to run.
 
 ### THE SCAN IS BLIND — READ `commit_used_mb`, NOT `rc_mb`
 
@@ -88,33 +96,19 @@ OLD    52-611 min    distinct=76-79  busiest path 3-24 lifetime            x8   
 own cause on every tick in the `bot` log: *"8 Chromium had an unreadable command line — this
 process may not be elevated"*. One contiguous run after 398 clean samples. `commit_used_mb` is
 `Win32_OperatingSystem` and answers perfectly throughout (**~7,040 MB of 43,774** at baseline; a
-ramp charges ~32 GiB in ≤34 s and takes it to 35-47 GB).
+ramp charges ~32 GiB in <=34 s and takes it to 35-47 GB).
 
-- **So a ramp check keyed on `rc_mb` cannot see one right now.** The armed watcher already uses
-  `rc_mb >= 1500 OR commit_used_mb >= 15000`.
+- **So a ramp check keyed on `rc_mb` cannot see one.** Use `rc_mb >= 1500 OR commit_used_mb >= 15000`.
 - **AND IT DISABLES THE WHOLE RAMP ARM, INCLUDING ITS COMMIT BAR.** `readLatestMemory` refuses
-  the entire reading on a missing rc figure and both arms gate on `known`, so the bar built
-  because commit crosses its threshold while private bytes are still under theirs is gated on
-  the rc figure existing. Verified against the real functions. **The cure, `HUNG_MS` and the RAM
-  arm are unaffected**, so the protection order is cure → HUNG_MS → (ramp arm, dead) → RAM arm.
-  Recorded and deliberately NOT fixed: it is the arm that exits the process, it needs a box
-  update, and a real user hold releases at 15:00 UTC.
+  the entire reading on a missing rc figure and both arms gate on `known`. **The cure, `HUNG_MS`
+  and the RAM arm are unaffected**, so the protection order is cure, `HUNG_MS`, (ramp arm, dead),
+  RAM arm. **That makes the box the cleanest test bed it will ever be** — a ramp arriving while
+  this holds is uncontested — and the state is not durable, so it is an argument for spending an
+  event rather than saving one. Recorded and deliberately NOT fixed: it is the arm that exits the
+  process, it needs a box update, and a real user hold releases at 15:00 UTC.
 - **A RESTART IS A CANDIDATE CAUSE, NOT ESTABLISHED.** Blindness resumed five seconds after
   `restart-rc (#428)`; the first run began 13 minutes after the 04:02 restart and cleared on its
   own. **So do not run one to "clear" it** — it is as likely to cause it.
-
-### THE BROWSER'S CLOCK IS THE EXPERIMENT — it started at/after **04:29:26 UTC**
-
-`restart-rc (#428)` is the last thing that touched it, and a kill leaves no teardown, so there is
-no `ageMs` to read and that command log entry is the start time. It **enters the 52-611 minute
-band at ~05:21 UTC** and is inside it through the hold's **14:30 UTC** T−30 auto-login.
-
-- **The old-browser population is still running: 8 ramps, one every 1-2 days, last 09-16 03:52**
-  — which is also the last ramp of any kind. **One is due.**
-- **Since the box took the cure there have been 13 Okta navigations and zero ramps** (7 renewals
-  at 68.6-69.6 s, 5 at 46.7-49.0 s, 1 auto-login at 45.2 s), with commit flat across the last.
-  **None of the drought is creditable to the cure** — the last ramp was eighteen hours before
-  the box had the code.
 
 ### WHAT IS PROVEN, AND THE ONE THING THAT IS NOT
 
@@ -129,131 +123,78 @@ the cure : 3 strikes -> recycle, 243 -> 0 mappings in 520ms
 
 - It **refuses** four ways and the refusal was fired (`CURE_PROBE_MS=1` exits 1) — the healthy
   page must accrue NO strike, which is the defect its own first version had.
-- **Unproven: a single end-to-end firing in production.** That needs a wedge, and wedges have
-  been absent for 25+ hours. Everything else — the mechanism, the detector on Windows/149, the
-  release path — is measured.
+- **~2,400 production probes since 09-16 21:50:59, across ~20 browser lives, zero false
+  positives.** That is the half that costs an RC page load if it is wrong, measured on
+  Windows/149. It says nothing about the true-positive half.
+- **Unproven: a single end-to-end firing in production.** Everything else — the mechanism, the
+  detector on the production platform, the release path (430 healthy closes, 8-628 ms, none
+  hung) — is measured.
 
-### DO **NOT** UPDATE THE BOX FOR THE COMMIT UNGATING — the browser's clock costs more
+### DO NOT UPDATE THE BOX BEFORE THE 15:00 UTC HOLD RESOLVES
 
-The cure's event now reports `commitUsedMb` even while the scan is blind, and that is a
-**bot-side** change, so the box does not have it. **Leave it.**
+The near-miss logging, the six event fields and the recycle-budget decay all reach the box only
+on an update. **Wait anyway**, and the reasoning is worth keeping because I reversed it twice.
 
-- An update runs `stop-all`, which kills the Chromium and **resets the browser age to zero** —
-  the one age at which the surviving ramp population has never fired. The commit field is a
-  discriminator on an event that may not happen; the clock IS the experiment.
-- It also ends the RC session with a real user hold at 15:00 UTC. `maybeAutoLogin` would restore
-  it at 14:30, but that spends the thing being watched.
-- **If the cure fires before the next update it still reports honestly** — `memKnown: false`,
-  `memWhy: "memory reading has no rc figure"`, `commitUsedMb: null`. What is missing is only the
-  leak-versus-baseline discriminator, and `chromium_memory_samples.commit_used_mb` carries it
-  independently at a two-minute cadence.
-- **The update window shuts at 09:00 UTC anyway** (6 h before the release), and the box takes
+- **An update runs `stop-all`**, which ends the RC session with a real user hold at 15:00 UTC and
+  resets the browser to age 0 — below the 52-minute floor of the only population still firing.
+- **The update window shuts at 09:00 UTC regardless** (6 h before the release), and the box takes
   updates itself in the 02:00-05:00 PT quiet window once nothing is queued.
+- **If the cure fires before the next update it still reports honestly** — `memKnown: false`,
+  `memWhy: "memory reading has no rc figure"`, `commitUsedMb: null`. The discriminator is carried
+  independently by `chromium_memory_samples.commit_used_mb` at a two-minute cadence.
+- **THE 14:30 AUTO-LOGIN IS THE CHEAP VARIANT, NOT A LIKELY TRIGGER.** Okta's window read
+  **11.9997-11.9998 h** all session, which is the ROLLING signature, so T−30 is answered from the
+  `idx` cookie in ~11 seconds. The expensive variant has ramped 3 times in 7; **the cheap one
+  never has.** Call it the day's one guaranteed Okta navigation and nothing more.
 
-### CALIBRATE THE 14:30 EXPECTATION — it is the cheap variant, and both PRs are held
+### HOW TO READ THE FIRST FIRING
 
-Two corrections to this session's own plan, written down because both are the optimistic reading.
-
-- **THE 14:30 AUTO-LOGIN IS ALMOST CERTAINLY THE 11-SECOND COOKIE-ANSWERED SIGN-IN, NOT THE
-  12-MINUTE PASSWORD TRIP.** Okta's window has read **11.9998 h** all morning, which is the
-  ROLLING signature (`okta_expires_at − okta_checked_at` pinned at +12.0000h means our own
-  `/api/v1/sessions/me` probe is refreshing it); a frozen, shrinking window is what says the
-  absolute cap has bitten and the expensive trip is reachable. So Okta will be ALIVE at T−30 and
-  the sign-in is answered from the `idx` cookie. **The expensive variant is the one that has
-  ramped 3 times in 7; the cheap one has never been observed to.**
-  - It will still very likely FIRE — `requiredTokenSeconds` at T−30 is `LEAD(30) + CART_HOLD(15)
-    + MARGIN(15) = 60 min`, and the token's whole life is ~60, so the odds of it holding a full
-    hour at that instant are slim.
-  - **So call it the day's one GUARANTEED Okta navigation, which it is, and not the day's
-    highest-probability ramp trigger, which is an inference.** The old population's trigger is
-    recorded as NOT established; what the 14:30 window has going for it is the browser's age
-    (~10 h, spanning the whole 52-611 min band) and the 09-11 05:28 precedent, not the trip's
-    cost.
-- **BOTH PRs ARE GREEN AND BOTH ARE HELD UNTIL 15:00 UTC.** #358 (the stand-down dedupe, which
-  is what stops `tail-log` rolling in 20 minutes) carries its own dated instruction in its body —
-  **"DO NOT MERGE BEFORE 2026-09-17 08:00 PT"** — because a real user's hold releases then and it
-  touches `worker/**`. #360 touches `worker/rc-mem-dump.test.mts`, so it fires the same deploy
-  and waits for the same reason. **Nothing is lost by waiting: neither can reach the box before
-  the post-release update anyway**, and #358 must land FIRST because both rewrite
-  `rc-keepwarm.mjs`.
-
-### DO NOT UPDATE THE BOX BEFORE 15:00 UTC — the trade, settled, having been reversed twice
-
-The near-miss logging and the six event fields both reach the box only on an update, and an
-update is tempting for exactly that reason. **It is the wrong call today, and the reasoning is
-worth keeping because it is not obvious and I talked myself round twice.**
-
-- **AN UPDATE COSTS A GUARANTEED BLIND HOLE AT THE MOMENT OF PEAK EXPECTATION.** It resets the
-  browser to age 0, and the surviving ramp population's band **starts at 52 minutes** while the
-  young/burst population has been absent since 09-15 09:04. So for 52 minutes NEITHER population
-  can fire — and the last ramp was 25.6 h ago against an observed gap range of 6-26 h, i.e. we
-  are at the tail, which is when a hole is most expensive.
-- **AND THE PAYOFF IS SPECULATIVE, MEASURED.** Near-miss logging only speaks if the page ever
-  fails to answer for two whole seconds, and the evidence says it does not: the keep-warm's
-  05:09 and 05:29 keepalives both read `load/shoppingcart → HTTP 200`, which is the resident
-  page **executing a real RC fetch on the main thread**. A page doing that is not near-missing.
-- **THE FLIPPING `session_live_since` IS NOT A SYMPTOM, AND IT NEARLY READ AS ONE.** It moved at
-  ~05:20 and again at ~05:33 with two healthy keepalives in between, which looks like an
-  intermittently unresponsive page. It is the token lapsing (`token exp in 2m` at 05:29) and the
-  SPA silently re-minting — the documented self-renewal, observed live — reported by a second
-  caller on a shorter cadence than the keep-warm's 20 minutes. **Read the keepalive's own verdict
-  before reading a session flip as a page fault.**
-- **THE EVIDENCE PATH FOR A FIRING IS ALREADY ADEQUATE WITHOUT IT.** The capture monitor pulls
-  `tail-log rc-keepwarm` within ~90 s, against a window that rolls in ~20 minutes.
-- **THE TRIGGER TO UPDATE: after the 15:00 UTC hold resolves.** That is the natural moment — the
-  release-critical constraint lifts, and `14:30 UTC` is the day's ONE guaranteed Okta navigation
-  (`maybeAutoLogin` at T−30) and therefore the single highest-probability ramp trigger on the
-  calendar. **Updating before it would spend the best experiment of the day to improve the
-  readout of an event that has not happened.**
-
-### HOW TO READ THE FIRST FIRING — and the one way it could go wrong
-
-> **⚠ THE TABLE BELOW DESCRIBES THE EVENT THIS SESSION WROTE, NOT THE ONE THE BOX EMITS.**
-> Verified against `6fc7292`'s own source, 2026-09-17: the box emits
-> `requestCounter.snapshot({ reason: 'wedge-recycle' })` and **nothing else** — the request
-> counts and the reason. `closeMs`, `tokenKept`, `strikes`, `rcMb`, `commitUsedMb` and
-> `commitLimitMb` are all in the unpushed/unshipped version and reach the box only on an
-> update, which is being avoided because it resets the browser's clock below the 52-minute
-> band. **So an absent `closeMs` is the BOX BEING OLD, never the cure failing** — read the
-> table as what to expect once the box updates, and read the log for everything else.
->
-> **AND THE LOG ROLLS IN ABOUT TWENTY MINUTES.** `tail-log` returns the last 16,000 characters
-> and the keep-warm prints two stand-down lines every 60 s, so a 60-line read at 05:25 reached
-> back only to 04:57. PR #358's skip dedupe fixes it and is bot-side, i.e. inert until the same
-> update. **The capture monitor that pulls the log within ~90 s of a firing DIES WITH THE
-> SESSION THAT ARMED IT.** If you are a fresh session and a `wedge-recycle` has landed, pull
-> `bot-ask tail-log rc-keepwarm` FIRST, before anything else — the event cannot tell you
-> whether the close worked, and after ~20 minutes nothing can.
-
-
-The event is `request-counts` with `reason: 'wedge-recycle'`. Read it, not the memory series:
+**Ask this ONE query before anything else. It is the whole state of the proof:**
 
 ```sql
-SELECT at, detail FROM bot_events WHERE detail->>'reason' = 'wedge-recycle' ORDER BY at;
+SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 06:00
 ```
+
+A ~30 s cure can fit entirely between two two-minute memory samples, so **the SERIES IS THE WRONG
+INSTRUMENT** — that event is in Postgres and cannot roll out of a log window. The detector is
+validated (`detail->>'reason'` resolves on 5 of 5 stored `request-counts` rows), so a zero is
+about the subject, not the query.
+
+> **PULL `bot-ask tail-log rc-keepwarm` FIRST, BEFORE ANYTHING ELSE.** The box emits
+> `requestCounter.snapshot({ reason: 'wedge-recycle' })` and **nothing else** — the request
+> counts and the reason. Everything that says what the firing DID is in the log, and **the log
+> rolls in ~31 minutes** (measured 09-17: a 70-line read at 06:00 reached back to 05:29, almost
+> all of it the two stand-down lines #358 dedupes). The capture watcher that pulls it within
+> ~90 s **dies with the session that armed it**.
+>
+> **AND A `Monitor` CANNOT CARRY THAT WATCH** — `timeout_ms` caps at 1,800,000 ms, so it lapses
+> every 30 minutes by construction and each re-arm leaves a gap. Use a background Bash task with
+> a terminating condition; it has no cap and exits once when it has something to say.
+
+In `logs\rc-keepwarm.log`: a recycling line naming the wedge, then `closed the wedged page in
+Nms`, then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED` beneath it.
+
+**Expect the close to take ~2.5 s regardless of how much it releases.** Measured: 1,877 mappings
+in 2,532 ms against 0 mappings in 2,516 ms — **16 ms apart**, so the release is O(1) in the count
+and `page.close()` destroying the renderer process is why.
+
+Once the box HAS updated, the event carries these (absent today = the box being old, never the
+cure failing):
 
 | field | reads | means |
 |---|---|---|
 | `closeMs` | 9-628 ms across 430 healthy production closes | a close in minutes, or `hung`, is the close inheriting the hang |
 | `tokenKept` | `written` / `already-stored` / `no-token` / `already-stored-stale` / `timeout` | the live token lives in PAGE memory and dies with the close |
 | `strikes` | 3 | fewer means `WEDGE_STRIKES` moved |
-| `recycles` | **always 1** — see below | |
 | `memKnown` / `memWhy` | `false` / `memory reading has no rc figure` while the scan is blind | honest, not a fault |
-| `commitUsedMb` | `null` on the box today; ~7,040 baseline vs 35,000-47,000 for the leak | **the leak-versus-baseline discriminator** |
+| `commitUsedMb` | ~7,040 baseline vs 35,000-47,000 for the leak | **the leak-versus-baseline discriminator** |
 
-- **A SECOND FIRING WITHIN MINUTES IS THE RECYCLE LOOP, AND IT IS THE ONE WAY THIS GOES WRONG.**
-  `WEDGE_MAX_RECYCLES` **cannot bind**: `wedge` is reset on every browser reopen, and every
-  recycle *produces* a reopen, so `recycles` is 0 whenever the decision is taken and the
-  `escalate` branch is unreachable. A page that wedges within 30 s of every fresh load would
-  recycle → reopen → wedge → recycle for ever, and `supervise.ps1` cannot see it because the
-  process never exits. **Already recorded; deliberately not fixed** — the repair is a counter
-  that survives a reopen and DECAYS, which is bot-side, and an update resets the browser age.
-- **IT IS UNLIKELY AND IT IS LOUD.** A fresh browser loading RC's home page is normally
-  responsive, and re-wedging within 30 s of every load is the burst population's shape — which
-  has been absent since 09-15 09:04. If it happens the session never establishes and
-  `holdAtRisk` rings the phone at T−45; it is not a silent failure.
-- **AND IT IS NOT OBVIOUSLY WORSE THAN THE STATUS QUO ANTE.** Before the cure a wedge was
-  handled by `HUNG_MS` at twelve minutes, which cost the session too.
+**THE RECYCLE-LOOP DEFECT IS FIXED ON THE BRANCH (`1720e8b`) AND IS STILL LIVE ON THE BOX.**
+`WEDGE_MAX_RECYCLES` could never bind — `wedge` was reset on every reopen and every recycle
+*produces* a reopen — so `escalate` was dead code and a page that wedges within 30 s of each
+fresh load would recycle, reopen and wedge for ever, invisible to `supervise.ps1` because the
+process never exits. The fix is `decayedRecycles` (30 m). **Until the box updates: a second
+`wedge-recycle` within minutes is that loop**, and `restart-rc` breaks it.
 
 ### If a reading IS wanted at a known moment, in order of cost
 
@@ -261,42 +202,19 @@ SELECT at, detail FROM bot_events WHERE detail->>'reason' = 'wedge-recycle' ORDE
    needs **`okta=GONE` AND a dead token**, opens the T−3h..T−30 warm-up window at once with
    ninety minutes of margin, and the hold is deleted the moment the trip is under way so nothing
    is carted. **It refuses while a real hold is live.**
-2. **`test-login` — do NOT spend it while Okta is ALIVE.** It forces `prompt=login` by
+2. **`restart-rc`** — cheapest by far (no campsite, no password, no Okta precondition), **and
+   DENIED to an unattended session.** Ask a human.
+3. **`test-login` — do NOT spend it while Okta is ALIVE.** It forces `prompt=login` by
    interception so it does navigate, but Okta answers from the cookie (09-07: eleven seconds,
-   +24 MB) — the cheap cell. It is rationed one per 6 h and costs a password submission from an
+   +24 MB) — the cheap cell. Rationed one per 6 h, and it costs a password submission from an
    address that has eaten a twelve-hour block.
-3. **`restart-rc`** — last, for the reasons above, and only once the burst population returns
-   (a `request-counts` row with `distinct=16` is how you would know).
 
 **`okta=GONE` cannot be brought forward.** The reported expiry is the ROLLING window our own
-`/api/v1/sessions/me` probe refreshes — **measured +12.0000h on two readings twenty minutes apart
-on 09-17**. **The discriminator is one subtraction:** `okta_expires_at - okta_checked_at`.
-12.0000h is rolling and says nothing about the cap; a window that SHRINKS is the frozen absolute
-cap, which is the precondition. **Do not "fix" the unconditional probe to make forcing easier** —
-that is the entry warning that it is load-bearing by accident, and the cost is real logins from a
-blocked address.
-
-### How to read the first firing
-
-In `logs\rc-keepwarm.log`: a `♻` line naming the wedge, then `closed the wedged page in Nms`,
-then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED` beneath it.
-
-**But read the EVENT first, because since #360 it is self-recording.** `wedge-recycle` now
-carries `closeMs`, `tokenKept`, `strikes`, `recycles` and the memory reading
-(`commitUsedMb`/`rcMb`/`memKnown`/`memWhy`) taken BEFORE the close. **`commitUsedMb` is the
-number that says what the firing WAS**: ~40 GB is the leak, the ~7 GB baseline is a page that was
-merely unresponsive, and those want opposite responses. An unknown reading carries its own `why`
-rather than a null that renders as zero.
-
-**Expect the close to take ~2.5 s regardless of how much it releases.** Measured: 1,877 mappings
-in 2,532 ms against 0 mappings in 2,516 ms — **16 ms apart**, so the release is O(1) in the count
-and `page.close()` destroying the renderer process is why.
-
-**One known defect on that path, recorded and deliberately not fixed:** `WEDGE_MAX_RECYCLES`
-cannot bind, because `wedge` is reset on every reopen and every recycle produces a reopen — so
-the `escalate` branch is unreachable and a page that wedges immediately on each fresh load
-recycles for ever without escalating to the bail. Watch for repeated `wedge-recycle` events;
-`restart-rc` breaks the loop.
+`/api/v1/sessions/me` probe refreshes. **The discriminator is one subtraction:**
+`okta_expires_at - okta_checked_at`. 12.0000h is rolling and says nothing about the cap; a window
+that SHRINKS is the frozen absolute cap, which is the precondition. **Do not "fix" the
+unconditional probe to make forcing easier** — it is load-bearing by accident, and the cost is
+real logins from a blocked address.
 
 ---
 
