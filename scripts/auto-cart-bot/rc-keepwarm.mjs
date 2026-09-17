@@ -3047,7 +3047,33 @@ async function warmResident() {
               reading, strikes: wedge.strikes, recycles: wedge.recycles,
               maxRecycles: WEDGE_MAX_RECYCLES,
             });
+            /*
+             * REPORT THE NEAR MISSES, OR THE `wedged` BRANCH IS UNFALSIFIABLE IN PRODUCTION.
+             *
+             * Every outcome of this arm but the recycle was silent, which merges two states
+             * that need telling apart: "this page has never once failed to answer" and "it
+             * failed twice, recovered, and nothing said so". ~2,400 healthy probes therefore
+             * evidenced the `alive` branch ALONE — and `wedged` is the branch the whole cure
+             * turns on, measured only in a container, on Chromium 141/Linux against a box
+             * running 149/Windows, which is the platform-transfer trap this repo has been
+             * burned by twice.
+             *
+             * TWO LINES PER EPISODE, NOT ONE PER PROBE, and the bound is the point: the entry
+             * and the recovery. `tail-log` returns the last 16,000 characters and this log
+             * already rolls in ~20 minutes on two stand-down lines a minute, so an arm that
+             * spoke on every probe would push the evidence out of the window it exists to
+             * land in. A flapping page costs at most one pair per 10s cadence.
+             *
+             * THE RECOVERY IS THE HALF WORTH HAVING. A strike that clears says the detector
+             * fired and the page came back — which is the near miss, and the only evidence of
+             * the `wedged` branch that does not require a full ramp.
+             */
+            const wasStriking = wedge.strikes > 0;
             wedge.strikes = d.strikes;
+            if (d.strikes > 0 && !wasStriking) log(`… resident page did not answer — ${d.why}`);
+            else if (wasStriking && d.strikes === 0 && d.act === 'none') {
+              log('… resident page answered again — the wedge cleared on its own');
+            }
             if (d.act === 'recycle') {
               // Count it BEFORE the await, or two overlapping recycles both read the old
               // count and the budget never binds.

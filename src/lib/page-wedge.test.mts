@@ -386,3 +386,35 @@ test('every page-touching await in the resident loop is caught, which is WHY the
       `${call} is expected to swallow — if it no longer does, re-read the reopen guard's reasoning`);
   }
 });
+
+// THE ARM WAS SILENT ON EVERY OUTCOME BUT THE RECYCLE, WHICH MADE ITS `wedged` BRANCH
+// UNFALSIFIABLE IN PRODUCTION. ~2,400 healthy probes evidenced the `alive` branch alone; a page
+// that failed to answer twice and recovered wrote exactly what a page that never failed wrote.
+// That is the merged-states shape, on the one branch the whole cure turns on and the one branch
+// measured only in a container, on a different Chromium and a different OS.
+test('a near miss and its recovery are BOTH reported, and the flag is read before it is overwritten', () => {
+  const arm = (() => {
+    const from = kw.indexOf('const d = wedgeDecision({');
+    assert.ok(from > -1, 'the wedge arm moved — this guard is measuring nothing');
+    const to = kw.indexOf('.finally(() => { wedge.inFlight = false; });', from);
+    assert.ok(to > from, 'could not bound the wedge arm — this guard is measuring nothing');
+    return kw.slice(from, to);
+  })();
+
+  const flag = arm.indexOf('const wasStriking = wedge.strikes > 0;');
+  assert.ok(flag > -1, 'the arm must capture whether it was already striking, or a near miss cannot be told from a steady state');
+  const overwrite = arm.indexOf('wedge.strikes = d.strikes;');
+  assert.ok(overwrite > -1, 'the strike assignment moved — this guard is measuring nothing');
+  // THE ORDERING IS THE WHOLE GUARD. Read after the assignment, `wasStriking` reflects the NEW
+  // count, both gates below become vacuous, and the arm goes quiet again while looking correct.
+  assert.ok(flag < overwrite,
+    'wasStriking must be captured BEFORE wedge.strikes is overwritten, or both gates read the new value and report nothing');
+
+  // ONCE PER EPISODE, NOT ONCE PER PROBE. This log rolls in ~20 minutes on two stand-down lines
+  // a minute, so an arm that spoke every 10s would push the evidence out of the window it exists
+  // to land in.
+  assert.match(arm, /if \(d\.strikes > 0 && !wasStriking\) log\(/,
+    'the entry line must be gated on NOT already striking, or it repeats every probe and buries the log');
+  assert.match(arm, /wasStriking && d\.strikes === 0/,
+    'the recovery line must be gated on having been striking — it is the near miss, and the only evidence of the `wedged` branch that does not need a full ramp');
+});
