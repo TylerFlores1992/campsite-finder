@@ -7892,6 +7892,34 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
      **`bot-ask git-status` showing the new sha rules out "never ran"** without a log line. What
      it cannot separate is `alive` from `inconclusive`; that is worth one line only if a later
      firing is genuinely ambiguous.
+##### A WORKING CURE SILENCES EVERY OTHER RAMP INSTRUMENT — read that as success, not regression (2026-09-17)
+Read out of the box's own `6fc7292` rather than reasoned: the watchdog timer's arms are, in
+order, the **mem-dump stall trigger** (line 2959, `stalledMs > MEM_DUMP_STALL_MS`, 90 s), **the
+cure** (2986), **`HUNG_MS`** (3022, 12 min) and **the ramp bail** (3049, 120 s stall + 3,000 MB).
+So the cure precedes both exits — which is the ordering it needs — **and it also precedes the
+only thing that fires the ramp dump.**
+- **THE CURE ACTS AT ~30 s AND EVERY OTHER RAMP INSTRUMENT NEEDS 90-120 s.** A firing closes the
+  page, the loop reopens, `lastTick` advances and `stalledMs` resets — so **no `mem-dump` with
+  `phase: ramp`, no `bail:ramp`, and no `request-counts` with `reason: 'bail:ramp'`** for an
+  event the cure wins.
+- **AND `ramp-scan` GOES TOO, THOUGH IT IS A DIFFERENT PROCESS.** `bot.mjs` triggers the region
+  walk off `RAMP_SCAN_MB` (3,000) / `RAMP_SCAN_COMMIT_MB` (9,000). The 32 GiB mapping lands in
+  ≤34 s, so the COMMIT bar may still be crossed — but `rc_mb` is private bytes, which climb over
+  ~10 minutes, so a page closed at 30 s plausibly never reaches 3,000 MB. **Expect the walk to
+  become rare or absent.**
+- **SO A WORKING CURE MAKES THE BOX GO QUIET IN EXACTLY THE WAY "NOTHING IS HAPPENING" LOOKS.**
+  The ONLY positive evidence of a firing is the `wedge-recycle` event and the log lines beneath
+  it. **Do not read the disappearance of `bail:ramp`, `mem-dump phase=ramp` or `ramp-scan` as an
+  instrument regressing** — check `wedge-recycle` first, and remember that a `bail:ramp` and a
+  `wedge-recycle` for one event are mutually exclusive by construction.
+- **THE DUMP IS NO LOSS, AND THAT IS MEASURED RATHER THAN CONSOLING.** All four stored `ramp`
+  dumps are `target-silent`: a wedged renderer contributes **zero allocator dumps** at every
+  level, settled off-box by `dump-wedge-probe.mjs`. The instrument the cure pre-empts is the one
+  that has never been able to answer.
+- **WHAT IS GENUINELY LOST IS THE REGION WALK'S CONFIRMATION**, which is twelve-for-twelve on the
+  same signature and needs no repeating. **If a walk is ever wanted again, the way to get one is
+  to raise `WEDGE_STRIKES` deliberately for a run** — not to wonder why the walks stopped.
+
 - **AND A PROBE THAT KEEPS ANSWERING THROUGH A RAMP WOULD BE A FINDING, NOT A BROKEN ARM.** It
   would mean the mapping happens while the resident page is still responsive to CDP, against the
   09-09 VMTHREAD reading (main thread `Running`, 1,203 ms of a 1,200 ms window, four for four) and
