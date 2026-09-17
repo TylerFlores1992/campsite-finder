@@ -12082,6 +12082,42 @@ file, one condition, one log line.
 - **EXERCISED OFF-BOX, WITH NO RAMP.** `ramp-arm-probe.mjs` replays the real 09-10 04:25:09
   reading (rc 2,366 under the bar, commit 38,596 over it) against a real Chromium and asserts the
   trigger, plus the older-box case. Nine mutations, each verified to APPLY and to fail.
+
+##### AND THE PROBE'S `fail()` DID NOT FAIL — three real breaks reported as exit 0 (2026-09-17)
+The commit-bar ungating (`readLatestMemory` carrying commit on the rc-blind branch) had one
+untested link: the **real writer into the real reader into the real decision, on the blind
+shape**. Scenario 1c drives it, and three mutations that genuinely break that chain were each
+**detected, printed with the correct diagnosis, and reported as `exit 0`**.
+```
+let verdict = 1;
+const fail = (msg) => { console.log(`x ${msg}`); };   <- logs; records NOTHING
+...
+verdict = ok ? 0 : 1;                                  <- reads a flag `fail` never sets
+```
+- **HALF THE ARMS SET `ok = false` BESIDE THEIR `fail()` AND HALF DID NOT**, so the file's
+  correctness depended on every future arm remembering a second statement. Scenario 1b — the
+  commit bar's own guards — was one of the halves that did not. **Fixed as a CLASS**: `fail()`
+  sets its own flag and the verdict reads it. Fixing the instances would have left the next arm
+  exposed, which is exactly how this one got in.
+- **IT IS THE HOUSE SHAPE INSIDE THE INSTRUMENT BUILT TO ESCAPE IT.** `ramp-arm-probe.mjs`
+  exists because the trigger path was only ever tested by waiting for a ramp; a probe that
+  cannot fail a build is the same defect one level up — it runs, it reports, and a green proves
+  nothing. **Same family as `status = 'sent'` meaning only "Twilio returned 2xx".**
+- **THE TELL IS AVAILABLE AND CHEAP: read the EXIT CODE, not the output.** Every one of those
+  three runs printed `x the blind chain did not fire ...` followed by `x THE TRIGGER PATH DOES
+  NOT HOLD` — the diagnosis was perfect and the status code said pass. **A mutation harness that
+  greps for a failure STRING would have caught it and one that reads `$?` would not**, which is
+  the opposite of the usual advice and is why the guard pins the pairing rather than the output.
+- `worker/rc-mem-dump.test.mts` pins `fail()` recording, the verdict reading what it records,
+  and the flag starting clean — three mutations, each verified to APPLY and to fail. It is
+  structural because **the defect is invisible from a passing run**: a probe with a broken
+  `fail()` and a probe with nothing to report write the identical output.
+- **AND THE HARNESS DESTROYED THE FIX MID-RUN, FOR THE SEVENTH RECORDED TIME.** `git checkout --`
+  after the first mutation reverted the still-uncommitted `fail()` repair, so the next two
+  reported `!! ANCHOR NOT FOUND` against a file that no longer contained the code under test.
+  **Commit before mutating** — written down five times in this file, read this session, and
+  broken by the person reading it.
+
 - **`tsconfig.worker.json` CAUGHT WHAT THE SUITE COULD NOT.** The JSDoc `@returns` on
   `readLatestMemory`/`rampBailDecision` is what TypeScript reads, so the new fields were invisible
   to the type checker until it was updated — eight errors the tests were perfectly happy with.
