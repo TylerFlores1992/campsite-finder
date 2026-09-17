@@ -8082,6 +8082,26 @@ in **twenty seconds**.
     session-scoped and **every restart costs the Okta session**, which is a materially higher
     price than the box's own scripts currently put on one.
 
+**AND THE DENOMINATOR IS A MEASUREMENT NOW, NOT AN ESTIMATE — IT IS ONE FIRING IN EIGHTEEN
+BROWSER LIVES.** `mem-dump` with `phase: baseline` fires once per browser life about three minutes
+in, so counting them counts lives. Since the cure reached the box at 2026-09-16 21:50:59 UTC there
+are **17 baselines, every one a distinct lead pid**, plus the wedged life that died at 0.7 min and
+never reached its baseline.
+```
+09-16 21:56 … 04:05   SIXTEEN lives in 6h11m   <- the forced-restart campaign and the box update
+09-17 04:05 → 09:41   ONE life, 5h34m          <- old-population band, and it did not ramp
+09-17 09:49 → 09:50   0.7 min                  <- the wedge
+09-17 09:53 …         the current browser, pid 9740
+```
+- **`request-counts` IS A BAD CENSUS OF BROWSER LIVES AND `mem-dump baseline` IS A GOOD ONE.**
+  Only **two** `request-counts` rows exist across those eighteen lives — one `teardown` and the
+  `wedge-recycle`. So **sixteen of eighteen lives ended in a way that ran no `finally`**: a killed
+  process, not a teardown. Anyone sizing anything per-browser-life off `request-counts` will be out
+  by an order of magnitude.
+- It also tightens the false-positive claim: **seventeen lives ran three minutes or more with no
+  firing**, which is the same fact as "~2,400 probes with no run of three" counted by subject
+  instead of by tick.
+
 **TWO FREE READINGS RODE ALONG.**
 - **THE BLIND PER-PROCESS SCAN CLEARED WITH THE GENERATION CHANGE.** `rc_mb` was NULL through
   09:38, read **`rc=0 procs=0`** from 09:41:11 (the scan RAN and found none of ours — the third
