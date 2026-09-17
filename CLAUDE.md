@@ -10853,7 +10853,7 @@ from a renderer whose main thread would not answer a single CDP call.
   is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
   A password submission from an address that has eaten a twelve-hour block, for a few per cent.
 
-#### THE 22:49 REHEARSAL IS WHAT STOPPED THE RAMPS — a candidate, and it fits all three readings
+#### ~~THE 22:49 REHEARSAL IS WHAT STOPPED THE RAMPS~~ — FALSIFIED WITHIN THE HOUR, BY ITS OWN DISCRIMINATOR
 `rc_login_rehearsal_log` is a HISTORY table (the 2026-08-18 entry's complaint that
 `rc_login_rehearsal` keeps only one row was fixed and nobody had read the fix), and it puts a
 successful sign-in exactly in the gap:
@@ -10877,15 +10877,45 @@ successful sign-in exactly in the gap:
   promote it.** What would settle it is the next transition: a renewal that reaches `authorize`
   should take ~69 s again.
 
-#### AND IT PREDICTS WHY NO LEVER WORKS RIGHT NOW: THE SPA CANNOT BE MADE TO LOOK SIGNED OUT
+**THE REFUTATION, and it is the reading the section above asked for.** That section ends *"what
+would settle it is the next transition: a renewal that reaches `authorize` should take ~69 s
+again."* The next renewal reached `authorize` and took **48.6 s**:
+```
+03:24:02 renewing the session — the token has -13m left (src=live)
+03:24:49   ✓ renewed by authorize: none → 3580s        <- the RELIABLE cell, on the box, now
+03:24:52 tab-close renewal tripMs 48.6s
+```
+- **SO A 47-SECOND TRIP REACHES OKTA.** The whole story rested on 47 s meaning
+  `no-signin-control`, and it does not. **The renewal is NOT stuck**: `no-signin-control` at
+  03:13:04 was ONE trip, and the very next one navigated and minted a full 3580 s token.
+- **WHAT DIES:** "every renewal since ends at `no-signin-control`", "the rehearsal removed the
+  Okta round trip", and with them the mechanism for "the rehearsal stopped the ramps". One
+  observation was generalised into a regime on the strength of a duration it does not explain.
+- **WHAT SURVIVES, unchanged and still measured:** the 68.6-69.6 s → 46.7-49.0 s step is real;
+  `no-signin-control` really did happen once; the SPA really does re-acquire a token after a
+  restart; and `okta=GONE` really is the recipe's precondition. **What is now honestly unknown is
+  WHY the trips got 21 s cheaper** — both bands reach `authorize`, so the difference is inside
+  the trip and nothing stored can see it.
+- **AND THE RAMP DROUGHT LOSES ITS EXPLANATION TOO.** Okta trips are happening and not ramping,
+  which is simply the recorded bound — **a renewal trip ramps at most about one in twelve** —
+  against a 23.5-hour gap that is longer than the observed 2.7-17.3 h range and is not otherwise
+  accounted for. Do not put a cause on it.
+- **THIS IS THE HOUSE FAILURE, COMMITTED BY SOMEBODY WHO HAD SPENT THE EVENING QUOTING IT.** A
+  tidy story that fitted three readings at once, written up as a candidate, pushed — and refuted
+  forty minutes later by one more line of the same log that produced it. **The `authorize` line
+  was always going to arrive; it was not waited for.** Struck rather than deleted because "the
+  rehearsal stopped the ramps" is exactly the sentence a later reader quotes.
+
+#### THE SPA RE-ACQUIRES A TOKEN AFTER A RESTART — true, and NOT why no lever works
 `readLiveToken` prefers `window.__camphawkRcToken`, the capture hook's copy off RC's own outbound
 header. A restart kills page memory — and the fresh browser reports `token source: live` one
 second later anyway, because the SPA re-acquires one. That is the 2026-08-22 finding (**the stale
 token comes from the SERVER**; localStorage, sessionStorage, IndexedDB and cookies were each
 eliminated) showing up as an operational constraint rather than a curiosity.
-- **So while Okta is ALIVE the renewal will keep finding no sign-in control**, and
-  `restart-rc`/`kill-chrome` cannot change that — they clear page memory, which is not where it
-  comes from. **There is no lever that clears cookies, deliberately**: losing `DT` makes a
+- ~~**So while Okta is ALIVE the renewal will keep finding no sign-in control**~~ — **FALSE, see
+  directly above: the 03:24 renewal reached `authorize` with Okta ALIVE.** What is true is only
+  the observation itself: `restart-rc`/`kill-chrome` clear page memory, which is not where the
+  token comes from. **There is no lever that clears cookies, deliberately**: losing `DT` makes a
   sign-in look like a fresh profile, which cost the household IP twelve hours on 2026-08-06.
 - **WHICH IS WHY THE RECORDED RECIPE NEEDS `okta=GONE`**, and why it cannot be brought forward:
   the reported expiry is the ROLLING window our own `/api/v1/sessions/me` probe refreshes.
