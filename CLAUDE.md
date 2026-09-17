@@ -10822,6 +10822,47 @@ is not happening.**
   `-13m`). Consistent with the 08-22 finding that the stale token comes from the SERVER, and
   **not demonstrated to be the same thing.** Do not write one in.
 
+#### THE 22:49 REHEARSAL IS WHAT STOPPED THE RAMPS — a candidate, and it fits all three readings
+`rc_login_rehearsal_log` is a HISTORY table (the 2026-08-18 entry's complaint that
+`rc_login_rehearsal` keeps only one row was fixed and nobody had read the fix), and it puts a
+successful sign-in exactly in the gap:
+```
+09-16 22:43:28   the LAST 69s renewal trip
+09-16 22:48:35   rehearsal started          <- an ON-DEMAND one: `test-login` later refused
+09-16 22:49:07   ok=true  load/shoppingcart → HTTP 200      with "ran 278 min ago", and
+09-16 22:49:07   request-counts [teardown]                   03:27 − 278m = 22:49 exactly
+09-17 00:13:07   the FIRST 47s renewal trip
+```
+- **ONE CAUSE ACCOUNTS FOR ALL THREE OBSERVATIONS.** The rehearsal signed in; RC's SPA has
+  rendered signed-in ever since; a signed-in SPA shows no "Log in" anchor; so every renewal since
+  ends at `no-signin-control` — which removes the Okta round trip (the 21 seconds), removes the
+  established trigger (the ramps), and is exactly the stage the log reports.
+- **SO A REHEARSAL SUPPRESSES THE RAMP TRIGGER, AND `test-login` IS A REHEARSAL.** The lever this
+  file recommends for forcing a ramp is plausibly the thing that PREVENTS one for hours
+  afterwards. That is worth knowing before spending the 6-hour ration on it.
+- **IT IS A CANDIDATE, FITTED AFTER THE FACT, AND THE DISCRIMINATOR DOES NOT EXIST.** `tab-close`
+  carries no stage and `reportSession` updates `rc_runner_heartbeat` IN PLACE, so there is no
+  historical series of either the renewal stage or the Okta state to check it against. **Do not
+  promote it.** What would settle it is the next transition: a renewal that reaches `authorize`
+  should take ~69 s again.
+
+#### AND IT PREDICTS WHY NO LEVER WORKS RIGHT NOW: THE SPA CANNOT BE MADE TO LOOK SIGNED OUT
+`readLiveToken` prefers `window.__camphawkRcToken`, the capture hook's copy off RC's own outbound
+header. A restart kills page memory — and the fresh browser reports `token source: live` one
+second later anyway, because the SPA re-acquires one. That is the 2026-08-22 finding (**the stale
+token comes from the SERVER**; localStorage, sessionStorage, IndexedDB and cookies were each
+eliminated) showing up as an operational constraint rather than a curiosity.
+- **So while Okta is ALIVE the renewal will keep finding no sign-in control**, and
+  `restart-rc`/`kill-chrome` cannot change that — they clear page memory, which is not where it
+  comes from. **There is no lever that clears cookies, deliberately**: losing `DT` makes a
+  sign-in look like a fresh profile, which cost the household IP twelve hours on 2026-08-06.
+- **WHICH IS WHY THE RECORDED RECIPE NEEDS `okta=GONE`**, and why it cannot be brought forward:
+  the reported expiry is the ROLLING window our own `/api/v1/sessions/me` probe refreshes.
+  Measured here: `okta_checked_at 03:27:45`, `okta_expires_at 15:27:45` — **11.9998h**, i.e.
+  rolling. **The discriminator is one subtraction**: a window of 12.0000h is rolling and says
+  nothing about the cap; a window that SHRINKS is the frozen absolute cap, and that is the
+  precondition for a forceable ramp.
+
 #### AND THE TRIP DURATION STEPPED DOWN 21 SECONDS AT THE SAME TIME — observation, no mechanism
 `bot_events` carries `tripMs` on every `tab-close`, and nobody had plotted it:
 ```
