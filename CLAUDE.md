@@ -5301,6 +5301,65 @@ for.) It then produced a clean sign-in for nothing:
   ramped; of the seven `okta=GONE` password trips on record, three did. Quoting either number
   as "the success rate of forcing a ramp" merges a thing we control with a thing we do not.
 
+##### A CAPTCHA STOPPED THE WARM-UP — FIRST ONE ON THIS PATH, AND A REAL HOLD WAS RIDING ON IT (2026-09-17 12:00 UTC)
+The T-3h warm-up fired **on a real user's hold** (`#A124`, rc-357, releasing 15:00 UTC) with all
+four gates read rather than predicted, and was stopped by an image challenge on Okta's email step:
+```
+11:59:39 warming up the session: the release is 180m away and Okta is GONE - signing in now
+11:59:49     -> email field: input[name="identifier"]
+11:59:50     -> ticked "Keep me signed in"
+11:59:50     -> submitting the email (attempt 1) - Enter
+12:00:00     -> Enter did not advance - clicking button[type="submit"] (visible=true enabled=true size=339x46)
+12:00:08     -> x the click FAILED: locator.click: Timeout 8000ms exceeded.
+12:00:08     -> trying a direct DOM click (bypasses actionability checks)...
+12:00:21   x warm-up did not establish an Okta session: a CAPTCHA appeared during sign-in
+```
+- **IT IS THE 2026-08-06 SIGNATURE TO THE LETTER, AND THAT IS WHAT MAKES IT A DIAGNOSIS RATHER
+  THAN A GUESS.** That entry records the control reporting `visible=true enabled=true` while every
+  click times out, *"because the challenge's overlay was swallowing pointer events"*, and concludes
+  **retrying harder can never work**. Today's line is `visible=true enabled=true size=339x46` and an
+  8,000 ms click timeout. The detection `rc-probe.mjs` grew that day is what named it.
+- **FIRST CAPTCHA EVER RECORDED ON THE WARM-UP PATH, and the trip duration says so independently.**
+  All seven warm-up/auto-login `tab-close` rows in `bot_events`:
+  ```
+  09-17 12:00  warmup      42,241 ms   <- the CAPTCHA
+  09-17 04:31  auto-login  45,230 ms   <- the npm test phantom-release fixture
+  09-10 16:59  warmup      16,306 ms   |
+  09-09 05:33  warmup      15,967 ms   |  the three clean password forms
+  09-08 04:49  warmup      15,622 ms   |
+  09-08 03:06  warmup       4,541 ms   <- found a live token and no-opped (the #296 case)
+  09-05 14:42  auto-login  17,165 ms
+  ```
+  **42 s is a new band on this path**, and it is the 8 s click timeout plus the DOM-click fallback
+  plus the detection. The four recorded "misses" were all 15.6-16.3 s CLEAN sign-ins.
+- **SO "THE SCHEDULED REPAIR WILL FIX IT" IS FALSIFIED FOR TODAY, and that sentence was in the
+  handover.** `docs/NEXT-SESSION.md` read *"`maybeAutoLogin` at 14:30 UTC is the designed repair
+  ... **Do not reach for `rc-login.bat` or `test-login`** - both cost the session again and the
+  repair is scheduled."* **`maybeAutoLogin` runs the same `attemptLogin`**, so it will meet the
+  same overlay, spend both attempts, and ring the phone. The repair is not merely late; it is
+  structurally unavailable.
+- **AND THE USUAL REASON TO REFUSE `rc-login.bat` DOES NOT APPLY IN THIS STATE.** This file warns
+  repeatedly that it **force-kills the Chromium the token lives in** - which is why printing it
+  over a healthy session is the 2026-08-16 07:33 cry-wolf. **There is no token to destroy**: the
+  heartbeat reads `no token at all - signed out` and `okta session GONE (404)`, and
+  `session_live_since` has not moved since 10:54 UTC. **A dead session plus a CAPTCHA is the one
+  configuration where the human sign-in is the correct remedy rather than the destructive one**,
+  and it is what the 08-06 design says survives: a human signs in ONCE with "Keep me signed in"
+  ticked, and the bot never lets the session lapse. `rc-login.bat` detects the challenge and waits
+  up to five minutes for a person to solve it (**headful only**).
+- **THE WARM-UP'S TURN IS SPENT AND THE AUTO-LOGIN'S BUDGET IS INTACT** - the log says both in its
+  own words (`the warm-up has already had its 1 turn for this release`; *"The auto-login still has
+  its full budget at T-30"*). So the module's accounting is correct and it is the accounting of a
+  repair that cannot succeed.
+- **IT DID NOT RAMP** (`RAM 10291 -> 10121 MB (-170) => this navigation did NOT ramp`), so it buys
+  nothing for the leak either. The three-way verdict refused to speak, correctly.
+- **WHY NOW IS NOT ESTABLISHED - do not write one in.** The 08-06 entry's own candidate is
+  *repeated fresh-profile logins*, and nothing here has changed its profile. What IS on record for
+  this box today is a network episode (`ERR_NAME_NOT_RESOLVED` at 10:00:46, losing a `tab-close`
+  row outright) and 23 hours of failing renewals - neither of which explains an anti-bot posture.
+  **One CAPTCHA is an event, not an escalation**; the reading that would matter is whether the
+  next unattended sign-in after a human one also meets it.
+
 #### THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08 21:43 PT)
 **A natural ramp arrived fifty minutes before the ordered one, and #302's trigger caught it.
 Four consecutive missed ramps end here.** It is also still not a reading, and the reason is new
@@ -12377,50 +12436,52 @@ kinds (`tab-close` 433, `request-counts` 147, `mem-dump` 77, `ramp-scan` 29).
 
 ## Open / next session
 
-#### THE CURE FIRED AT 09:50:17 UTC AND THE LOG WAS CAUGHT — 2026-09-17
+#### 2026-09-17 — A CAPTCHA IS BLOCKING THE UNATTENDED SIGN-IN, AND A REAL USER'S HOLD IS AT 15:00 UTC
 
-**Read "IT FIRED — 2026-09-17 09:50:17 UTC, ON A GENUINE BURST WEDGE" above before anything
-else. The thing the last several sessions were waiting for has happened and the evidence is
-saved** (`request-counts` in Postgres; the log lines quoted in that entry, pulled ~7 minutes
-after the firing with `tail-log rc-keepwarm:400`).
+**THIS IS THE ONE THING ON THIS PAGE WITH A CLOCK ON IT. Read "A CAPTCHA STOPPED THE WARM-UP"
+above.** At 12:00 UTC the T-3h warm-up fired on a real user's hold (`#A124`, rc-357) and was
+stopped by an image challenge on Okta's email step — the 2026-08-06 signature to the letter
+(`visible=true enabled=true`, every click timing out on the overlay).
 
-**IN ONE LINE: it matched the written predictions exactly, it fired on a real burst wedge
-(30,631 answer-less RDR asks in a browser 44.6 s old), no ramp followed, and the RC session was
-lost to the wedge rather than to the cure.**
+```
+12:51 UTC heartbeat: session_ok false | okta_alive false | okta_expires_at NULL
+          "no token at all - signed out; okta session GONE (404)"
+          session_live_since 10:54 UTC (unmoved), bot_commit 6fc7292
+live holds: #A124 rc-357, release 2026-09-17 08:00 PT = 15:00 UTC
+            one row `requested` (TAPPED 2026-09-16 23:21 UTC), one `offered` ahead of it in line
+```
 
-**WHAT IS STILL OPEN, IN ORDER.**
-- **THE T-3h WARM-UP SHOULD FIRE AT ~12:00 UTC WITH A FULL PASSWORD FORM, AND IT IS A FREE SHOT AT
-  THE MOST RAMP-PRONE TRIP THERE IS.** All four gates were read in `warmupPlan`'s source rather
-  than recalled, and all four hold: the window is T-180..T-30 = **12:00..14:30 UTC**;
-  `oktaAlive === false` (heartbeat and the 09:50:50 log line agree); `tokenSecondsLeft` is not
-  positive (`the app holds no usable token (src=none)`); and `spent` is 0 — the only `auto-login`
-  tab-close today is the 04:31:56 one, which is the recorded `npm test` phantom-release fixture.
-  **The `okta=GONE` password cell has ramped three times in seven**, so this is the best odds the
-  calendar offers, it costs no campsite and no forced restart, and **the password submission is
-  one the system was going to make anyway** — the module's whole argument is that it MOVES a
-  sign-in rather than adding one. The capture watch is armed for the ramp.
-  - **STATED BEFORE THE EVENT SO IT CAN BE FALSIFIED:** expect a `warming up the session` line at
-    ~12:00, `email field` -> `password entered`, and then either a clean ~16 s sign-in (the four
-    recorded misses) or a multi-minute climb the cure or the RAM arm ends. **A stand-down naming
-    `the Okta session state is UNKNOWN` is a network blip, NOT a gate failing** — that arm keeps
-    the turn and retries, by design.
-  - **IF IT DOES NOT FIRE AT ALL, THAT IS THE FINDING AND THE 14:30 TRIP IS THE EXPENSIVE ONE.**
-- **A REAL USER HOLD (#A124) RELEASES AT 15:00 UTC AND OKTA IS `GONE(404)`**, so `maybeAutoLogin`
-  at **14:30 UTC** is the full password variant **unless the warm-up above lands first**, and is
-  the only thing between that hold and a missed cart. The capture for it is already armed as a background task. **Do not touch the box
-  before 15:00** — no update, no `restart-rc`, no `test-login`: the session recovers by design and
-  every lever costs it again.
+- **`maybeAutoLogin` AT 14:30 UTC RUNS THE SAME `attemptLogin`** and will meet the same overlay,
+  spend both attempts and ring the phone. **The scheduled repair is not late, it is structurally
+  unavailable** — and the previous handover said the opposite in as many words.
+- **THE REMEDY IS A HUMAN SIGN-IN AND THE USUAL OBJECTION TO IT DOES NOT APPLY.**
+  `mini-pc\rc-login.bat` force-kills the Chromium the token lives in — **there is no token**, so
+  this is the one configuration where it costs nothing. Headful; it detects the challenge and
+  waits up to five minutes for a person to solve it. That is the 08-06 design working as written:
+  a human signs in ONCE with "Keep me signed in" ticked.
+- **NOBODY IN A SESSION CAN DO IT.** `restart-rc` is refused by the harness, and a CAPTCHA needs a
+  human at a display by construction. **This is an owner action or the cart is missed.**
+- **A MISSED CART IS NOT A SILENT FAILURE** — `expire-holds.ts` marks the row `failed` and sends
+  `hold_missed` on all three channels. Worth knowing before treating the aftermath as a new fault.
+
+**THE REST, IN ORDER.**
 - **DO NOT MERGE ANYTHING UNTIL AFTER 15:00 UTC.** This branch touches `worker/**`, so a merge
   fires `worker-deploy.yml` and restarts all three pollers. Pushing the BRANCH is safe and is what
-  CI runs on.
+  CI runs on. After 15:00: merge, then update the box (the update carries `wedge.silent` and the
+  decaying recycle budget).
+- **THE CURE HAS FIRED EXACTLY ONCE AND ONE FIRING IS NOT A RATE.** 2026-09-17 09:50:17 UTC, on a
+  genuine burst wedge, **no ramp followed** — and that is not evidence it prevented one, because a
+  burst at full rate costing nothing is already an observed outcome. False-positive half: ~2,400
+  healthy probes with no run of three. True-positive half: n=1. `wedge.silent` is what turns the
+  next teardown into a measurement of how close the probe came.
 - **`idx` IS ABSENT FROM THE PROFILE AND THE MECHANISM IS NOT ESTABLISHED.** Session-scoped (so a
   browser generation change costs the Okta session) versus the absolute cap are different facts
   with different consequences, and the first would make every `restart-rc` more expensive than it
-  is currently written to be. One cookie census after the next sign-in separates them.
-- **ONE FIRING IS NOT A RATE.** The false-positive half is still ~2,400 healthy probes with no run
-  of three; the true-positive half is now n=1. `wedge.silent` (this branch, bot-side) is what turns
-  the next teardown into a measurement of how close the probe came.
-
+  is currently written to be. **The next human sign-in is the free discriminator** — read the
+  cookie census across the browser generation change after it.
+- **THE WARM-UP'S ONE TURN IS SPENT FOR THIS RELEASE** and the auto-login's two attempts are
+  intact. Both are correct accounting of a repair that cannot succeed; do not read either as a
+  gate misbehaving.
 
 #### THE BOX'S `wedge-recycle` EVENT IS NEARLY EMPTY, AND THE LOG THAT CARRIES THE PROOF ROLLS IN 20 MINUTES (2026-09-17)
 
@@ -12555,6 +12616,22 @@ FOR SPENDING AN EVENT RATHER THAN SAVING ONE.** `rc_mb` has been NULL since 04:1
 disabled** — the cure is first in the timer and uncontested, with only `HUNG_MS` behind it at
 twelve minutes. That state is not durable (it cleared for one sample already), so a ramp
 arriving while it holds is worth more than one arriving later.
+- **IT CLEARED AT 09:41:11 UTC AND THE WINDOW IS SHUT (2026-09-17).** So the ramp arm,
+  `ramp-scan`, the region walk and the baseline memory dump are all **re-enabled** — the 11:39:47
+  `mem-dump (baseline) in 314ms` is that working. **Do not plan around the clean test bed**; it
+  lasted about five hours and nobody established what ended it, exactly as nobody established
+  what started it.
+  - **AND I FIRST DATED IT 10:33, WHICH IS THE THREE-STATE TRAP THIS FILE RECORDS, COMMITTED BY
+    SOMEBODY READING THE ENTRY THAT RECORDS IT.** 09:41:11 is the first sample with a real
+    reading; it reads **`rc_mb=0 procs=0`**, which is the `C|` count saying *"the scan RAN and
+    found none of ours"* — true, because the old browser was already gone. 10:33 is merely the
+    first sample with a browser to count. **`NULL` = we could not look; `0` = we looked and there
+    was nothing; a number = we looked and here it is.** Reading the recovery off the first
+    non-zero row dates it three quarters of an hour late and silently discards the one sample
+    that proves the instrument came back before the subject did.
+  - The run was not unbroken either: one lone `rc_mb=0 procs=0` at **04:27:32** sits between two
+    NULL stretches (04:15:31 and 04:29:32). **A blind scan that recovers for one tick and goes
+    blind again is not the same as a steady outage**, and nothing explains either edge.
 
 #### AND A `Monitor` CANNOT CARRY A LOAD-BEARING WATCH — IT EXPIRES AT 30 MINUTES BY CONSTRUCTION
 This file recorded, hours earlier and in my own words, that *"the capture monitor is
@@ -12565,6 +12642,11 @@ lapse repeatedly, and every re-arm leaves a gap in which a firing can land and i
 - **THE RIGHT SHAPE IS A BACKGROUND BASH TASK WITH A TERMINATING CONDITION**, which has no cap
   and exits exactly once when it has something to say. The watch script already exits on each of
   its terminal signals, so it was a `Monitor` only by habit.
+  - **VINDICATED THE SAME DAY: a background bash task caught the 12:00 CAPTCHA.** It slept to two
+    fixed wall-clock times, pulled `tail-log rc-keepwarm:400` and the surrounding `bot_events`
+    rows, and completed — so the day's most consequential reading survived a session restart that
+    had already killed one `Monitor`. **The evidence path held because the watch had no timeout to
+    expire.**
 - **THE COST OF GETTING THIS WRONG IS THE WHOLE EVIDENCE PATH**, because the box's
   `wedge-recycle` event carries only the request counts and the log rolls in ~31 minutes
   (measured again today: a 70-line read at 06:00 reached back to 05:29, and all but four lines
