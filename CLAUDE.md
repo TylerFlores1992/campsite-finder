@@ -7791,7 +7791,11 @@ being fixed.** The true cure is to stop RC's SPA running unattended for hours, a
 resident page is already REFUSED for a different and still-valid reason (`checkAndReport`'s
 localStorage rule would silence `autocart.rc_session` and the phone alarm permanently).
 
-- **UNPROVEN IN PRODUCTION, and that is the honest state.** Every measurement above is a
+- ~~**UNPROVEN IN PRODUCTION, and that is the honest state.**~~ **IT FIRED ON 2026-09-17 AT
+  09:50:17 UTC — see "IT FIRED" below**, which is the reading this bullet's "HOW TO READ THE FIRST
+  FIRING" was written for, and it matched line for line. Struck rather than deleted because the
+  prediction is what makes the firing legible, and because the platform caveat below it is
+  UNCHANGED: every measurement above is still a
   container-local Chromium against a synthetic wedge. **It is BOT-SIDE, so it is inert until the
   box updates** — confirm with `bot-ask git-status`, never `autocart.bot_version`. **HOW TO READ
   THE FIRST FIRING:** a `♻` line in `logs\rc-keepwarm.log` naming the wedge, then
@@ -7965,6 +7969,97 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
      **`bot-ask git-status` showing the new sha rules out "never ran"** without a log line. What
      it cannot separate is `alive` from `inconclusive`; that is worth one line only if a later
      firing is genuinely ambiguous.
+##### IT FIRED — 2026-09-17 09:50:17 UTC, ON A GENUINE BURST WEDGE, AND NO RAMP FOLLOWED
+**First production firing. `wedge-recycle` events, all time: 1.** Against the predictions written
+before it, the log is a line-for-line match — the `♻`, the close, the reopen, and **no `✗ RAMP`
+and no `✗ WEDGED` beneath it**:
+```
+09:39:39  the previous keep-warm's last line — the process then stopped, with no bail line
+09:41:07  [stop-all] "nothing running."  →  start-all launches a fresh generation
+09:42-48  … profile busy (rc-keepwarm) — the dead process's UNRELEASED lock, timing out
+09:49:35  RC loaded and STAYING OPEN — token source: live
+09:50:15 ♻ no answer in 3 consecutive probes — recycling the resident page
+09:50:17   token on the way out: timeout
+09:50:17   closed the wedged page in 596ms — the loop reopens from here
+09:50:18   ✗ could not open a renewal tab: Target.createTarget … the browser may be unwell
+09:50:19 ⚠ the RC window was closed — reopening it
+09:50:37 RC loaded and STAYING OPEN — token source: none
+09:50:50 ⚠ RC SESSION IS DEAD … okta session GONE (404)
+```
+- **IT WAS A GENUINE BURST WEDGE, NOT A PAGE STILL LOADING.** The `request-counts` event carries
+  **30,631 asks on `futurebookingstartsendsdates` in a browser 44.6 SECONDS OLD**, `distinct: 16`,
+  `statuses: {}` — ~687/s, inside the recorded 738-848/s band, and the answer-less branch for the
+  **fourth** time. That is the young/cold-load BURST population exactly.
+- **AND THAT POPULATION IS BACK AFTER 46.5 HOURS**, which was its longest recorded absence against
+  a prior maximum of 37.8h. The 09-17 reading that called it "outside the recorded range" needed
+  no explanation after all; it simply had not arrived yet.
+- **NO RAMP. `commit_used_mb` 6,631 → 7,924 → 6,938; `rc_mb` peaked at 220 MB**; no `ramp-scan`,
+  no `bail:ramp`, no `mem-dump` with `phase: ramp`. **DO NOT CLAIM THE CURE PREVENTED ONE.** A
+  burst at full rate costing nothing is a documented, OBSERVED outcome — 2026-09-05 09:47 ran
+  19,008 hits in 120 s on a browser 0 m old with the series flat at 208-227 MB. This event cannot
+  separate *the page was closed before the mapping completed* from *this burst was never going to
+  map anything*, and the burst/leak decoupling says both are real.
+- **THE CLOSE TOOK 596 ms, WHICH IS INDEPENDENT CORROBORATION.** Against **8-16 ms across 430
+  healthy production closes** and 86-2,532 ms for the container's wedged closes, it is squarely in
+  the wedged band — so the page really was wedged, measured by something that is not the probe.
+
+**THREE THINGS NOBODY PREDICTED, AND THE SECOND IS THE ONE THAT SETTLES THE FALSE-POSITIVE
+QUESTION.**
+1. **`token on the way out: timeout`** — `persistLiveToken` is bounded at 2 s and was defeated by
+   the very wedge it runs before. **A page too wedged to answer a probe is too wedged to hand over
+   its token.** The bound did its job; what is not available is the token. Do not "fix" this by
+   lengthening it — an unbounded persist inherits the hang and delays releasing the profile lock,
+   which is what loses a cart at 08:00.
+2. **THE BROWSER WAS UNWELL INDEPENDENTLY OF OUR CLOSE.** One second later `browserContext.newPage`
+   failed with `Target.createTarget`, and the loop's own check found the context **already
+   CLOSED**. Closing one page of a persistent context does not close the context, so the browser
+   was going down on its own. That is the strongest single fact against reading this as a false
+   positive on a page still rendering RC's WebGL map.
+3. **THE PAGE WAS FORTY SECONDS OLD.** Loaded 09:49:35, three strikes by 09:50:15 — so probes began
+   failing about ten seconds after load. The 3 × 10 s design is the whole reason it acted at 30 s
+   rather than instantly.
+
+**AND IT IS THE FIRST PRODUCTION CONFIRMATION OF THE REOPEN MECHANISM, which is not the one the
+module's own header claims.** `⚠ the RC window was closed — reopening it` is the explicit
+`!ctx.pages().length || page.isClosed()` check at the top of the 1-second loop — the line recorded
+as load-bearing-by-accident, written for "somebody tidying up closed the visible window". Nothing
+propagated out of a caught await; the check is what saw it, and the loop was back on a fresh page
+in **twenty seconds**.
+
+**THE COST, STATED PLAINLY — AND THE COUNTERFACTUAL WITH IT.** The session went `src=live` →
+`src=none` and Okta went ALIVE (exp 21:29:33) → **GONE(404)**, so a real user hold releasing at
+15:00 UTC now needs `maybeAutoLogin`'s full password variant at T−30.
+- **The cure did not lose a token that was otherwise recoverable.** The token lived in page memory
+  (`src=live` is the capture hook reading RC's own outbound header, which is per-page), the page
+  was wedged, and the only alternative was `HUNG_MS` closing the same browser **eleven minutes
+  later** and losing the same token.
+- **`idx` — Okta's session cookie — IS ABSENT from the new profile's list** (`DT, [opaque], ln,
+  [opaque], luf_*, JSESSIONID`), where the 2026-08-19 census had it. **Whether it is session-scoped
+  and cannot survive a browser generation change, or simply reached its absolute cap, is NOT
+  established.** It matters: the first reading would mean every `restart-rc`/`stop-all` costs the
+  OKTA session and not merely the token — which `restart-rc.ps1` already asserts in its own output
+  (*"the RC session is GONE until maybeAutoLogin runs"*) without anyone having named the mechanism.
+
+**TWO FREE READINGS RODE ALONG.**
+- **THE BLIND PER-PROCESS SCAN CLEARED WITH THE GENERATION CHANGE.** `rc_mb` was NULL through
+  09:38, read **`rc=0 procs=0`** from 09:41:11 (the scan RAN and found none of ours — the third
+  state the `C|` count exists to keep apart) and real figures from 09:51. So the 14-hour blindness
+  was about the browser generation, and a restart ended it. That was recorded as a free experiment
+  riding on work that was happening anyway; it answered.
+- **`[stop-all] nothing running.` WAS CORRECT HERE, NOT BLIND** — `rc=0 procs=0` at 09:41:11 and
+  no orphan-sweep line at 09:49:34 both say the old browser was already gone. **Do not file this
+  as another elevation-blindness sighting.**
+
+**WHAT KILLED THE PREVIOUS KEEP-WARM AT ~09:40 IS NOT ESTABLISHED — do not write one in.** What
+bounds it: it stopped logging at 09:39:39 with **no bail line**, its browser was gone by 09:41:11,
+`restarts.log` carries no stop entry for it, and **its profile lock was never released** (eight
+minutes of `profile busy` until `STALE_MS` expired at ~09:49:39). A clean exit releases that lock
+and the crash handlers added on 2026-08-30 release it too, so this was neither — which points at a
+hard kill or a fault that ran no handler. The box did **not** update (`git-status` reads
+`HEAD 6fc7292 on master`, unchanged) and `auto-update.log` shows the guard **correctly refusing
+every run** that night — `SKIP - a hold releases in 5.3h`.
+
+
 ##### A WORKING CURE SILENCES EVERY OTHER RAMP INSTRUMENT — read that as success, not regression (2026-09-17)
 Read out of the box's own `6fc7292` rather than reasoned: the watchdog timer's arms are, in
 order, the **mem-dump stall trigger** (line 2959, `stalledMs > MEM_DUMP_STALL_MS`, 90 s), **the
@@ -12118,6 +12213,35 @@ kinds (`tab-close` 433, `request-counts` 147, `mem-dump` 77, `ramp-scan` 29).
   `ramp-scan` row in `bot_events` is a receipt that a reading existed, not the reading.
 
 ## Open / next session
+
+#### THE CURE FIRED AT 09:50:17 UTC AND THE LOG WAS CAUGHT — 2026-09-17
+
+**Read "IT FIRED — 2026-09-17 09:50:17 UTC, ON A GENUINE BURST WEDGE" above before anything
+else. The thing the last several sessions were waiting for has happened and the evidence is
+saved** (`request-counts` in Postgres; the log lines quoted in that entry, pulled ~7 minutes
+after the firing with `tail-log rc-keepwarm:400`).
+
+**IN ONE LINE: it matched the written predictions exactly, it fired on a real burst wedge
+(30,631 answer-less RDR asks in a browser 44.6 s old), no ramp followed, and the RC session was
+lost to the wedge rather than to the cure.**
+
+**WHAT IS STILL OPEN, IN ORDER.**
+- **A REAL USER HOLD (#A124) RELEASES AT 15:00 UTC AND OKTA IS `GONE(404)`**, so `maybeAutoLogin`
+  at **14:30 UTC** is the full password variant and is the only thing between that hold and a
+  missed cart. The capture for it is already armed as a background task. **Do not touch the box
+  before 15:00** — no update, no `restart-rc`, no `test-login`: the session recovers by design and
+  every lever costs it again.
+- **DO NOT MERGE ANYTHING UNTIL AFTER 15:00 UTC.** This branch touches `worker/**`, so a merge
+  fires `worker-deploy.yml` and restarts all three pollers. Pushing the BRANCH is safe and is what
+  CI runs on.
+- **`idx` IS ABSENT FROM THE PROFILE AND THE MECHANISM IS NOT ESTABLISHED.** Session-scoped (so a
+  browser generation change costs the Okta session) versus the absolute cap are different facts
+  with different consequences, and the first would make every `restart-rc` more expensive than it
+  is currently written to be. One cookie census after the next sign-in separates them.
+- **ONE FIRING IS NOT A RATE.** The false-positive half is still ~2,400 healthy probes with no run
+  of three; the true-positive half is now n=1. `wedge.silent` (this branch, bot-side) is what turns
+  the next teardown into a measurement of how close the probe came.
+
 
 #### THE BOX'S `wedge-recycle` EVENT IS NEARLY EMPTY, AND THE LOG THAT CARRIES THE PROOF ROLLS IN 20 MINUTES (2026-09-17)
 
