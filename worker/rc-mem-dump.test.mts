@@ -578,6 +578,13 @@ test('the leak probes parse and keep their deliberate playwright-core import', (
     'scripts/auto-cart-bot/mem-dump-probe.mjs',
     'scripts/auto-cart-bot/alloc-trail-probe.mjs',
     'scripts/leak-repro.mjs',
+    // The cure's own instrument. It answers WHICH CDP calls can see a wedge — and it is what
+    // resolved the 2026-09-05 counter-example, where a renderer "kept answering
+    // `Performance.getMetrics` all the way to 8,879 MB" and looked like a responsive main
+    // thread. It is not: that call is serviced OFF the main thread, so it is blind to a wedge,
+    // while `page.evaluate` (Runtime.evaluate, which runs JavaScript) is bound to it. Losing
+    // this probe would leave that reading looking like a live objection to the page-wedge arm.
+    'scripts/cdp-thread-probe.mjs',
   ];
   let checked = 0;
   for (const name of probes) {

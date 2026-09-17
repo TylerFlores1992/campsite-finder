@@ -10781,6 +10781,178 @@ label is American and which ships to the **United States storefront only**.
   comment stripping removed (the guard then fails on its own prose) and `copyOnly`
   returning nothing (the guard blind while reading green).
 
+### THE STAND-DOWN LOG FLOODED THE WINDOW SOMEBODY READS AT 08:00 (2026-09-16)
+
+Found while arming the page-wedge cure for its first production firing, and it directly
+threatens that reading. **With a real hold queued, `rc-keepwarm.log` is 86% one countdown.**
+Measured off the box rather than estimated — `bot-ask tail-log rc-keepwarm`, spanning
+23:22:24 to 23:57:52 UTC:
+
+```
+72 of 79 timestamped lines          are "stood down" repeats
+6,192 of 7,218 characters          are those two sentences
+  ~174 chars/min of pure flood      -> a 16,000-char tail-log window covers ~92 minutes
+7 lines in 35 minutes               are about anything else
+```
+
+- **THE MECHANISM IS A DEDUPE THAT COMPARES THE SENTENCE.** `autoLoginSkip` and `warmupSkip`
+  each kept `last` and skipped a repeat — and the reasons that fire while a release is
+  queued carry a minute count (`the release is 922m away`), so no two consecutive lines are
+  ever equal and **nothing collapsed for as long as a hold existed.**
+- **THE FILE CONTAINED THE RULE *AND* EXEMPTED THE NEIGHBOUR BY ASSERTION.** `renewal-schedule.mjs`
+  had already paid for this, and its header says why it needed a different mechanism:
+  *"It compares the STATE and not the sentence — **`autoLoginSkip`'s reasons are constant
+  strings**, while every reason here carries a minute count."* True of most of them. **False
+  of the two that fire whenever a release is queued**, and of three more inside the lead.
+  Same shape as the duplicate-facility story and unit 45719: the refutation was sitting in
+  the file, one function away.
+- **`autoLoginSkip`'S OWN HEADER STATES THE COST IT WAS INCURRING** — *"1,440 identical
+  entries a day and the log would become unreadable — which is its own way of hiding the
+  answer."* It is the same sentence either way: a log that hides the answer by flooding and
+  one that hides it by printing nothing are one failure.
+- **WHAT IT COSTS IS THE POST-MORTEM, WHICH IS WHEN THIS IS READ.** `tail-log` returns the
+  last 16,000 characters, so the readable window fell from most of a day to ~92 minutes, and
+  the flood does not stop at T−30 — the warm-up's `inside the ${critical}m lead` sentence
+  ticks through the release window too. **`bot_events` is unaffected** (a wedge recycle
+  writes a `request-counts` row with `reason: 'wedge-recycle'`, in Postgres), which is why
+  this degrades a reading rather than losing one.
+- **FIXED BY KEYING ON THE STATE, using the primitive that already existed.**
+  `makeSkipLogger` is imported into `rc-keepwarm.mjs` already; both loggers now take
+  `(key, reason)`, and `warmupWindowOpen`/`warmupPlan` return a `key` beside `why` — the
+  same contract `planRenewal` has had since 2026-08-18. **Measured: 780 asks a minute apart
+  collapse to one line**, and 150 asks walking from T−150 into the lead collapse to one.
+- **THE KEY CARRIES THE RELEASE**, so a NEW hold re-prints once rather than being swallowed
+  by the state it happens to share with the old one. A key built from a `why` would be the
+  bug wearing the fix's clothes, and a mutation for it is caught.
+- **`makeSkipLogger.reset()` EXISTS BECAUSE AN ATTEMPT IS A STATE CHANGE THE KEY CANNOT
+  SEE.** The key is built from the gate's inputs and says nothing about whether we went on to
+  sign in; `rc-keepwarm.mjs` clears both loggers immediately before it spends one, and that
+  behaviour predates the key. **Found by grep, not by review** — two `lastWarmupSkip = null`
+  / `lastAutoLoginSkip = null` lines four hundred lines from their declarations, which a
+  rename would have left dangling in a file nothing typechecks.
+- **MY OWN VERIFICATION GREP COULD NOT SEE THREE OF THE CALL SITES, AND THE NEW GUARD IS WHAT
+  FOUND THEM.** The conversion checked for remaining single-line `autoLoginSkip('` calls and
+  reported NONE — while three long ones put their argument on the next line, so the pattern
+  could not match the thing it was looking for. The guard counted 8 keyed against 11 calls.
+  **Then the guard had the same defect one level up**: it demanded the key immediately after
+  the paren, which is a guess about layout rather than a rule about the code. It is
+  whitespace-tolerant now. Same lesson as `rehearsal.test.mts`'s character window, twice in
+  one change.
+- **TWO OF THE THREE ARE VOLATILE TOO** (`the token covers this hold (50m left...)`), so the
+  flood continues inside the lead — bounded to ~30 lines per release rather than ~900, which
+  is why it had never been noticed.
+- **GUARDS: `session-coverage.test.mts`'s existing "every auto-login gate names itself, and
+  repeats collapse" was RE-ANCHORED, NOT RELAXED** — it pinned `lastAutoLoginSkip` by name,
+  which was true and insufficient, and it now asserts the logger is a `makeSkipLogger`, that
+  every call passes a key, that **no key carries the countdown**, and that the reset survives.
+  Plus four new tests in `autologin-warmup.test.mts` and one in `renewal-schedule.test.mts`.
+  **Twelve mutations, each verified to APPLY and each caught**, including the sentence
+  comparison restored, a key dropped, a key made volatile, `warmupSkip(win.why)`, either
+  reset deleted, two plan branches sharing a key, and `makeSkipLogger` comparing the reason.
+- **DEPLOY: the broken guard is in `worker/`, so merging fires a worker deploy and restarts
+  all three pollers.** Unavoidable — that is where the guard lives. **And the box cannot take
+  the bot-side half tonight anyway**: the 02:00–05:00 PT quiet window is shut by the 6h
+  release gate while a real hold sits at 08:00, so the fix reaches the mini-PC on the
+  following night's window. Merging is therefore worth nothing operationally until after the
+  release, and costs a poller restart — so it waits.
+
+### THE KEEP-WARM DIED SILENTLY AND THE LOCK OUTLIVED IT BY EIGHT MINUTES (2026-09-16)
+
+Found while waiting for the page-wedge cure's first firing, and it is not the cure. From the
+box's own log, with a real user's hold queued for the next morning:
+
+```
+23:57:23 ♻ RC session kept warm — token exp in 51m; okta=ALIVE
+   [ six minutes of nothing but stand-downs — the loop was ADVANCING ]
+00:04:00 RC session keep-warm every 20m — profile ...          <- A NEW PROCESS
+00:05:00 … profile busy (rc-keepwarm) — retrying in 30s, NOT a dead session
+00:06:30 … profile busy (rc-keepwarm)     [x5, ninety seconds apart]
+00:11:33   alloc trail: resident renderer armed                <- the lock finally went stale
+00:11:54 RC loaded and STAYING OPEN — token source: none       <- the session went with it
+```
+
+- **IT PRINTED NOT ONE WORD ABOUT DYING**, and that rules out most of the candidates rather
+  than merely failing to name one. No `✗ RAMP`, no `✗ WEDGED`, no `♻ recycling`, no
+  `Releasing the profile`. **`supervise.ps1` merges stderr into the log**
+  (`& cmd /c "$Command" 2>&1 | ... Add-Content`), so an unhandled throw would have left a
+  stack — there is none. And it was **not** a `stop-all`/`restart-rc`: `stop-rc.ps1` deletes
+  the stale lock file, and the lock survived. **THE CAUSE IS NOT ESTABLISHED. Do not write one
+  in.** What is established is that the process exited, `supervise.ps1` restarted it in ~60s,
+  and `rc_procs` read **0** for three consecutive samples — the Chromium went with it.
+- **`restarts.log` IS THE ONE FILE THAT WOULD NAME THE EXIT CODE, AND IT WAS `EBUSY` BOTH
+  TIMES IT WAS ASKED.** `supervise.ps1` writes `exited code=$code after {N}s` there. The
+  Windows file-locking contention this file already records — *"contention PEAKS during a
+  stop"* — made the record unreadable at exactly the moment it was worth reading. The
+  supervisor was fixed to RETRY its writes; **the READER in `bot-commands.mjs` was not** — so
+  the one record that could have named the cause was unreadable for the whole diagnosis.
+  - **FIXED: `readTextFileRetrying`**, six short attempts with jitter, and a give-up that says
+    **CONTENTION** rather than a bare `EBUSY` (which reads as a broken command rather than as
+    "ask again"). **`await`, never a busy-wait** — this runs inside `bot.mjs`, which answers
+    the hold feed every couple of seconds, and blocking that loop to read a log would trade a
+    diagnostic for the thing being diagnosed. **Only lock errors are retried**: a missing file
+    fails on the first try, because `logs\auto-update.log does not exist` is itself a reading
+    that has proved a script never ran.
+  - **AND THE FIRST VERSION WAS INERT, CAUGHT BY ITS OWN MUTATION RUN.** Reverting `tail-log`
+    to the bare `readTextFile` passed all three behavioural tests, because they call the
+    retrying function directly. Ninth instance of fix-present-and-inert; pinned structurally
+    now.
+- **THE LOCK COSTS `STALE_MS` OF DEAD SESSION ON EVERY SILENT DEATH, BY CONSTRUCTION.** A
+  holder renews its lock on a timer, so a lock only reads free ten minutes after the last
+  renew. Observed: dead at ~00:03, takeable at 00:11:33 — **eight and a half minutes with no
+  RC session at all**, and the recovery then came up `token source: none`.
+  - **THE PID IS IN THE LOCK FILE AND THE LINE THREW IT AWAY.** `profileLockHolder` returns
+    `{owner, pid, at}`; the message printed the owner alone. So *"mid-pass, fine"*, *"the
+    holder died and we are waiting out STALE_MS"* and *"a live holder is wedged"* — three
+    states needing three different responses — printed the identical sentence. That is the
+    complaint already recorded against `rc-check.bat`, in a second file.
+  - **FIXED IN THE MESSAGE ONLY** (`profileHolderNote` in `profile-lock.mjs`, so it is
+    importable and testable — `rc-keepwarm.mjs` starts the keep-warm on import): it now
+    carries the owner, **the pid** and **the age**. A missing field is omitted and a bad date
+    renders nothing rather than `held NaNs`.
+  - **TAKING A DEAD PID'S LOCK IMMEDIATELY IS THE REAL FIX AND IS DELIBERATELY NOT MADE.** It
+    would buy back those eight minutes — and it is a change to the mutual-exclusion primitive
+    whose whole job is that two Chromiums never open one `user-data-dir`, which is the
+    corruption case. That is a decision with its own evidence, not a drive-by.
+- **AND THE LINE SAID "retrying in 30s" WHILE THE REAL GAP WAS NINETY.**
+  `waitForProfileLock(PROFILE_DIR, LOCK_OWNER, 60_000)` spends its own timeout before the
+  `sleep(30_000)`, so the cadence is their SUM — observed at 00:05:00, 00:06:30, 00:08:00,
+  00:09:30, 00:11:00. **A three-fold understatement in the one sentence somebody reads while
+  the RC session is down and they are deciding whether to intervene.** Both waits are named
+  constants now and the printed number is DERIVED from both, so it cannot drift again;
+  `worker/profile-lock.test.mts` fails on the literal.
+
+#### AND THE REPLACEMENT BROWSER HIT 1,592 MB IN TWENTY-ONE SECONDS, WITH 120,732 LISTENERS
+```
+00:11:33   alloc trail: resident renderer armed
+00:11:54 ✗ RC Chromium at 1592 MB (limit 1500) — RECYCLING the browser.
+00:11:58   JS heap 114 MB, nodes 59, docs 1, listeners 120732, layout 15
+           — JS heap is only 7% of 1592 MB, so it is NOT the JS heap
+```
+- **THE SIZE ARM CAUGHT IT, AND THE WEDGE ARM CORRECTLY DID NOT.** The size guard lives in the
+  loop BODY and is only reachable while the loop is advancing; the page-wedge arm fires when
+  the page stops answering CDP. **This event is the first observation of the pair covering
+  different halves** — the loop was advancing (the guard ran at all), so the page was not
+  wedged, so `probeResidentPage` was right to read `alive`. Do not read the wedge arm's
+  silence here as a miss.
+- **120,732 LISTENERS AGAINST 59 DOM NODES AND ONE DOCUMENT, IN TWENTY-ONE SECONDS.** That is
+  ~5,700 listeners a second on a page with essentially no DOM, and it is the tightest evidence
+  yet that RC's SPA runs something in a very tight loop on a cold load. It sits beside the
+  named spin (`blink::RejectedPromises::HandlerAdded`, which is driven by promise rejection)
+  and beside the recorded request bursts. **A CANDIDATE PAIRING, NOT A FINDING** — nothing has
+  measured listeners and the 2 MiB mapping count in the same event, and three mechanisms have
+  been guessed on this leak at a session each.
+- **~1.4 GB OF THE 1,592 IS NOT THE JS HEAP**, which is the leak's own signature caught at 1.6
+  GB instead of 32 — contained at the first threshold rather than the last.
+- **THE REPLACEMENT BROWSER WAS FINE** (204-208 MB across the next two samples), so this was a
+  cold-load event and not a standing state.
+
+#### THE RENEWAL THAT FOLLOWED IS TRIAL 9, AND IT MISSED
+`00:12:19 renewing the session (src=none)` → **46.9 s**, `RAM 9884 → 9913 (+29)`, renderer
+**5 MB**, `tab-close {hung:false, closeMs:12}`. It also failed to renew
+(`no fresher token (none → none), got as far as: no-signin-control`), leaving
+`⚠ RC SESSION IS DEAD … okta session STILL ALIVE` — the documented ~96%-failure steady state,
+not a new fault. **Nine trials, nine misses; the cure remains unproven in production.**
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies

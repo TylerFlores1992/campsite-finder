@@ -185,6 +185,49 @@ const run = (file, args) =>
   });
 
 /**
+ * A LOG IS LEAST READABLE AT THE ONE MOMENT IT IS WORTH READING, SO THE READ RETRIES.
+ *
+ * These logs are appended by PowerShell, which takes a brief EXCLUSIVE lock per write, and
+ * `restarts.log` has four supervisors writing to it — so contention PEAKS during a stop, which
+ * is exactly when somebody is asking why something stopped. `supervise.ps1` was fixed to retry
+ * its WRITES on 2026-08-11; the READER here was not, and on 2026-09-16 it answered
+ *
+ *     ERROR: EBUSY: resource busy or locked, open '...\logs\restarts.log'
+ *
+ * twice, three minutes apart, while diagnosing a keep-warm that had exited silently — and
+ * `restarts.log` is the only file that records the exit code. So the one record that could have
+ * named the cause was unreadable for the whole diagnosis.
+ *
+ * `await`, NEVER A BUSY-WAIT. This runs inside `bot.mjs`, which polls the hold feed every
+ * couple of seconds and answers it; blocking that event loop for two seconds to read a log
+ * would trade a diagnostic for the thing being diagnosed. A handful of short attempts, not a
+ * long wait — a command that blocks the poll is worse than one that answers "ask again".
+ *
+ * ONLY LOCK ERRORS ARE RETRIED. A missing file or a permission problem is rethrown on the
+ * first try, because retrying those buys nothing and delays the answer; and a give-up says
+ * CONTENTION in as many words, because a bare EBUSY reads like a broken command.
+ */
+const LOCKED = new Set(['EBUSY', 'EACCES', 'EPERM']);
+export async function readTextFileRetrying(file, attempts = 6, waitMs = 150) {
+  for (let i = 0; ; i++) {
+    try {
+      return readTextFile(file);
+    } catch (e) {
+      if (i >= attempts - 1 || !LOCKED.has(e?.code)) {
+        if (LOCKED.has(e?.code)) {
+          throw new Error(
+            `${file} is held open by another process (${e.code}) after ${attempts} tries — this `
+            + 'is the write contention that peaks during a stop, which is when this log is worth '
+            + 'reading. Ask again in a moment.');
+        }
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, waitMs + Math.floor(Math.random() * waitMs)));
+    }
+  }
+}
+
+/**
  * kind -> implementation. `arg` is whatever the server sent; every handler validates it
  * itself and no handler may interpolate it into a command line.
  */
@@ -199,7 +242,7 @@ export const COMMANDS = {
     // A MISSING FILE IS AN ANSWER, not an error. "logs\auto-update.log does not exist" is
     // precisely what proved the script never ran.
     if (!fs.existsSync(file)) return `(${rel} does not exist)`;
-    return tail(readTextFile(file), n);
+    return tail(await readTextFileRetrying(file), n);
   },
 
   /** Which of OUR processes are alive. Scoped to our own scripts - not a process list. */

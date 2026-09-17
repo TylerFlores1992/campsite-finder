@@ -114,16 +114,29 @@ export const WARMUP_MAX_ATTEMPTS = 1;
  * than a copy in the caller that can drift. A second copy is how `content-rc.js` spent months
  * telling users to click a cart icon while `rc-cart.mjs` did the right thing.
  *
- * @returns {{open: boolean, why: string}}
+ * `key` NAMES THE STATE; `why` IS THE SENTENCE, AND THEY ARE NOT INTERCHANGEABLE.
+ *
+ * Three of the four `why`s below carry a minute count that changes on every ask, so a caller
+ * that collapses repeats by comparing the SENTENCE collapses nothing at all and prints a line
+ * a minute for as long as a release is queued. That is not hypothetical: with a hold queued
+ * fifteen hours out, 86% of `rc-keepwarm.log` was these two sentences counting down, and the
+ * effective `tail-log` window fell from most of a day to about ninety minutes — which is the
+ * window somebody reads to find out what happened at 08:00.
+ *
+ * `renewal-schedule.mjs` already carries this fix and its header already names this file's
+ * caller as the neighbour that does NOT need it ("`autoLoginSkip`'s reasons are constant
+ * strings"). That was true of most of them and false of the ones that matter.
+ *
+ * @returns {{open: boolean, why: string, key: string}}
  */
 export function warmupWindowOpen(o) {
   const critical = o.criticalLeadMin;
   const lead = o.warmupLeadMin ?? WARMUP_LEAD_MIN;
   const mins = o.minutesUntilRelease;
 
-  if (mins == null) return { open: false, why: 'could not read the release time' };
+  if (mins == null) return { open: false, why: 'could not read the release time', key: 'no-release-time' };
   if (mins > lead) {
-    return { open: false, why: `the release is ${Math.round(mins)}m away, outside the ${lead}m warm-up window` };
+    return { open: false, key: 'outside-window', why: `the release is ${Math.round(mins)}m away, outside the ${lead}m warm-up window` };
   }
   /**
    * THE DISJOINTNESS IS LOAD-BEARING, NOT TIDINESS.
@@ -135,9 +148,9 @@ export function warmupWindowOpen(o) {
    * that can lose a campsite.
    */
   if (mins <= critical) {
-    return { open: false, why: `the release is ${Math.round(mins)}m away — inside the ${critical}m lead, where the auto-login owns this` };
+    return { open: false, key: 'inside-critical-lead', why: `the release is ${Math.round(mins)}m away — inside the ${critical}m lead, where the auto-login owns this` };
   }
-  return { open: true, why: `the release is ${Math.round(mins)}m away` };
+  return { open: true, key: 'open', why: `the release is ${Math.round(mins)}m away` };
 }
 
 /**
@@ -155,7 +168,8 @@ export function warmupWindowOpen(o) {
  * @param {number} [o.maxAttempts]
  * @param {number|null} [o.tokenSecondsLeft]  Seconds left on RC's OWN access token, or null if
  *   it could not be read. Only a POSITIVE number stands down — see the gate below.
- * @returns {{go: boolean, why: string}} `why` is always a full sentence, because a silent
+ * @returns {{go: boolean, why: string, key: string}} `key` is the state, for a caller that
+ *   collapses repeats — see `warmupWindowOpen`. `why` is always a full sentence, because a silent
  *   gate is indistinguishable from a gate that never ran — the failure this project has
  *   fixed in the watchdog, the rehearsal and five auto-login gates.
  */
@@ -166,14 +180,14 @@ export function warmupPlan(o) {
 
   // ONE definition of the window — the caller gates its Okta probe on this same function.
   const win = warmupWindowOpen(o);
-  if (!win.open) return { go: false, why: win.why };
+  if (!win.open) return { go: false, why: win.why, key: win.key };
 
   if (o.oktaAlive === true) {
-    return { go: false, why: 'the Okta session is alive, so the sign-in at T-' + critical + ' will be answered from the cookie' };
+    return { go: false, key: 'okta-alive', why: 'the Okta session is alive, so the sign-in at T-' + critical + ' will be answered from the cookie' };
   }
   if (o.oktaAlive == null) {
     // Never spend a password on a guess. See the header.
-    return { go: false, why: 'the Okta session state is UNKNOWN — not signing in on a guess' };
+    return { go: false, key: 'okta-unknown', why: 'the Okta session state is UNKNOWN — not signing in on a guess' };
   }
   /**
    * A LIVE RC TOKEN MAKES THE TRIP A NO-OP, AND SPENDING THE TURN ON IT IS THE DEFECT.
@@ -209,15 +223,17 @@ export function warmupPlan(o) {
   if (typeof left === 'number' && left > 0) {
     return {
       go: false,
+      key: 'token-still-alive',
       why: `RC's own token still has ${Math.round(left / 60)}m left, so a sign-in would `
         + 'short-circuit and spend the turn on nothing — waiting for it to lapse',
     };
   }
   if (spent >= max) {
-    return { go: false, why: `the warm-up has already had its ${max} turn for this release` };
+    return { go: false, key: 'turn-spent', why: `the warm-up has already had its ${max} turn for this release` };
   }
   return {
     go: true,
+    key: 'go',
     why: `${win.why} and Okta is GONE — signing in now, while a failed or guard-killed `
       + 'attempt still costs nothing',
   };

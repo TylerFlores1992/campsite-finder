@@ -66,7 +66,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
+  waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder, profileHolderNote,
   profileRequested,
 } from './profile-lock.mjs';
 import { sweepOrphanChromium } from './orphan-sweep.mjs';
@@ -795,12 +795,17 @@ async function warmOnce() {
 
   if (state === BUSY) {
     const held = profileLockHolder(PROFILE_DIR);
-    log(`… profile busy (${held?.owner ?? 'another process'}) — skipping this pass, NOT a dead session`);
+    log(`… profile busy (${profileHolderNote(held)}) — skipping this pass, NOT a dead session`);
     return 'unknown';
   }
   await reportSession(state, renewalNote);
   return state;
 }
+
+/** How long one attempt waits for the lock before giving up and sleeping. */
+const PROFILE_WAIT_MS = 60_000;
+/** And how long it sleeps before trying again. The printed cadence is their SUM. */
+const PROFILE_RETRY_MS = 30_000;
 
 /**
  * Send the verdict to camphawk.app.
@@ -911,13 +916,29 @@ async function feedFacts() {
  * The dedupe is why this is affordable: the loop asks every 60 seconds, so an un-collapsed
  * line would be 1,440 identical entries a day and the log would become unreadable — which
  * is its own way of hiding the answer.
+ *
+ * IT COLLAPSES ON A STATE KEY, NOT ON THE SENTENCE, AND THAT DISTINCTION WAS PAID FOR TWICE.
+ *
+ * `renewal-schedule.mjs` learned it first and its header records this function as the
+ * neighbour that did not need it — "`autoLoginSkip`'s reasons are constant strings". Most of
+ * them are. The two that decide whether anything happens are not: "the release is 922m away"
+ * and "the release was 3m ago" both carry a minute count that changes on every ask, so a
+ * comparison of the SENTENCE collapsed nothing for exactly as long as a release was queued.
+ *
+ * Measured 2026-09-16, with a real hold fifteen hours out: 72 of 79 timestamped lines and
+ * 6,192 of 7,218 characters of `rc-keepwarm.log` were these two sentences counting down,
+ * at ~174 chars/min. `tail-log` returns the last 16,000 characters, so the readable window
+ * collapsed from most of a day to about ninety minutes — and the window is what somebody
+ * reads to find out what the bot did at 08:00. A log that hides the answer by flooding is
+ * the same failure as one that hides it by printing nothing; this file's own comment three
+ * paragraphs up says so.
+ *
+ * THE KEY CARRIES THE RELEASE where the reason depends on it, so a NEW hold re-prints once
+ * rather than being swallowed by the state it happens to share with the old one.
  */
-let lastAutoLoginSkip = null;
-function autoLoginSkip(reason) {
-  if (reason !== lastAutoLoginSkip) {
-    log(`   auto-login stood down: ${reason}`);
-    lastAutoLoginSkip = reason;
-  }
+const autoLoginSkipLog = makeSkipLogger((reason) => log(`   auto-login stood down: ${reason}`));
+function autoLoginSkip(key, reason) {
+  autoLoginSkipLog(key, reason);
   return false;
 }
 
@@ -1042,15 +1063,19 @@ function saveWarmup(st) {
 }
 
 let warmup = loadWarmup();
-let lastWarmupSkip = null;
 
-function warmupSkip(reason) {
-  // Collapsed like every other gate here: this is asked every poll, and 1,440 identical
-  // lines a day hides the answer as effectively as printing nothing.
-  if (reason !== lastWarmupSkip) {
-    log(`   warm-up stood down: ${reason}`);
-    lastWarmupSkip = reason;
-  }
+/**
+ * Collapsed like every other gate here: this is asked every poll, and 1,440 identical
+ * lines a day hides the answer as effectively as printing nothing.
+ *
+ * ON A STATE KEY, for the reason `autoLoginSkip` above sets out at length: `warmupWindowOpen`
+ * returns three of its four sentences with a minute count in them, so comparing the sentence
+ * collapsed nothing at all while a release was queued. Those two functions produced one line
+ * each per minute, together accounting for 86% of the log.
+ */
+const warmupSkipLog = makeSkipLogger((reason) => log(`   warm-up stood down: ${reason}`));
+function warmupSkip(key, reason) {
+  warmupSkipLog(key, reason);
   return false;
 }
 
@@ -1068,15 +1093,15 @@ function warmupSkip(reason) {
  */
 async function maybeWarmupLogin(ctx, page) {
   if (!hasCredentials()) {
-    return warmupSkip('no credentials are stored on this box — run mini-pc\\rc-save-password.bat');
+    return warmupSkip('no-creds', 'no credentials are stored on this box — run mini-pc\\rc-save-password.bat');
   }
   const { nextRelease: release, reachable } = await feedFacts();
   // UNREACHABLE IS NOT "NO HOLD" — the same distinction maybeAutoLogin draws. Being blind is
   // not being idle, and it must not read as a quiet night.
   if (!reachable) {
-    return warmupSkip('the hold feed is unreachable, so we cannot tell whether a release is coming');
+    return warmupSkip('feed-unreachable', 'the hold feed is unreachable, so we cannot tell whether a release is coming');
   }
-  if (!release) return warmupSkip('no hold is queued');
+  if (!release) return warmupSkip('no-hold', 'no hold is queued');
 
   if (warmup.release !== release) {
     warmup = { release, spent: 0 };
@@ -1095,7 +1120,7 @@ async function maybeWarmupLogin(ctx, page) {
     minutesUntilRelease: mins,
     criticalLeadMin: AUTOLOGIN_LEAD_MIN,
   });
-  if (!win.open) return warmupSkip(win.why);
+  if (!win.open) return warmupSkip(`${win.key}:${release}`, win.why);
 
   const okta = await oktaSessionAlive(ctx).catch(() => null);
   /**
@@ -1111,7 +1136,7 @@ async function maybeWarmupLogin(ctx, page) {
     tokenSecondsLeft: tokenSecondsLeft(live?.token ?? null),
     spent: warmup.spent,
   });
-  if (!plan.go) return warmupSkip(plan.why);
+  if (!plan.go) return warmupSkip(`${plan.key}:${release}`, plan.why);
 
   /**
    * A TAB THAT CANNOT OPEN IS A STAND-DOWN, NOT AN ATTEMPT — taken before the ration is
@@ -1122,7 +1147,7 @@ async function maybeWarmupLogin(ctx, page) {
     log(`  ✗ could not open a warm-up tab: ${e.message}`);
     return null;
   });
-  if (!tab) return warmupSkip('could not open a warm-up tab — nothing was spent');
+  if (!tab) return warmupSkip('no-tab', 'could not open a warm-up tab — nothing was spent');
   const tripStartedAt = Date.now();
   let tripRam = null;
 
@@ -1161,7 +1186,7 @@ async function maybeWarmupLogin(ctx, page) {
   // the `finally`.
   if (sampling.ok) allocTrail.register('warmup', sampler);
 
-  lastWarmupSkip = null;
+  warmupSkipLog.reset();
   warmup.spent += 1;
   saveWarmup(warmup);
   log(`🌅 warming up the session: ${plan.why}`);
@@ -1304,7 +1329,7 @@ const secsText = (v) => (v == null ? 'none' : `${v}s`);
 
 async function maybeAutoLogin(ctx, page) {
   if (!hasCredentials()) {
-    return autoLoginSkip('no credentials are stored on this box — run mini-pc\\rc-save-password.bat');
+    return autoLoginSkip('no-creds', 'no credentials are stored on this box — run mini-pc\\rc-save-password.bat');
   }
   const { nextRelease: release, reachable } = await feedFacts();
   // UNREACHABLE IS NOT "NO HOLD". Both produce a null release, and one of them means we are
@@ -1312,9 +1337,9 @@ async function maybeAutoLogin(ctx, page) {
   // exists to preserve. It cannot be acted on (we do not know if a cart is coming) but it
   // must not read as a quiet, healthy night.
   if (!reachable) {
-    return autoLoginSkip('the hold feed is unreachable, so we cannot tell whether a release is coming');
+    return autoLoginSkip('feed-unreachable', 'the hold feed is unreachable, so we cannot tell whether a release is coming');
   }
-  if (!release) return autoLoginSkip('no hold is queued');
+  if (!release) return autoLoginSkip('no-hold', 'no hold is queued');
 
   if (autoLogin.release !== release) {
     // A NEW RELEASE IS A NEW BUDGET, and it must be written: otherwise a restart reloads
@@ -1332,12 +1357,12 @@ async function maybeAutoLogin(ctx, page) {
    * for printing, where a rounded minute is what a reader wants.
    */
   const secs = secondsUntil(release);
-  if (secs == null) return autoLoginSkip(`could not read the release time (${release})`);
+  if (secs == null) return autoLoginSkip(`bad-release-time:${release}`, `could not read the release time (${release})`);
   const mins = Math.round(secs / 60);
   if (mins > AUTOLOGIN_LEAD_MIN) {
-    return autoLoginSkip(`the release is ${Math.round(mins)}m away, outside the ${AUTOLOGIN_LEAD_MIN}m lead`);
+    return autoLoginSkip(`outside-lead:${release}`, `the release is ${Math.round(mins)}m away, outside the ${AUTOLOGIN_LEAD_MIN}m lead`);
   }
-  if (mins < -20) return autoLoginSkip(`the release was ${Math.round(-mins)}m ago, past the retry window`);
+  if (mins < -20) return autoLoginSkip(`past-retry-window:${release}`, `the release was ${Math.round(-mins)}m ago, past the retry window`);
 
   /**
    * WHAT "COVERED" MEANS, COMPUTED FROM WHERE WE ACTUALLY ARE.
@@ -1406,6 +1431,7 @@ async function maybeAutoLogin(ctx, page) {
      * whole log record of a decision that was losing by seconds, and it read as comfortable.
      */
     return autoLoginSkip(
+      `covers:${release}`,
       `the token covers this hold (${Math.round(left / 60)}m left, needs ${Math.round(needSec / 60)}m, `
       + `slack ${Math.round((left - needSec) / 60)}m)`);
   }
@@ -1418,6 +1444,7 @@ async function maybeAutoLogin(ctx, page) {
    */
   if (!recoverable && left != null && left > adequateSec) {
     return autoLoginSkip(
+      `under-margin:${release}`,
       `the token is under the margin (${Math.round(left / 60)}m left, prefer `
       + `${Math.round(needSec / 60)}m) but still covers the cart and its ${CART_HOLD_MIN}m hold, `
       + `and the release is too close to risk a sign-in — signing in DROPS this token`);
@@ -1425,11 +1452,12 @@ async function maybeAutoLogin(ctx, page) {
 
   if (autoLogin.spent >= AUTOLOGIN_MAX_ATTEMPTS) {
     return autoLoginSkip(
+      `attempts-spent:${release}`,
       `all ${AUTOLOGIN_MAX_ATTEMPTS} sign-in attempts for this release are spent — a human must sign in`);
   }
   if (autoLogin.spent > 0 && Date.now() - autoLogin.lastAt < AUTOLOGIN_RETRY_GAP_MS) {
     const wait = Math.ceil((AUTOLOGIN_RETRY_GAP_MS - (Date.now() - autoLogin.lastAt)) / 60_000);
-    return autoLoginSkip(`waiting ${wait}m before spending the second sign-in attempt`);
+    return autoLoginSkip(`retry-gap:${release}`, `waiting ${wait}m before spending the second sign-in attempt`);
   }
 
   /**
@@ -1479,7 +1507,7 @@ async function maybeAutoLogin(ctx, page) {
     return null;
   });
   if (!tab) {
-    return autoLoginSkip('could not open a sign-in tab — the browser may be unwell; nothing was spent');
+    return autoLoginSkip('no-tab', 'could not open a sign-in tab — the browser may be unwell; nothing was spent');
   }
   const tripStartedAt = Date.now();
   let tripRam = null;
@@ -1529,7 +1557,7 @@ async function maybeAutoLogin(ctx, page) {
   // the `finally`.
   if (sampling.ok) allocTrail.register('auto-login', sampler);
 
-  lastAutoLoginSkip = null;
+  autoLoginSkipLog.reset();
   autoLogin.spent += 1;
   autoLogin.lastAt = Date.now();
   // STAMPED AND WRITTEN BEFORE THE ATTEMPT, not after. Written after, an attempt that never
@@ -2597,10 +2625,19 @@ async function warmResident() {
    */
   let suppressedTeardowns = 0;
   for (;;) {
-    if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, 60_000))) {
+    if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, PROFILE_WAIT_MS))) {
       const held = profileLockHolder(PROFILE_DIR);
-      log(`… profile busy (${held?.owner ?? 'another process'}) — retrying in 30s, NOT a dead session`);
-      await sleep(30_000);
+      /**
+       * THE CADENCE IS 90 SECONDS, NOT 30, AND THE LINE SAID 30 FOR AS LONG AS IT EXISTED.
+       * `waitForProfileLock` has already spent its own 60,000 ms before we get here, so the
+       * real gap between two of these lines is that plus this sleep. Observed 2026-09-16 at
+       * 00:05:00, 00:06:30, 00:08:00, 00:09:30 and 00:11:00 — ninety seconds apart, under a
+       * line promising thirty. A three-fold understatement in the one sentence somebody reads
+       * while the RC session is down and they are deciding whether to intervene.
+       */
+      log(`… profile busy (${profileHolderNote(held)}) — retrying in `
+        + `${Math.round((PROFILE_WAIT_MS + PROFILE_RETRY_MS) / 1000)}s, NOT a dead session`);
+      await sleep(PROFILE_RETRY_MS);
       continue;
     }
     // THE RESIDENT PATH'S SWEEP, and the one that matters most. This loop reopens on every

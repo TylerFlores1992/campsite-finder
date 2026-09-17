@@ -13,11 +13,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fsDefault from 'node:fs';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rejectReason, BOT_COMMAND_KINDS, MAX_PENDING, COMMAND_TTL_MS } from '../src/lib/bot-commands.js';
-import { COMMANDS, KINDS, LOGS, scrub, runCommand, readTextFile, MAX_OUTPUT } from '../scripts/auto-cart-bot/bot-commands.mjs';
+import {
+  COMMANDS, KINDS, LOGS, scrub, runCommand, readTextFile, readTextFileRetrying, MAX_OUTPUT,
+} from '../scripts/auto-cart-bot/bot-commands.mjs';
 
 const botFile = readFileSync('scripts/auto-cart-bot/bot-commands.mjs', 'utf8');
 const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
@@ -243,4 +246,99 @@ test('a wholly UTF-16LE log of ODD byte length still decodes', () => {
   const text = readTextFile(f);
   assert.match(text, /supervisor restarted rc-keepwarm/);
   assert.ok(!text.includes('\u0000'), 'no NULs may survive the decode');
+});
+
+// ── A locked log is contention, not a broken command ──────────────────────────────────────
+//
+// THE DEFECT (2026-09-16). `tail-log restarts` answered
+//
+//     ERROR: EBUSY: resource busy or locked, open '...\logs\restarts.log'
+//
+// twice, three minutes apart, while diagnosing a keep-warm that had exited silently — and
+// `restarts.log` is the ONLY file recording the exit code, so the one record that could have
+// named the cause was unreadable for the whole diagnosis. These logs are appended by
+// PowerShell, which takes a brief exclusive lock per write, and four supervisors write that
+// file: contention PEAKS during a stop, which is exactly when it is worth reading.
+// `supervise.ps1` was fixed to retry its WRITES in August; the reader never was.
+
+test('a briefly locked log is retried, and a give-up names contention', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ch-lock-'));
+  const f = join(dir, 'busy.log');
+  writeFileSync(f, 'the line that matters\n', 'utf8');
+
+  // Fails twice with EBUSY, then succeeds — the real shape, since each PowerShell append holds
+  // the lock for milliseconds.
+  const real = fsDefault.readFileSync;
+  let calls = 0;
+  (fsDefault as { readFileSync: typeof fsDefault.readFileSync }).readFileSync = ((p: string, ...rest: unknown[]) => {
+    if (p === f && ++calls <= 2) {
+      const e = new Error('EBUSY: resource busy or locked') as NodeJS.ErrnoException;
+      e.code = 'EBUSY';
+      throw e;
+    }
+    return (real as (...a: unknown[]) => unknown)(p, ...rest);
+  }) as typeof fsDefault.readFileSync;
+  try {
+    assert.match(await readTextFileRetrying(f, 6, 1), /the line that matters/);
+    assert.equal(calls, 3, 'it must actually have retried, not swallowed the error');
+  } finally {
+    (fsDefault as { readFileSync: typeof fsDefault.readFileSync }).readFileSync = real;
+  }
+});
+
+test('a permanently locked log gives up saying CONTENTION, not a bare errno', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ch-lock-'));
+  const f = join(dir, 'stuck.log');
+  writeFileSync(f, 'x\n', 'utf8');
+  const real = fsDefault.readFileSync;
+  (fsDefault as { readFileSync: typeof fsDefault.readFileSync }).readFileSync = ((p: string, ...rest: unknown[]) => {
+    if (p === f) {
+      const e = new Error('EBUSY: resource busy or locked') as NodeJS.ErrnoException;
+      e.code = 'EBUSY';
+      throw e;
+    }
+    return (real as (...a: unknown[]) => unknown)(p, ...rest);
+  }) as typeof fsDefault.readFileSync;
+  try {
+    await assert.rejects(() => readTextFileRetrying(f, 3, 1), (e: Error) => {
+      // The message is what a human reads next to a dead session; "EBUSY" alone reads as a
+      // broken command rather than as "ask again".
+      assert.match(e.message, /held open by another process/);
+      assert.match(e.message, /contention/i);
+      assert.match(e.message, /ask again/i);
+      return true;
+    });
+  } finally {
+    (fsDefault as { readFileSync: typeof fsDefault.readFileSync }).readFileSync = real;
+  }
+});
+
+test('tail-log actually USES the retrying reader', () => {
+  /**
+   * THE INERT-FIX GUARD, AND IT CAUGHT ITSELF. `readTextFileRetrying` can be perfect while the
+   * only production caller goes on using the bare read — and it was: a mutation reverting
+   * `tail-log` to `readTextFile(file)` passed all three behavioural tests above, because they
+   * call the function directly. That is the shape this repo has paid for at least eight times
+   * (`6006428` claiming a fix it never made; the `--claimed` flag honoured and never passed;
+   * the memory sampler's `C|` line emitted after the loop instead of before).
+   */
+  const src = readFileSync(
+    new URL('../scripts/auto-cart-bot/bot-commands.mjs', import.meta.url), 'utf8');
+  const at = src.indexOf("'tail-log':");
+  assert.ok(at > -1, 'tail-log must still exist — anchor not found');
+  const handler = src.slice(at, src.indexOf('\n  },', at));
+  assert.match(handler, /await readTextFileRetrying\(/,
+    'tail-log must read through the retrying reader, or a locked log is still a hard error');
+  assert.doesNotMatch(handler, /[^g]\breadTextFile\(/,
+    'and must not fall back to the bare read');
+});
+
+test('a missing file is NOT retried — only lock errors are', async () => {
+  // Retrying ENOENT buys nothing and delays the answer, and "logs\\auto-update.log does not
+  // exist" is precisely the reading that proved a script had never run.
+  const t0 = Date.now();
+  await assert.rejects(
+    () => readTextFileRetrying(join(tmpdir(), 'ch-definitely-absent-' + Math.random()), 6, 400),
+    (e: NodeJS.ErrnoException) => e.code === 'ENOENT');
+  assert.ok(Date.now() - t0 < 400, 'a missing file must fail on the FIRST try');
 });

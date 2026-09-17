@@ -300,3 +300,92 @@ test('the caller actually reads the token and passes it — the gate is inert ot
   assert.match(body.slice(call), /tokenSecondsLeft:\s*tokenSecondsLeft\(/,
     'and the decoded seconds must actually reach warmupPlan');
 });
+
+// ── The stand-down log collapses on a STATE, not on a sentence ────────────────────────────
+//
+// THE DEFECT (measured 2026-09-16). `warmupSkip` and its sibling `autoLoginSkip` deduped by
+// comparing the REASON STRING, and three of `warmupWindowOpen`'s four sentences carry a minute
+// count that changes on every ask. So with a real hold queued fifteen hours out the comparison
+// collapsed nothing at all: 72 of 79 timestamped lines and 6,192 of 7,218 characters of
+// `rc-keepwarm.log` were two sentences counting down, at ~174 chars/min. `tail-log` returns the
+// last 16,000 characters, so the readable window fell from most of a day to about ninety
+// minutes — and that window is what somebody reads to find out what the bot did at 08:00.
+//
+// A LOG THAT HIDES THE ANSWER BY FLOODING IS THE SAME FAILURE AS ONE THAT HIDES IT BY PRINTING
+// NOTHING, which `autoLoginSkip`'s own header had said in as many words since it was written.
+// `renewal-schedule.mjs` had already paid for this and its header records THIS file's caller as
+// the neighbour that did not need it — "`autoLoginSkip`'s reasons are constant strings". True of
+// most of them, false of the ones that decide whether anything happens.
+
+test('every warmupWindowOpen branch carries a state key, and no key carries the countdown', () => {
+  const branches = [
+    warmupWindowOpen({ minutesUntilRelease: null, criticalLeadMin: CRITICAL }),
+    warmupWindowOpen({ minutesUntilRelease: 900, criticalLeadMin: CRITICAL }),
+    warmupWindowOpen({ minutesUntilRelease: 20, criticalLeadMin: CRITICAL }),
+    warmupWindowOpen({ minutesUntilRelease: 120, criticalLeadMin: CRITICAL }),
+  ];
+  for (const b of branches) {
+    assert.equal(typeof b.key, 'string', `a branch returned no key: ${b.why}`);
+    assert.ok(b.key.length > 0, `a branch returned an empty key: ${b.why}`);
+  }
+  // Distinct states must be distinct keys, or two different answers collapse into one line.
+  assert.equal(new Set(branches.map((b) => b.key)).size, branches.length);
+});
+
+test('the key does NOT move while only the countdown does — that IS the bug', () => {
+  // The whole point. 780 asks a minute apart, one state, one key.
+  const keys = new Set<string>();
+  const whys = new Set<string>();
+  for (let m = 900; m > WARMUP_LEAD_MIN; m--) {
+    const w = warmupWindowOpen({ minutesUntilRelease: m, criticalLeadMin: CRITICAL });
+    keys.add(w.key);
+    whys.add(w.why);
+  }
+  assert.equal(keys.size, 1, 'one state must be one key however long the countdown runs');
+  assert.ok(whys.size > 700,
+    'the SENTENCES really do all differ — which is why comparing them collapsed nothing');
+});
+
+test('every warmupPlan branch carries a state key too', () => {
+  const branches = [
+    plan({ minutesUntilRelease: 900 }),
+    plan({ minutesUntilRelease: 20 }),
+    plan({ minutesUntilRelease: 120, oktaAlive: true }),
+    plan({ minutesUntilRelease: 120, oktaAlive: null }),
+    plan({ minutesUntilRelease: 120, oktaAlive: false, tokenSecondsLeft: 1800 }),
+    plan({ minutesUntilRelease: 120, oktaAlive: false, tokenSecondsLeft: 0, spent: WARMUP_MAX_ATTEMPTS }),
+    plan({ minutesUntilRelease: 120, oktaAlive: false, tokenSecondsLeft: 0, spent: 0 }),
+  ];
+  for (const b of branches) assert.ok(b.key, `a plan branch returned no key: ${b.why}`);
+  assert.equal(new Set(branches.map((b) => b.key)).size, branches.length,
+    'two different decisions sharing a key means one of them is never printed');
+  // The live-token branch's SENTENCE carries `${left/60}m left`; its key must not.
+  const tok = plan({ minutesUntilRelease: 120, oktaAlive: false, tokenSecondsLeft: 1800 });
+  const tok2 = plan({ minutesUntilRelease: 120, oktaAlive: false, tokenSecondsLeft: 60 });
+  assert.notEqual(tok.why, tok2.why, 'the sentence must still report the real figure');
+  assert.equal(tok.key, tok2.key, 'but the key must not move with it, or nothing collapses');
+});
+
+test('maybeWarmupLogin routes every stand-down through the keyed logger', () => {
+  // STRUCTURAL, because the pure keys above can be perfect while the caller throws them away —
+  // the fix-present-and-inert shape this repo has paid for at least eight times.
+  const src = readFileSync(
+    new URL('../scripts/auto-cart-bot/rc-keepwarm.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const warmupSkipLog = makeSkipLogger\(/,
+    'the collapse must go through makeSkipLogger, which compares a STATE key');
+
+  const at = src.indexOf('async function maybeWarmupLogin');
+  assert.ok(at > -1, 'maybeWarmupLogin must still exist — anchor not found');
+  const fn = src.slice(at, src.indexOf('\nasync function ', at + 10));
+  const calls = (fn.match(/warmupSkip\(/g) ?? []).length;
+  assert.ok(calls >= 6, 'each distinct stand-down reason needs its own sentence');
+  const keyed = (fn.match(/warmupSkip\(\s*(`[^`]*`|'[^']*'),\s/g) ?? []).length;
+  assert.equal(keyed, calls, 'every stand-down must pass a state KEY as well as a sentence');
+
+  // A key built from a `why` is the bug wearing the fix's clothes.
+  assert.doesNotMatch(fn, /warmupSkip\(\s*(win|plan)\.why/,
+    'the key must be the module\'s `key`, never its sentence');
+  // An attempt is a state change the key cannot see — see makeSkipLogger.reset.
+  assert.match(src, /warmupSkipLog\.reset\(\)/,
+    'the dedupe must be cleared before a warm-up sign-in is spent');
+});
