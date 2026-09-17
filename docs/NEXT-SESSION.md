@@ -33,24 +33,64 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 0.5 DO THIS FIRST — the cure is merged and has never run in production
+## 0.5 DO THIS FIRST — the cure is live, has never fired, and is waiting on an EVENT
 
-**There is genuine bot-side code in the gap for the first time in a fortnight** (the page-wedge
-arm, #355), so the standing *"never press Update now"* advice does not apply to this one. The
-ordered task, and **§2.6 is the full account of what it is and how to read it**:
+**The box is on the cure** (`6fc7292` contains `e92a5a6`/#355, checked with `git merge-base
+--is-ancestor` rather than by reading a version field), and the arm is unconditional in the
+watchdog timer. So "it never ran" is ruled out structurally. **§2.6 is the full account.**
 
-1. **Update the box**, then confirm with `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts
-   git-status` — **never `autocart.bot_version`**. Check `autocart.rc_runner` says **no holds
-   due** first: an update inside 6h of a release is refused, and it ends the RC session either
-   way (~11 min to repair itself unattended).
-2. **Force a ramp.** `restart-rc` is the cheap lever and is **2-for-2** against a 10% pooled base
-   rate — no campsite, no password submission, no Okta precondition. **Pace it at ~15 minutes**:
-   `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves the RC pair dead.
-3. **Read the first firing** — §2.6 states the three outcomes and what each one means, with the
-   predicted readings written down *before* the run so they can be falsified.
+**Ask this ONE query before anything else. It is the whole state of the proof:**
 
-**If it does not fire, that is a reading and not a dead end** — §2.6 names what each silence
-would mean and which instrument answers it.
+```sql
+SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 03:40
+```
+
+- **A ~30 s cure can fit entirely between two two-minute memory samples, so the SERIES IS THE
+  WRONG INSTRUMENT.** That event is in Postgres and cannot roll out of a log window. **Do not
+  read a quiet `chromium_memory_samples` as the cure working.**
+- The detector itself is validated: `detail->>'reason'` resolves on 5 of 5 stored
+  `request-counts` rows, and the keep-warm emits exactly `snapshot({ reason: 'wedge-recycle' })`.
+  So a zero is about the subject, not the query.
+
+### What is blocking it, and it is not the cure
+
+**No ramp since 09-16 03:51 (4,692 MB)** — and the last `bail:ramp` predates the cure going live
+by eighteen hours. Okta trips ARE happening and simply not ramping, which is the recorded bound:
+**a renewal trip ramps at most about one in twelve.** A 23.5-hour gap is longer than the observed
+2.7-17.3 h range and **no cause is written in**.
+
+### Forcing it, in order of cost
+
+1. **`restart-rc` — 2-for-4, not 2-for-2.** Two attempts on 09-17 (03:02:24, 03:12:48) replaced
+   the browser and neither ramped (peaks 316 MB, 355 MB). Still the cheap lever: no campsite, no
+   password, no Okta precondition, and it leaves the profile token-less, which is the cell that
+   reaches `authorize`. **The box refuses one per 10 minutes on its own clock**; pace at ~15 to
+   stay under `supervise.ps1`'s five-exits-in-ten-minutes stop.
+2. **`rc-test-hold.mts --in 120`** — the only recipe with a recorded hit rate (**3 in 7**). It
+   needs **`okta=GONE` AND a dead token**, opens the T−3h..T−30 warm-up window at once with
+   ninety minutes of margin, and the hold is deleted the moment the trip is under way so nothing
+   is carted. **It refuses while a real hold is live.**
+3. **`test-login` — do NOT spend it while Okta is ALIVE.** It forces `prompt=login` by
+   interception so it does navigate, but Okta answers from the cookie (09-07: eleven seconds,
+   +24 MB) — the cheap cell. It is rationed one per 6 h and costs a password submission from an
+   address that has eaten a twelve-hour block.
+
+**`okta=GONE` cannot be brought forward.** The reported expiry is the ROLLING window our own
+`/api/v1/sessions/me` probe refreshes. **The discriminator is one subtraction:**
+`okta_expires_at - okta_checked_at`. 12.0000h is rolling and says nothing about the cap; a window
+that SHRINKS is the frozen absolute cap, which is the precondition.
+
+### How to read the first firing
+
+In `logs\rc-keepwarm.log`: a `♻` line naming the wedge, then `closed the wedged page in Nms`,
+then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED` beneath it. Plus the
+`wedge-recycle` event above, which carries what that page was asking for.
+
+**One known defect on that path, recorded and deliberately not fixed:** `WEDGE_MAX_RECYCLES`
+cannot bind, because `wedge` is reset on every reopen and every recycle produces a reopen — so
+the `escalate` branch is unreachable and a page that wedges immediately on each fresh load
+recycles for ever without escalating to the bail. Watch for repeated `wedge-recycle` events;
+`restart-rc` breaks the loop.
 
 ---
 
