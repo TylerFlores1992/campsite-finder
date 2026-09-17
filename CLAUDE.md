@@ -10858,6 +10858,43 @@ from a renderer whose main thread would not answer a single CDP call.
   is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
   A password submission from an address that has eaten a twelve-hour block, for a few per cent.
 
+#### THE ONE PRODUCTION RESULT THE DROUGHT HAS PRODUCED: ~2,400 HEALTHY PROBES, ZERO FALSE POSITIVES
+The cure went live on the box at **21:50:59 UTC on 09-16** and the arm probes every
+`WEDGE_PROBE_EVERY_MS` (10 s) whenever the loop is not bailing. Over the ~6.9 hours to 04:45 that
+is **~2,400 probes**, across ~20 browser lives, spanning every ordinary thing this box does —
+renewals in a throwaway tab, auto-login and warm-up stand-downs, keepalive checks, five forced
+`restart-rc` replacements — and **`wedge-recycle` events: zero.**
+- **THAT IS THE FALSE-POSITIVE HALF OF THE CURE, MEASURED IN PRODUCTION, ON WINDOWS/149.** The
+  cost of a false positive is an RC page load on the page an 08:00 cart depends on, and the
+  three-strike rule exists to buy exactly this. Nothing has tripped it.
+- **THE COUNT IS INFERRED FROM THE CADENCE, NOT COUNTED.** The arm is silent on the healthy path
+  by design (a line per probe would bury `tail-log`'s 16,000 characters), which is the accepted
+  gap recorded with it: *"ran and found the page alive"* and *"never ran"* write the same
+  nothing. **What rules out the second is the sha** — `bot-ask git-status` reads
+  `HEAD 6fc7292 on master`, which contains `e92a5a6`, and the arm is unconditional in the timer.
+  Quote it as "~2,400 probes at the configured cadence", never as a measurement.
+- **AND IT SAYS NOTHING ABOUT THE TRUE-POSITIVE HALF**, which is the whole proof and still waits
+  on an event. A detector that never fires is consistent with a perfect detector and with a dead
+  one; only the sha separates them today.
+
+##### THE DETECTION HALF HAS ONE PRODUCTION-PLATFORM ARGUMENT, AND IT IS AN IMPLICATION
+The probe is `page.evaluate` = `Runtime.evaluate`, which is **main-thread-bound** — measured
+against a control in `scripts/cdp-thread-probe.mjs`, on Chromium 141/Linux, which is the pair
+that burned the native sampler twice. The Windows/149 evidence is indirect but it is an
+implication rather than an analogy:
+- `Performance.getMetrics` is serviced **OFF** the main thread (same probe, same control), so it
+  answers a renderer whose main thread is pinned.
+- On 2026-09-09 11:30 the alloc trail — which samples exactly that call every 10 s — read
+  **`EMPTY — that renderer answered no CDP call at all`** over a whole **165-second** browser
+  life, on the box.
+- **A renderer that could not answer the OFF-main-thread call certainly could not answer the
+  main-thread one.** So `page.evaluate` was silent for ≥165 s, against a 30 s threshold — five
+  and a half times the margin, from production, on the right platform.
+**STATED AT ITS LIMIT: it is one event, and it is sufficient-not-necessary** (a renderer can be
+wedged for `Runtime.evaluate` while `Performance.getMetrics` still answers, which is the 09-05
+reading that made the ramp arm's condition A inert). It is the strongest production-platform
+evidence for the detection half that exists without a firing.
+
 #### THE TWO RAMP POPULATIONS SEPARATE PERFECTLY ON THE BURST, 26 FOR 26 — AND ONE OF THEM HAS STOPPED
 `bail:ramp` carries the request counter, and reading `distinct` and the busiest path's lifetime
 count beside `ageMs` splits all 26 with **nothing on the off-diagonal**:
