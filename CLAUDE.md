@@ -5632,10 +5632,17 @@ wedged     page.evaluate -> SILENT
   When a child does not answer inside it the coordinator gives up, returns `success: false`,
   and **emits a process dump for that child anyway — carrying ZERO allocators.** No roots, no
   `shared_memory`, nothing, while its healthy peers contribute normally in the same trace.
-- **SO THE RENDERER IS NOT MISSING FROM THE DUMP. IT IS PRESENT AND EMPTY**, and our fold
-  dropped a process with no allocator dumps, which is why it read as absent. That is the
-  absent-reading-as-a-negative shape **handed over by the tooling**, and it is why 2026-09-08
-  21:43 was written up as a coordination fault worth chasing.
+- ~~**SO THE RENDERER IS NOT MISSING FROM THE DUMP. IT IS PRESENT AND EMPTY**, and our fold
+  dropped a process with no allocator dumps, which is why it read as absent.~~ **TRUE ON
+  LINUX AND FALSE ON THE BOX — measured 2026-09-17 across all three post-fix ramp dumps:
+  `emptyPids` is `[]` and the target is not in `MDPROC` at all, so on 149/Windows the
+  coordinator omits the silent child rather than emitting an empty dump for it.** Struck
+  rather than deleted because it is the sentence that made "our fold dropped it" the fix, and
+  a reader looking for a present-but-empty process on the box will not find one. **The
+  conclusion is untouched: there is no allocator data either way.** The reasoning still names
+  the real hazard — that is the absent-reading-as-a-negative shape **handed over by the
+  tooling**, and it is why 2026-09-08 21:43 was written up as a coordination fault worth
+  chasing.
 - **BOTH OBVIOUS FIXES ARE NOW PROVABLY WORTHLESS RATHER THAN MERELY COSTED.** A longer
   timeout buys an empty dump five seconds sooner; a cheaper level buys the same empty dump.
   **There is no allocator data to be had from a renderer that never emitted any.** The 08-18
@@ -5718,6 +5725,11 @@ the known 9 GB event neither is ~0.**
   have returned `joined` — flipping every future ramp dump from VOID to a verdict that reads
   like an answer. `cause: 'target-empty'` keeps it `void`, and says the shared_memory figure is
   not small but ABSENT.
+  - **IT HAS NEVER FIRED, AND THAT IS NOT A DEFECT — KEEP IT.** Windows omits the silent child
+    entirely (measured 2026-09-17, `emptyPids` `[]` on all three post-fix ramp dumps), so the
+    production cause is always `target-silent` by absence. The branch is the guard against a
+    reading Linux genuinely produces, and deleting it on the strength of never having fired is
+    how the flip-to-`joined` regression gets reintroduced by somebody tidying up.
 
 #### AND THE 32 GiB IS A CEILING, NOT A RUNAWAY — 2^14 EXACTLY
 Eight walks, and the 2-4M population barely moves: **15,499 / 15,663 / 16,219 / 16,385 /
@@ -7819,6 +7831,34 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
        a different pid from the walk's target, holding 2-18 MB of shared memory — a healthy peer,
        not a renderer holding 16k mappings. That is the `target-silent` shape, and it is now
        countable rather than anecdotal.
+     - **AND THE LEAD PID WAS THE WEAK FORM OF THAT CLAIM. THE TARGET IS ABSENT FROM THE WHOLE
+       DUMP, AND FOUR OF THE FIVE DUMPS COVER THE REST OF THE GENERATION EXACTLY** — parsed out
+       of each event's own `MDPROC` and `CHROME` lines rather than off the lead:
+       ```
+       ramp dump          dump pids in the walk's list      walk TARGET   target in dump?
+       09-07 09:04Z       0 of 7      <- generation mismatch        9912   no
+       09-09 04:43Z       7 of 7                                    7644   no
+       09-10 19:18Z       6 of 7                                   11912   no
+       09-11 05:28Z       8 of 8                                   14676   no
+       09-15 15:16Z       8 of 8                                    5720   no
+       ```
+       So `target-silent` is measured four times rather than argued from one lead pid, and the
+       09-07 VOID is confirmed as the one genuine **generation mismatch** (zero overlap — the
+       bail had already replaced that browser). **The 6-of-7 is not a story**: one dump pid
+       outside the walk's list is a process born or reaped between two scans a minute apart.
+     - **AND THE WEDGED RENDERER IS ABSENT ON WINDOWS, NOT PRESENT-AND-EMPTY — WHICH IS A
+       PLATFORM DIVERGENCE FROM THE PROBE THAT SETTLED THIS.** `dump-wedge-probe.mjs` measured,
+       on Linux, that the coordinator gives up on a silent child and **emits a process dump for
+       it anyway, carrying ZERO allocators** — the reading that made "our fold dropped it" the
+       fix. On the box the target is simply not in `MDPROC` at all, and **`emptyPids` is `[]` on
+       every post-fix dump** (09-10, 09-11, 09-15 — the three taken after the fold was taught to
+       record empty processes). So **`cause: 'target-empty'` has never fired in production and
+       cannot be relied on**; the honest production cause is `target-silent` by absence, which is
+       what `dumpJoinReading` already returns.
+       - **THE CONCLUSION IS UNTOUCHED AND ONLY THE MECHANISM MOVES: there is no allocator data
+         either way.** Do not read this as reopening the dump — it is the same closed question
+         with a Windows-shaped answer, and it is the third time a finding validated in the dev
+         container has not transferred verbatim to 149/Windows.
      - **FOUR OF THE FIVE SPENT 15-20 SECONDS WAITING.** `no answer in 20000ms` three times and
        `Chromium refused the dump (success: false)` at 15,367 ms once — the coordinator's own
        ~15,050 ms give-up. **Those are LOWER bounds on unbroken silence, not measurements of it:
