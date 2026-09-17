@@ -2,10 +2,15 @@
  * Ask the mini-PC a diagnostic question from anywhere with database access.
  *
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts tail-log auto-update
- *   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts tail-log rc-holds:40
+ *   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts tail-log rc-keepwarm:400
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts list-processes
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts disk-free
+ *
+ * `tail-log` slices the last 80 LINES by default and takes `<name>:<n>` up to 400. The
+ * 16,000-character figure in CLAUDE.md is `MAX_OUTPUT`, a SECOND cap applied after that slice
+ * — so the line count is what decides the window, and `:400` is 2.4x the evidence for free.
+ * This example used to read `rc-holds:40`, which narrows, and it was the only one in the repo.
  *
  * This is the tool that six round-trips of "please paste that file" on 2026-08-11 were
  * standing in for. It queues the question, waits for the runner's next 15-second poll, and

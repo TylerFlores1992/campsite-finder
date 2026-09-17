@@ -12027,6 +12027,35 @@ page in Nms`, and the absence of a `✗ RAMP`/`✗ WEDGED` beneath it — exists
   minutes, and that window is mostly the two repeating lines. **PR #358's skip dedupe is the fix
   and it is bot-side**, so it buys nothing until the box updates, which is the thing being
   deliberately avoided.
+
+###### AND THE WINDOW WAS NEVER 16,000 CHARACTERS — IT IS EIGHTY LINES, AND `:400` IS FREE (2026-09-17)
+Eight places in this file say `tail-log` "rolls at 16,000 characters", including the entry
+directly above. **Read in `bot-commands.mjs` rather than remembered: the handler slices
+`DEFAULT_TAIL = 80` LINES first, and `MAX_OUTPUT = 16_000` is a SECOND cap applied after.** The
+binding constraint on every log reading this repo has ever taken is the line count, and the
+argument accepts an override — `tail-log <name>:<n>`, `Math.min(400, …)` — that **nothing has
+ever passed.**
+- **MEASURED THE SAME MINUTE, BOTH WAYS.** `tail-log rc-keepwarm` returned 07:19:07 → 07:57:32
+  (**38 minutes**); `tail-log rc-keepwarm:400` returned 06:29:30 → 07:58:32 (**89 minutes**, 188
+  lines, truncated by `MAX_OUTPUT`). **One colon is 2.4x the evidence**, and it needs no box
+  update — the parsing has been on the box since the command was written.
+- **THE SIGNAL-TO-NOISE IS 5 IN 188.** Across those 89 minutes exactly five lines carry
+  information, all of them the 20-minute keepalive; the other 183 are the two stand-down lines.
+  **So the ceiling with `:400` is ~89 minutes of wall clock and ~5 useful lines** — which is why
+  #358's dedupe is still the real fix rather than a tidy-up: it does not widen the window, it
+  raises what the window CONTAINS, and at this ratio that is the difference between 89 minutes
+  and days.
+- **THE ENTRY ABOVE CONTAINS ITS OWN REFUTATION AND IT WAS READ PAST.** *"A 60-line read at 05:25
+  reached back to 04:57"* — somebody passed a LINE COUNT, watched it decide the window, and wrote
+  the constraint up as characters in the same sentence. Same shape as unit 45719 and the
+  duplicate-facility story, in a paragraph six lines long.
+- **WHAT IT COST: one wrong conclusion, immediately.** A default read at 07:56 showed the log
+  starting at 07:19 and was about to be written up as *the keep-warm restarted at 07:19 and
+  truncated its log* — a `Tee-Object` theory with a plausible mechanism, a plausible consequence
+  (the current browser is 38 minutes old, not 3.5 hours, so it is OUTSIDE the old-browser band)
+  and no truth in it whatever. **Reading the handler is what stopped it.**
+- **THE CAPTURE WATCH ASKS FOR `:400` NOW.** Nothing else in the repo calls `tail-log`
+  programmatically, so that is the whole blast radius.
 - **SO THE CAPTURE MONITOR IS LOAD-BEARING, NOT A CONVENIENCE.** It polls `bot_events` every
   90 s and pulls `tail-log rc-keepwarm` the moment a `wedge-recycle` or a ramp appears. 90 s of
   detection plus a bot-ask round trip is ~2.5 minutes against a 20-minute window — comfortable,

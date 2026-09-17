@@ -239,12 +239,20 @@ INSTRUMENT** — that event is in Postgres and cannot roll out of a log window. 
 validated (`detail->>'reason'` resolves on 5 of 5 stored `request-counts` rows), so a zero is
 about the subject, not the query.
 
-> **PULL `bot-ask tail-log rc-keepwarm` FIRST, BEFORE ANYTHING ELSE.** The box emits
-> `requestCounter.snapshot({ reason: 'wedge-recycle' })` and **nothing else** — the request
-> counts and the reason. Everything that says what the firing DID is in the log, and **the log
-> rolls in ~31 minutes** (measured 09-17: a 70-line read at 06:00 reached back to 05:29, almost
-> all of it the two stand-down lines #358 dedupes). The capture watcher that pulls it within
-> ~90 s **dies with the session that armed it**.
+> **PULL `bot-ask tail-log rc-keepwarm:400` FIRST, BEFORE ANYTHING ELSE — AND NOTE THE `:400`.**
+> The box emits `requestCounter.snapshot({ reason: 'wedge-recycle' })` and **nothing else** — the
+> request counts and the reason. Everything that says what the firing DID is in the log.
+>
+> **THE WINDOW IS A LINE COUNT, NOT A CHARACTER COUNT, AND THE DEFAULT IS 80.** `tail-log`
+> slices `DEFAULT_TAIL = 80` lines and only then applies `MAX_OUTPUT = 16_000`; the argument
+> takes `<name>:<n>` up to 400. Measured the same minute: the default returned **38 minutes**,
+> `:400` returned **89 minutes** (188 lines). **One colon is 2.4x the evidence and needs no box
+> update.** Every "the log rolled at 16,000 characters" line in `CLAUDE.md` has the mechanism
+> wrong; the correction is the entry headed *"AND THE WINDOW WAS NEVER 16,000 CHARACTERS"*.
+>
+> Even at `:400` the signal-to-noise is **5 informative lines in 188** — the rest is the two
+> stand-down lines #358 dedupes — so widen the window AND land #358. The capture watcher that
+> pulls it within ~90 s **dies with the session that armed it**, and it asks for `:400` now.
 >
 > **AND A `Monitor` CANNOT CARRY THAT WATCH** — `timeout_ms` caps at 1,800,000 ms, so it lapses
 > every 30 minutes by construction and each re-arm leaves a gap. Use a background Bash task with

@@ -24,7 +24,15 @@ export const BOT_COMMAND_KINDS = {
     // bot-commands.test.mts asserts the two lists are equal.
     argOptions: ['rc-holds', 'rc-keepwarm', 'bot', 'broker', 'auto-update', 'update-spawn',
       'restarts', 'rc-test-login', 'rc-cart-cap'] as const,
-    argHint: 'a log name, optionally :lines',
+    // NAME THE NUMBERS. This read `a log name, optionally :lines`, which is true and taught
+    // nobody anything: the default is 80 LINES and the box accepts up to 400, and for a month
+    // every reading in CLAUDE.md was taken at 80 while the file recorded the constraint as
+    // "the last 16,000 characters" (that is `MAX_OUTPUT`, a SECOND cap applied after the line
+    // slice). Measured 2026-09-17, same minute, same log: the default reached back 38 minutes
+    // and `:400` reached back 89. The lever was there the whole time and the only worked
+    // example in the repo asked for `:40` — FEWER than the default — so a reader learnt the
+    // syntax and the wrong thing about what it is for.
+    argHint: 'a log name, optionally :lines (default 80, max 400 — ask for :400)',
   },
   'list-processes': { label: 'Which of our processes are running', argPattern: null, argOptions: null, argHint: '' },
   /**
