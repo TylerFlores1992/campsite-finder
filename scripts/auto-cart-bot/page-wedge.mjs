@@ -59,10 +59,15 @@
  * There is no working state to lose. That asymmetry is the argument for acting in ~30 s here
  * where the bail properly waits for 120.
  *
- * IT ALSO UNSTICKS THE LOOP, WHICH IS A SECOND REASON TO PREFER IT. Whatever the resident loop
- * is awaiting on that page rejects with "Target closed", so it falls into its own catch and
- * the existing reopen path runs — the same path the post-Okta recycle and the size guard use.
- * Nothing new has to know how to rebuild a browser.
+ * IT ALSO UNSTICKS THE LOOP, WHICH IS A SECOND REASON TO PREFER IT — THOUGH NOT BY THE ROUTE
+ * THIS COMMENT FIRST CLAIMED. It said the loop's await rejects with "Target closed" and falls
+ * into its own catch; measured against the loop, every page-touching await there is
+ * individually `.catch()`ed and a page close leaves the CONTEXT alone, so nothing propagates.
+ * The reopen is the explicit `page.isClosed()` break at the top of the 1-second resident loop,
+ * which predates this arm. Without it a closed page is a PERMANENT ZOMBIE: this probe returns
+ * `inconclusive` on one, so no strike accrues and the cure cannot re-fire, while the loop keeps
+ * advancing so HUNG_MS cannot fire either. `src/lib/page-wedge.test.mts` pins that check, that
+ * it BREAKS rather than continues, and that it precedes the caught awaits.
  *
  * AND IT MAKES THE TEARDOWN RELIABLE. `browser.close()` against a wedged renderer hung in the
  * probe above; with the page already closed the renderer is gone and `ctx.close()` in the

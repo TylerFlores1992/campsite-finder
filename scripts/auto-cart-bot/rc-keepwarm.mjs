@@ -2913,9 +2913,15 @@ async function warmResident() {
        * unload handler, so asking it to is how a close inherits the hang it is meant to end.
        *
        * IT ALSO UNSTICKS THE LOOP, WHICH IS WHY NOTHING HERE HAS TO KNOW HOW TO REBUILD A
-       * BROWSER. Whatever the loop is awaiting on this page rejects with "Target closed", it
-       * falls into its own `catch`, and the existing reopen path runs — the same one the
-       * post-Okta recycle and the size guard use. And with the page gone the renderer is gone,
+       * BROWSER — AND THE MECHANISM IS NOT THE ONE THIS COMMENT USED TO NAME. It said the
+       * loop's await rejects with "Target closed" and falls into its own catch. It does not:
+       * every page-touching await in that loop is individually `.catch()`ed, and a page close
+       * leaves the CONTEXT alone, so nothing propagates out. What reopens is the explicit
+       * `if (!ctx.pages().length || page.isClosed()) break;` at the top of the 1-second loop,
+       * written long before this arm for "somebody tidying up closed the visible window" —
+       * which makes it load-bearing for a feature it predates, and pinned in
+       * `src/lib/page-wedge.test.mts` for that reason. Reopen latency is ~1 s plus whatever
+       * await was in flight. And with the page gone the renderer is gone,
        * so `ctx.close()` in that `finally` has nothing left to wait for: a `browser.close()`
        * against a still-wedged renderer is what hung the probe this arm was measured with.
        */
