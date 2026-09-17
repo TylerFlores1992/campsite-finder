@@ -334,10 +334,16 @@ test('the report cannot delay the cure, and the token still goes first', async (
 test('the recycle count is PASSED IN, not read after an await', async () => {
   // `wedge` is REASSIGNED on every reopen, and this function reads its arguments after two
   // awaits — so reading `wedge.recycles` there races the reopen this very close triggers.
-  assert.match(kw, /recycleWedgedPage\(d\.why, d\.strikes, wedge\.recycles\)/,
-    'the call site must capture strikes and recycles before any await');
-  assert.doesNotMatch(recycleBody, /wedge\.recycles/,
-    'reading wedge.recycles inside the async body races the reopen that the close causes');
+  // RE-ANCHORED 2026-09-17, NOT RELAXED — and the re-anchor is STRONGER than what it replaced.
+  // It pinned the exact three-argument call, so adding a fourth captured argument failed it
+  // over behaviour that had not moved. The RULE is "every value the body uses is captured at
+  // the call site", so it is now a prefix match plus a ban on reading ANY mutable `wedge` field
+  // inside the body — `wedge.recycles` alone would have let a later edit read `wedge.probes`
+  // after the same two awaits and race the same reopen.
+  assert.match(kw, /recycleWedgedPage\(d\.why, d\.strikes, wedge\.recycles[,)]/,
+    'the call site must capture what the body reports, before any await');
+  assert.doesNotMatch(recycleBody, /\bwedge\./,
+    'reading any wedge field inside the async body races the reopen that the close causes — it is REASSIGNED on reopen');
 });
 
 // ── THE REOPEN: WHAT ACTUALLY BRINGS THE PAGE BACK ─────────────────────────────────────────
@@ -510,4 +516,59 @@ test('a browser reopen resets the STRIKES and carries the recycle budget forward
   // exists; carrying them forward would recycle a fresh page on its first missed probe.
   assert.match(reset, /strikes:\s*0/,
     'strikes must still reset per browser life — they describe a page that no longer exists');
+});
+
+// ── THE MARGIN IS A NUMBER AND "ZERO FALSE POSITIVES" IS A BINARY (2026-09-17) ──────────────
+//
+// ~2,400 healthy probes have evidenced the `alive` branch on Windows/149, and not one of them
+// said HOW CLOSE it came to `WEDGE_PROBE_TIMEOUT_MS`. A page answering in 4 ms and one
+// answering in 1,900 ms are the same reading today — and only the second is a detector one
+// degraded browser away from recycling a healthy page, which costs an RC page load on the page
+// an 08:00 cart depends on. This is the only evidence about the cure obtainable WITHOUT a wedge.
+
+test('the arm measures the probe it takes, and only the healthy ones', () => {
+  const arm = (() => {
+    const from = kw.indexOf('const d = wedgeDecision({');
+    assert.ok(from > -1, 'the wedge arm moved — this guard is measuring nothing');
+    const to = kw.indexOf('.finally(() => { wedge.inFlight = false; });', from);
+    assert.ok(to > from, 'could not bound the wedge arm — this guard is measuring nothing');
+    return kw.slice(kw.lastIndexOf('wedge.inFlight = true;', from), to);
+  })();
+  assert.match(arm, /const probeStartedAt = Date\.now\(\);/,
+    'the arm must stamp when it asked, or the duration is unmeasurable');
+  // THE START MUST PRECEDE THE CALL. Stamped inside the `.then`, every probe reads ~0 ms and
+  // the instrument reports a perfect margin it never measured.
+  const stamp = arm.indexOf('const probeStartedAt');
+  const call = arm.indexOf('probeResidentPage(');
+  assert.ok(stamp > -1 && call > -1 && stamp < call,
+    'the timer must start BEFORE the probe is issued, or every reading is ~0ms');
+  // HEALTHY ONLY. A `wedged` reading is ~the budget BY CONSTRUCTION — the race resolves on the
+  // timer — so folding it in reports the timeout back as if it measured the page.
+  assert.match(arm, /if \(reading === 'alive'\) \{[\s\S]{0,200}?slowestAliveMs = Math\.max\(/,
+    'only an ALIVE reading may update the slowest answer — a wedged one is the budget itself');
+});
+
+test('the margin is reported once per browser life, and zero probes is its own reading', () => {
+  assert.match(kw, /resident-page probe: \$\{wedge\.probes\} healthy answer\(s\)/,
+    'the teardown must report the margin — a bar that is never crossed writes the same nothing as an arm that never ran');
+  // IT MUST BE INSIDE THE `worthReporting` GATE. The hold runner has taken the profile every
+  // ~11 seconds through a retry window, running this `finally` about a hundred times in
+  // twenty-one minutes; an ungated line there buries the ~31-minute log window.
+  const tdFrom = kw.indexOf('const worthReporting =');
+  assert.ok(tdFrom > -1, 'the teardown block moved — this guard is measuring nothing');
+  const tdTo = kw.indexOf('await Promise.race([', tdFrom);
+  assert.ok(tdTo > tdFrom, 'could not bound the teardown block — this guard is measuring nothing');
+  const teardown = kw.slice(tdFrom, tdTo);
+  const gate = teardown.indexOf('if (worthReporting) {');
+  const line = teardown.indexOf('resident-page probe:');
+  assert.ok(gate > -1 && line > gate, 'the margin line must sit inside the worthReporting gate');
+  // ZERO PROBES IS NOT A ZERO MARGIN. "The arm took no healthy reading" and "it answered
+  // instantly every time" are opposite facts and a bare 0 would merge them.
+  assert.match(kw, /the arm took no healthy reading/,
+    'no probes must report as an absence, never as a 0ms slowest answer');
+  assert.match(kw, /teardown\.slowestAliveMs = wedge\.probes \? wedge\.slowestAliveMs : null;/,
+    'the stored field must be null when nothing was measured — a 0 renders as a perfect margin');
+  // AND IT MUST REACH POSTGRES. The log rolls in ~31 minutes; the event does not.
+  assert.match(kw, /teardown\.probes = wedge\.probes;/,
+    'the count must ride the teardown event, or the only copy rolls out of the log window');
 });

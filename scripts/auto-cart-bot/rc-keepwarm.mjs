@@ -101,7 +101,7 @@ import { takeSample } from './memory-sample.mjs';
 import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
 import {
   probeResidentPage, wedgeDecision, decayedRecycles,
-  WEDGE_PROBE_EVERY_MS, WEDGE_MAX_RECYCLES,
+  WEDGE_PROBE_EVERY_MS, WEDGE_PROBE_TIMEOUT_MS, WEDGE_MAX_RECYCLES,
 } from './page-wedge.mjs';
 import { createRequestCounter, describeRequestCounts } from './rc-request-count.mjs';
 import { readLatestMemory, rampBailDecision, rampBailLine, rampDumpGrace, MEM_DUMP_GRACE_MS_DEFAULT, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
@@ -2663,7 +2663,7 @@ async function warmResident() {
      * `inFlight` is not optional: once the page goes quiet EVERY probe costs its full timeout,
      * so without it they pile up one per tick — the lesson the heap trail already paid for.
      */
-    let wedge = { strikes: 0, recycles: 0, lastRecycleAt: 0, inFlight: false, lastProbe: 0 };
+    let wedge = { strikes: 0, recycles: 0, lastRecycleAt: 0, inFlight: false, lastProbe: 0, probes: 0, slowestAliveMs: 0 };
     // Opened at launch while the browser is healthy — see collectHeapFacts. Negotiating a new
     // CDP session at trip time is what produced `no answer in 3000ms` on the first real firing.
     let heapProbe = null;
@@ -2926,7 +2926,7 @@ async function warmResident() {
        * so `ctx.close()` in that `finally` has nothing left to wait for: a `browser.close()`
        * against a still-wedged renderer is what hung the probe this arm was measured with.
        */
-      const recycleWedgedPage = async (why, strikes, recycles) => {
+      const recycleWedgedPage = async (why, strikes, recycles, probes, slowestAliveMs) => {
         log(`♻ ${why}`);
         const kept = await Promise.race([
           persistLiveToken(residentPage).catch(() => 'error'),
@@ -2973,6 +2973,11 @@ async function warmResident() {
           tokenKept: kept,
           strikes,
           recycles,
+          // The margin AT THE MOMENT IT FIRED. A firing whose slowest healthy answer was 3 ms
+          // is a page that went from instant to silent; one whose slowest was 1,800 ms is a
+          // page that had been degrading, and those are different events.
+          probes,
+          slowestAliveMs,
           memKnown: mem.known === true,
           memWhy: mem.known === true ? null : (mem.why ?? null),
           /*
@@ -3042,8 +3047,27 @@ async function warmResident() {
       if (!bailing && !wedge.inFlight && Date.now() - wedge.lastProbe >= WEDGE_PROBE_EVERY_MS) {
         wedge.inFlight = true;
         wedge.lastProbe = Date.now();
+        const probeStartedAt = Date.now();
         void probeResidentPage(residentPage)
           .then((reading) => {
+            /*
+             * MEASURE THE MARGIN, BECAUSE "ZERO FALSE POSITIVES" IS A BINARY AND THE BUDGET IS
+             * A NUMBER. ~2,400 healthy probes have evidenced the `alive` branch, and none of
+             * them said HOW CLOSE any came to `WEDGE_PROBE_TIMEOUT_MS` — so a page answering in
+             * 4 ms and one answering in 1,900 ms are the same reading, and only one of them is
+             * a detector one degraded browser away from recycling a healthy page.
+             *
+             * HEALTHY PROBES ONLY. A `wedged` reading is ~the budget BY CONSTRUCTION (the race
+             * resolves on the timer), so folding it in would report the timeout back as if it
+             * were a measurement of the page.
+             *
+             * PER BROWSER LIFE, like `strikes` and for the same reason: it describes a page
+             * that a reopen replaces.
+             */
+            if (reading === 'alive') {
+              wedge.probes += 1;
+              wedge.slowestAliveMs = Math.max(wedge.slowestAliveMs, Date.now() - probeStartedAt);
+            }
             const d = wedgeDecision({
               reading,
               strikes: wedge.strikes,
@@ -3088,7 +3112,7 @@ async function warmResident() {
               // `decayedRecycles` correctly refuses to age it — which would make it permanent.
               wedge.lastRecycleAt = Date.now();
               wedge.strikes = 0;
-              void recycleWedgedPage(d.why, d.strikes, wedge.recycles);
+              void recycleWedgedPage(d.why, d.strikes, wedge.recycles, wedge.probes, wedge.slowestAliveMs);
             } else if (d.act === 'escalate' && !bailing) {
               reportAndBail(
                 `✗ WEDGED PAGE — still unresponsive after ${wedge.recycles} page recycle(s).`,
@@ -3311,6 +3335,9 @@ async function warmResident() {
         lastRecycleAt: wedge.lastRecycleAt,
         inFlight: false,
         lastProbe: 0,
+        // Per browser life, like strikes: a probe timing describes the page that answered it.
+        probes: 0,
+        slowestAliveMs: 0,
       };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
@@ -3929,6 +3956,21 @@ async function warmResident() {
         log(`  ${describeRequestCounts(requestCounter, { compact: true })}`
           + (skipped ? ` (+${skipped} short reopen(s) not reported)` : ''));
         teardown.suppressedSince = skipped;
+        /*
+         * ONE LINE PER BROWSER LIFE — the only unconditional reading of the cure's margin.
+         *
+         * It goes HERE rather than behind a slowness bar because a bar that is never crossed
+         * writes the same nothing as an arm that never ran, which is the merge this instrument
+         * exists to undo. One line per life is 1-3 a day on this box against a log window that
+         * holds ~31 minutes, so it costs nothing it is measuring.
+         *
+         * ZERO PROBES IS ITS OWN READING and says so: the arm not having run is a different
+         * fact from a page that always answered instantly.
+         */
+        log(`  resident-page probe: ${wedge.probes} healthy answer(s), slowest `
+          + `${wedge.probes ? `${wedge.slowestAliveMs}ms of a ${WEDGE_PROBE_TIMEOUT_MS}ms budget` : 'n/a — the arm took no healthy reading'}`);
+        teardown.probes = wedge.probes;
+        teardown.slowestAliveMs = wedge.probes ? wedge.slowestAliveMs : null;
       } else {
         suppressedTeardowns += 1;
       }
