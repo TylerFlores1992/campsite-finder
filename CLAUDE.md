@@ -10922,6 +10922,35 @@ that has been living a normal life for hours.
   `no answer recorded` for 69,060 asks, whose labelled candidate is renderer-side queueing, and
   **three mechanisms have been guessed on this box and each cost a session.**
 
+##### AND THE BURST IS **ONE** ENDPOINT STALLING WHILE EVERY OTHER REQUEST ON THE PAGE ANSWERS
+The `top` array on a burst bail carries per-path statuses, and reading it settles what the burst
+actually is. From 09-15 09:04, the last one on record:
+```
+16583  rdapi…/api/webaccessfacility/futurebookingstartsendsdates   statuses: {}        <- ZERO answers
+    2  rdapi…/api/webaccesscustomer/empty/shoppingcart             statuses: {401: 2}
+    2  www.reservecalifornia.com/config.json                       statuses: {200: 2}
+    1  fonts.googleapis.com/css2                                   statuses: {200: 1}
+    1  js.arcgis.com/4.30/esri/themes/light/main.css               statuses: {200: 1}
+```
+**The page loaded normally — sixteen paths, every one of them answered — and then one endpoint
+returned nothing 16,583 times.** So it is not the connection pool saturating globally, and it is
+not a dead network: everything else on that page completed.
+- **THAT SHARPENS THE RECORDED CANDIDATE RATHER THAN REPLACING IT.** Six sockets per host, each
+  held by a request that never completes, and the rest queued in the renderer — which is exactly
+  the "issued faster than the pool can drain" reading, now with the crucial qualifier that the
+  stall is **per-endpoint**.
+- **AND IT IS INDEPENDENT CONFIRMATION OF THE BURST/LEAK DECOUPLING, FROM THE MECHANISM.** A
+  2 MiB data pipe is created by `URLLoader::ContinueOnResponseStarted` — **when the RESPONSE
+  STARTS**. 16,583 requests that never got a response got no pipes. The burst therefore cannot
+  BE the mapping, which is what seven sightings already said and what this says from the
+  allocation side.
+- **THE DROUGHT'S LEADING CANDIDATE, LABELLED AS ONE: RC HAS BEEN HEALTHY.** The burst needs that
+  endpoint to stall for the box, and it answers **200 in 1.2 s** from a session right now. This
+  file records RC's app tier failing to render on 08-30, 08-31 (three attempts, ~5 minutes) and
+  09-02, so a degraded RC is a real and recurring event — and it would produce exactly this
+  shape. **Not established, and the discriminator is free:** the next `request-counts` row with
+  `distinct=16` says the burst population is back.
+
 ##### SO THE RESTART CAMPAIGN WAS AIMED AT THE ABSENT POPULATION, AND WAS PREVENTING THE OTHER
 `restart-rc` produces exactly the young cold-load shape — which is why it is 2-for-2 historically
 and why this session ran it five times. **Both halves of that are now wrong for today:**
