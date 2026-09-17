@@ -11828,6 +11828,36 @@ looks healthy), so it is the one that sends somebody hunting a dead supervisor.
   the same one arriving through a log instead of a column. **Convert before comparing, and do not
   compare a rendered timestamp with a clock read somewhere else.**
 
+##### AND SINCE 04:31 THERE HAVE BEEN NO OKTA TRIPS AT ALL — THE TRIGGER IS OFF, NOT UNLUCKY (2026-09-17)
+The entries above read the drought as a ramp that has not arrived. **It is narrower than that and
+the distinction decides what "waiting" means.** At 08:25 UTC the newest `tab-close` is
+**04:31:56 — 222 minutes** — and `bail:%` events in the last six hours: **zero**.
+- **THE ZERO BAILS ARE WHAT MAKE IT A READING.** A trip killed by a bail runs no `finally` and
+  emits no `tab-close`, so silence alone cannot tell *no trip ran* from *every trip was killed*.
+  With no bail either, the silence is unambiguous: **no Okta trip STARTED for nearly four hours.**
+- **THE ESTABLISHED TRIGGER IS THE OKTA NAVIGATION** (08-18's controlled comparison: three
+  token-less renewals ten minutes apart, only the one that clicked through cost anything). No
+  navigation, no ramp — so the drought is not bad luck around a live trigger, it is an absent one.
+- **AND THE CAUSE IS THE HEALTHY REGIME, WHICH IS THE IRONY WORTH WRITING DOWN.** `planRenewal`
+  stands down while the token is alive at all, and RC's SPA has been silently re-minting since
+  ~04:32 — observed directly in the keep-warm's own keepalives, `renewed=no; src=live` with the
+  token going **1m → 41m → 21m → 1m → 40m** across 06:29-07:49, two re-mints and zero renewals of
+  ours. **The self-sustaining regime removes our Okta trips, and our Okta trips are the trigger.**
+- **SO "WAIT FOR A RAMP" IS REALLY "WAIT FOR THE SELF-RENEWAL TO LAPSE".** What ends it is Okta's
+  ABSOLUTE cap: once Okta is GONE the SPA cannot re-mint, the token dies, and our renewal resumes.
+  The reported window is **rolling** (`okta_expires_at − okta_checked_at` = 12.0000h, refreshed by
+  our own unconditional 20-minute probe), so the cap is invisible until the window stops rolling —
+  which is exactly the signal the capture watch already fires on.
+- **AND TODAY'S ONE SCHEDULED TRIP CANNOT HELP THE CURE EVEN IF IT RAMPS.** `maybeAutoLogin` at
+  T−30 runs in a **throwaway tab** and the cure probes **`residentPage` only**, so a ramp there is
+  invisible to it by construction and correctly so — `closeTabBounded`'s `finally` already reclaims
+  that renderer. **The honest prediction for the day is therefore that the cure does not fire**,
+  and that is a statement about the trigger rather than about the cure.
+- **DO NOT READ THE QUIET AS THE CURE WORKING.** It has never fired; `wedge-recycle` events remain
+  zero, all time. A cure that silences every other ramp instrument and a trigger that is switched
+  off produce the same empty tables, which is why the discriminator is `bot_events` for a
+  `tab-close` — **present and quiet is the SPA carrying the session; absent is nothing happening.**
+
 #### AND THIRTEEN OKTA NAVIGATIONS SINCE THE BOX TOOK THE CURE HAVE PRODUCED ZERO RAMPS
 Every `tab-close` since 2026-09-16 21:50:59 UTC, when the box took `e92a5a6`:
 ```

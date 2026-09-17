@@ -99,6 +99,28 @@ watchdog timer. So "it never ran" is ruled out structurally. **§2.6 is the full
 SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 05:10
 ```
 
+**THEN ASK THE SECOND ONE, BECAUSE A ZERO ABOVE HAS TWO CAUSES AND THEY ARE NOT THE SAME NEWS:**
+
+```sql
+SELECT max(at) FROM bot_events WHERE kind = 'tab-close';   -- the last Okta trip
+SELECT count(*) FROM bot_events WHERE detail->>'reason' LIKE 'bail:%'
+   AND at > now() - interval '6 hours';                    -- 0 means no trip was KILLED
+```
+
+Every Okta trip leaves a `tab-close` (the close is in a `finally`); a trip killed by a bail
+leaves none. **So `tab-close` recent = the trigger is live and the cure is genuinely waiting;
+`tab-close` hours old with zero bails = the trigger is OFF and the cure cannot fire at all.**
+
+At 08:25 UTC on 09-17 it was the second: **222 minutes since the last trip, zero bails.**
+`planRenewal` stands down while the token is alive, RC's SPA has been silently re-minting since
+~04:32 (`renewed=no; src=live`, token `1m → 41m → 21m → 1m → 40m` across 06:29-07:49), and the
+ESTABLISHED trigger is the Okta navigation — **so the healthy self-sustaining regime is precisely
+the regime in which the leak cannot fire.** "Wait for a ramp" really means "wait for the
+self-renewal to lapse", and what ends that is Okta's ABSOLUTE cap. The reported window is
+**rolling** (`okta_expires_at − okta_checked_at` = 12.0000h, refreshed by our own 20-minute
+probe), so the cap is invisible until the window stops rolling — which is the signal the capture
+watch fires on.
+
 - **A ~30 s cure can fit entirely between two two-minute memory samples, so the SERIES IS THE
   WRONG INSTRUMENT.** That event is in Postgres and cannot roll out of a log window. **Do not
   read a quiet `chromium_memory_samples` as the cure working.**
