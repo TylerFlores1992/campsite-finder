@@ -153,7 +153,28 @@ export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP
     return { known: false, why: `memory reading predates this browser by ${Math.round((Number(notBefore) - at) / 1000)}s — it describes the one before it`, at, ageMs };
   }
   const rcMb = j?.rcMb == null ? null : Number(j.rcMb);
-  if (rcMb == null || !Number.isFinite(rcMb)) return { known: false, why: 'memory reading has no rc figure', at, ageMs };
+  if (rcMb == null || !Number.isFinite(rcMb)) {
+    /*
+     * THE RC FIGURE AND THE COMMIT FIGURE COME FROM DIFFERENT HALVES OF THE SAMPLER, and on
+     * this box one of them goes blind on its own. `rc_mb` is the per-process scan, which
+     * reports UNKNOWN whenever a Chromium's command line is unreadable ("8 Chromium had an
+     * unreadable command line — this process may not be elevated", observed continuously from
+     * 2026-09-17 04:15:30); `commitUsedMb` is `Win32_OperatingSystem` and kept answering
+     * throughout. So this branch is "we could not attribute the memory", NEVER "we do not know
+     * what the box is holding" — and the ~32 GiB mapping is charged to COMMIT, which is the
+     * figure that says whether an event was the leak or the ~7 GB baseline.
+     *
+     * IT IS RETURNED ON THIS BRANCH ONLY, deliberately. The age check and the browser-life
+     * check both run ABOVE it, so a commit figure reported here is fresh and describes this
+     * browser's lifetime; the stale and previous-browser branches carry no commit at all,
+     * because there a number would be confidently wrong rather than merely unattributed.
+     *
+     * `known` STAYS FALSE and no arm's behaviour changes: `rampBailDecision` and
+     * `maybeMemoryDump` both gate on `known` and never see these fields. The one reader is the
+     * wedge cure's diagnostic, which reports rather than decides.
+     */
+    return { known: false, why: 'memory reading has no rc figure', at, ageMs, commitUsedMb: num(j?.commitUsedMb), commitLimitMb: num(j?.commitLimitMb) };
+  }
   // COMMIT IS OPTIONAL AND ITS ABSENCE IS NOT AN UNKNOWN READING. A box running a build older
   // than this writes no commit field, and the whole reading must stay usable there — the arm
   // then behaves exactly as it does today, on `rcMb` alone. `known` therefore still turns on

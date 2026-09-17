@@ -259,11 +259,50 @@ test('the memory is read BEFORE the close, because after it there is nothing to 
 
 test('an UNKNOWN memory reading reports itself, never a zero', async () => {
   // "we could not tell" and "the box was holding nothing" are opposite readings, and a bare
-  // null in commitUsedMb renders as the second. The house rule, at the newest instrument.
+  // null renders as the second. The house rule, at the newest instrument.
   assert.match(eventLiteral, /memKnown/, 'the event must say whether the reading was known');
   assert.match(eventLiteral, /memWhy/, 'an unknown reading must carry its own reason');
-  assert.match(eventLiteral, /mem\.known === true \? \(mem\.commitUsedMb/,
-    'commitUsedMb must be gated on the reading being KNOWN, not merely present');
+  assert.match(eventLiteral, /rcMb: mem\.known === true \? \(mem\.rcMb/,
+    'rcMb must be gated on the reading being KNOWN — an unattributed scan has no rc figure');
+});
+
+// ── INVERTED 2026-09-17, NOT RELAXED ─────────────────────────────────────────────────────
+// This required `commitUsedMb` to be gated on `mem.known` too, and that rule is right in
+// general and wrong for this one field. The two figures fail SEPARATELY: `rcMb` is the
+// per-process scan, which reports UNKNOWN whenever a Chromium's command line is unreadable
+// ("8 Chromium had an unreadable command line — this process may not be elevated", continuous
+// on the box from 2026-09-17 04:15:30), while `commitUsedMb` is `Win32_OperatingSystem` and
+// kept answering across all 17 blind samples. `readLatestMemory` refuses the WHOLE reading on
+// a missing rc figure — so the old gate nulled the one number this read exists for at exactly
+// the moment the other half could not supply its own. The ~32 GiB mapping is charged to
+// COMMIT; without it the event cannot tell the leak from the ~7 GB baseline, which is the
+// question it was added to answer.
+test('commit is reported even when the rc scan is BLIND, because they fail separately', async () => {
+  assert.match(eventLiteral, /commitUsedMb: Number\.isFinite/,
+    'commit must be reported whenever it is a number — gating it on `known` nulls it exactly when the scan goes blind');
+  assert.doesNotMatch(eventLiteral, /commitUsedMb: mem\.known/,
+    'the old gate is the regression: a blind scan is unattributed memory, not an unknown box');
+  // AND THE SAFETY IS IN THE READ, NOT HERE. Only the rc-blind branch carries commit at all —
+  // the stale and previous-browser branches return none — so a number reported here is fresh
+  // and describes this browser's lifetime. That is what makes ungating it honest rather than
+  // a confident wrong figure, and it is asserted where it lives.
+  const rb = readFileSync('scripts/auto-cart-bot/ramp-bail.mjs', 'utf8');
+  const noRc = rb.indexOf("why: 'memory reading has no rc figure'");
+  assert.ok(noRc > -1, 'the rc-blind branch moved — this guard is measuring nothing');
+  assert.match(rb.slice(noRc, noRc + 220), /commitUsedMb: num\(/,
+    'the rc-blind branch must carry commit, or the cure has nothing to report');
+  for (const why of ['no memory reading on disk', 'memory reading unparseable', 'memory reading carries no time']) {
+    const at = rb.indexOf(`why: '${why}'`);
+    assert.ok(at > -1, `the ${why} branch moved — this guard is measuring nothing`);
+    assert.doesNotMatch(rb.slice(at, at + 220), /commitUsedMb/,
+      `${why} has no file to read a commit figure out of`);
+  }
+  for (const marker of ['old (max', 'predates this browser']) {
+    const at = rb.indexOf(marker);
+    assert.ok(at > -1, `the "${marker}" branch moved — this guard is measuring nothing`);
+    assert.doesNotMatch(rb.slice(at, at + 220), /commitUsedMb/,
+      `a ${marker.includes('old') ? 'stale' : 'previous-browser'} commit figure is confidently wrong, not merely unattributed`);
+  }
 });
 
 test('it uses the ramp arm’s own reading, with the same notBefore', async () => {

@@ -2968,9 +2968,21 @@ async function warmResident() {
           recycles,
           memKnown: mem.known === true,
           memWhy: mem.known === true ? null : (mem.why ?? null),
+          /*
+           * COMMIT IS NOT GATED ON `known` AND `rcMb` IS, because they fail separately. The
+           * per-process scan goes blind on its own (unreadable command lines, i.e. elevation)
+           * while `Win32_OperatingSystem` keeps answering — and `readLatestMemory` refuses the
+           * WHOLE reading on a missing rc figure. Gating commit on `known` therefore nulls the
+           * one number this read exists for at exactly the moment the other half cannot supply
+           * its own, which is the state this box was in when the field was added.
+           *
+           * Safe because only the rc-blind branch carries commit at all: a stale reading and
+           * one predating this browser return none, so a number here is always fresh and
+           * in-life. `rcMb` stays gated — an unattributed scan has no rc figure to report.
+           */
           rcMb: mem.known === true ? (mem.rcMb ?? null) : null,
-          commitUsedMb: mem.known === true ? (mem.commitUsedMb ?? null) : null,
-          commitLimitMb: mem.known === true ? (mem.commitLimitMb ?? null) : null,
+          commitUsedMb: Number.isFinite(Number(mem.commitUsedMb)) ? Number(mem.commitUsedMb) : null,
+          commitLimitMb: Number.isFinite(Number(mem.commitLimitMb)) ? Number(mem.commitLimitMb) : null,
           memAgeMs: Number.isFinite(mem.ageMs) ? mem.ageMs : null,
         });
       };
