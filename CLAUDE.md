@@ -10858,6 +10858,33 @@ from a renderer whose main thread would not answer a single CDP call.
   is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
   A password submission from an address that has eaten a twelve-hour block, for a few per cent.
 
+#### THE RELEASE IS O(1) IN THE MAPPING COUNT — 16 ms ACROSS 1,877 MAPPINGS
+The open question against the container proof was scale: the reproduction peaks near 1,500-3,200
+mappings and production reaches **16,383**. A 180-second run answered it by accident, and the
+answer is better than another run would have been.
+```
+30 s run    FIX: mappings 1877 -> 0 in 2532ms      <<< CURED
+180 s run   FIX: mappings    0 -> 0 in 2516ms      <<< THE QUESTION WAS NEVER REACHED
+```
+**Sixteen milliseconds separates releasing 1,877 mappings from releasing none.** That is
+0.0085 ms per mapping, so 16,383 of them extrapolates to **~139 ms of extra work against a ~2.5 s
+close** — and it agrees with the mechanism, which is the reason to believe it: `page.close()`
+destroys the renderer PROCESS and the OS reclaims its address space in one act. There is no
+per-mapping work to scale.
+- **THE 180 s RUN'S REFUSAL IS THE INSTRUMENT WORKING**, not a failure. The series climbed to
+  1,443, held flat for 42 seconds, then **dropped to 0 at 100 s with no renderer left in the
+  per-process list** — the container's renderer died under the retained `Response` objects, long
+  before the 32 GiB cap. The fix then probed a page that was not leaking and **refused the
+  `CURED` verdict** rather than claiming a release it had not performed. Same rule as
+  `--concurrent-mint` refusing a race verdict when no submit was accepted.
+- **SO THE CONTAINER CANNOT REACH PRODUCTION SCALE AND DOES NOT NEED TO.** Its ceiling is the
+  harness's retention, not the cure's; **use the 30-second run**, which reaches the fix while
+  still climbing. A longer run kills the renderer first and proves nothing.
+- **WHAT IS STILL NOT CLAIMED: that a 32 GiB renderer CLOSES as readily as a 3 GiB one.** The
+  close is a browser-process operation and does not ask the wedged renderer for anything — which
+  is the same property that makes the probe's silence diagnosable — but no close of a 32 GiB
+  renderer has ever been observed on any platform.
+
 #### THE RENEWAL TRIP IS NOT WHAT RAMPS — 0 OF 331, AND THE RAMPING ONES ARE CENSORED
 `tab-close` carries **`ramMb`**, the free-RAM delta across the trip — a PER-TRIP cost
 measurement, which is the instrument this file twice records as not existing (*"tab-close carries
