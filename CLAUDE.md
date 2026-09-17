@@ -11056,6 +11056,23 @@ that lands in the trip's own renderer is INVISIBLE to it, by construction.
   until the ramp has been attributed to a renderer. Read the `tab-close` event's `ramMb` and the
   alloc trail's per-target lines first — they say which renderer grew, and only the resident one
   is the cure's subject.
+- **AND THE HONEST PROBABILITY IS LOW, WHICH CORRECTS AN OVERSTATEMENT MADE EARLIER THE SAME
+  DAY.** The capture built for this event calls it *"the single highest-probability ramp trigger
+  on the calendar"*. **Okta will be ALIVE at 14:30** — the window read `11.9999h` (rolling) with
+  `okta_expires_at` at **18:49 UTC**, four hours past the trip — so `attemptLogin` is answered
+  from the `idx` cookie, which is the **11-second, +24 MB** cell measured on 08-21 and **has
+  never been observed to ramp.** The three ramping trips on record are all `okta=GONE` password
+  forms, and duration tracks cost seven for seven.
+  - **IT IS NOT ZERO**, which is why the capture stays armed: the browser will be ~10 hours old,
+    inside the 52-611 minute old-browser band, and **what kind of trip the 611-minute ramp was
+    making was never recorded.** So the old population is not known to be password-only.
+  - **STATE IT BEFORE THE EVENT SO IT CAN BE FALSIFIED**: expect a ~10-second cookie-answered
+    sign-in, no ramp, no `wedge-recycle`, and `tab-close` with a small `ramMb`. **A ramp here
+    would itself be the finding** — the first cookie-answered trip ever to cost anything — and it
+    would be worth more than the cure firing.
+  - **THE PREDICTION IS WHY THIS IS NOT A REASON TO FORCE.** A trigger that is unlikely to fire
+    is still free; a forced one spends a password submission from an address that has eaten a
+    twelve-hour block, and the box is holding a real user's campsite until 15:00.
 
 ###### `line > gate` IS ORDERING AND READS LIKE CONTAINMENT — AND THE FIRST MUTATION FOR IT WAS A NO-OP
 Two defects in the guards above, both found by mutation-testing them twenty minutes after writing
