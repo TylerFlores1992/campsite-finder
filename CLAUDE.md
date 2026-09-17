@@ -10858,6 +10858,47 @@ from a renderer whose main thread would not answer a single CDP call.
   is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
   A password submission from an address that has eaten a twelve-hour block, for a few per cent.
 
+#### THE TWO RAMP POPULATIONS SEPARATE PERFECTLY ON THE BURST, 26 FOR 26 — AND ONE OF THEM HAS STOPPED
+`bail:ramp` carries the request counter, and reading `distinct` and the busiest path's lifetime
+count beside `ageMs` splits all 26 with **nothing on the off-diagonal**:
+```
+YOUNG  2.3-3.3 min   distinct=16   busiest path 16,583-80,244 lifetime   x18
+OLD    52-611 min    distinct=76-79  busiest path 3-24 lifetime          x8
+```
+**Every young ramp carries the RDR burst; no old ramp does.** The file already records these as
+two populations by age and records the burst/leak decoupling seven times — **both remain true,
+and neither says they are the same partition.** They are: `distinct=16` is a browser that has
+just cold-loaded RC's home page and is hammering one endpoint, and `distinct=76-79` is a browser
+that has been living a normal life for hours.
+- **THE BURST POPULATION STOPPED ON 2026-09-15 09:04 AND HAS NOT RECURRED IN 43 HOURS.** The two
+  ramps after it (09-15 15:16 at 372 min, 09-16 03:52 at 52 min) are both the OLD, burst-free
+  kind. So 69% of the ramp mechanism is currently absent.
+- **THE PER-BROWSER-LIFE RATE IS ~30%, NOT 10%, AND THE DROUGHT IS STARK AGAINST IT.** A browser
+  that ramps at 2.3 min never reaches the 3-minute baseline dump, so baselines count the lives
+  that did NOT ramp and the two sets barely overlap: 61 baselines against 26 ramps over nine
+  days, i.e. **17-43% of lives per day**. **09-16 was 8% and 09-17 is 0% across 20 lives.**
+  At 30% that is P ~ 0.0008. **Something changed; the cure is not it** (it reached the box at
+  21:50 on 09-16, eighteen hours after the last ramp).
+- **NO MECHANISM IS WRITTEN IN, and one candidate is ruled out cheaply.** RDR's
+  `futurebookingstartsendsdates` answers **HTTP 200 in 1.2 s** from here right now with a valid
+  `FutureBookingStartDate`, so "the endpoint broke" is not it. The recorded burst reading is
+  `no answer recorded` for 69,060 asks, whose labelled candidate is renderer-side queueing, and
+  **three mechanisms have been guessed on this box and each cost a session.**
+
+##### SO THE RESTART CAMPAIGN WAS AIMED AT THE ABSENT POPULATION, AND WAS PREVENTING THE OTHER
+`restart-rc` produces exactly the young cold-load shape — which is why it is 2-for-2 historically
+and why this session ran it five times. **Both halves of that are now wrong for today:**
+- it targets the burst population, **absent for 43 hours**; and
+- restarting every ~11 minutes **structurally forbids** the old population, which needs a browser
+  alive for **52 to 611 minutes** (median ~190).
+**Campaign stopped at 04:40 UTC and the browser is being left alone.** A browser that lives from
+now to the hold's T−30 auto-login at 14:30 UTC is ~10 hours old — which spans the entire old
+distribution and arrives at an Okta navigation on the RESIDENT page, the 09-11 05:28 ramp's exact
+profile (610.8 min, `distinct=79`, busiest path 20 lifetime).
+- **THIS IS THE FORCING LEVER BEING CHOSEN ON EVIDENCE RATHER THAN ON A RECORDED HIT RATE.** The
+  2-for-2 figure is real and was measured when the burst population was live. **Do not quote it
+  as today's rate.**
+
 #### THE RELEASE IS O(1) IN THE MAPPING COUNT — 16 ms ACROSS 1,877 MAPPINGS
 The open question against the container proof was scale: the reproduction peaks near 1,500-3,200
 mappings and production reaches **16,383**. A 180-second run answered it by accident, and the
