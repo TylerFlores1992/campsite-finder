@@ -10858,6 +10858,70 @@ from a renderer whose main thread would not answer a single CDP call.
   is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
   A password submission from an address that has eaten a twelve-hour block, for a few per cent.
 
+#### THE RENEWAL TRIP IS NOT WHAT RAMPS — 0 OF 331, AND THE RAMPING ONES ARE CENSORED
+`tab-close` carries **`ramMb`**, the free-RAM delta across the trip — a PER-TRIP cost
+measurement, which is the instrument this file twice records as not existing (*"tab-close carries
+no stage"*). Read for the first time over 331 trips in nine days:
+```
+mean ramMb -158   median -168   WORST -413      trips shedding >400 MB: 1   >1 GB: 0
+```
+**Not one surviving renewal trip has ever cost a gigabyte**, against 26 ramps of 1.7-9 GB in the
+same window. The naive reading — *the renewal is innocent* — is wrong, and the reason is
+**CENSORING**: `tab-close` fires in a `finally`, a bail calls `process.exit`, and `process.exit`
+runs no `finally`. **The expensive trips are exactly the ones missing from the dataset.**
+- **CONFIRMED BY JOINING EVERY RAMP AGAINST ITS NEIGHBOURS, 22 for 22.** Each onset has a
+  `bail:ramp` **~70 seconds later**, and then a `tab-close` 1-3 minutes after THAT, reading
+  `trip=46.5-47.5s ram=-10..-58` on every single one. **That tab-close is the replacement
+  browser's first renewal, not the trip that ramped** — so the row nearest a ramp is the one
+  most likely to be mistaken for it, and it is the cheapest kind there is.
+- **SO `ramMb` BOUNDS THE CHEAP POPULATION AND SAYS NOTHING ABOUT THE EXPENSIVE ONE.** Quote it
+  that way. What it does buy is a real denominator for the surviving trips, and a stage proxy:
+  **~11 s ⇒ `no-signin-control` (never left RC), 46-70 s ⇒ reached Okta** — anchored on the two
+  stages read in the log at 03:13:04 and 03:24:49. Over nine days that splits **11 short : 320
+  long**, and over the last 24 hours **1 : 48**.
+- **WHICH RETIRES THE HEADING ABOVE.** *"The renewal never reaches Okta"* generalised from ONE
+  `no-signin-control` observation; it is **1 of 49** in the last day. **48 Okta trips in 24 hours
+  with no ramp puts P(zero) at 0.015** under the recorded ~1-in-12 bound, so the drought is
+  genuinely anomalous and is NOT explained by a missing trigger. **Leave the section standing and
+  read it with this correction** — the two gates it names are real, they are simply not the whole
+  story, and the arithmetic that says so came from a column nobody had opened.
+
+##### AND 69% OF RAMPS HAPPEN ON A BROWSER BETWEEN 2.3 AND 3.3 MINUTES OLD
+`bail:ramp` carries `ageMs`. Across all 26 on record, sorted:
+```
+2.3 2.3 2.4 2.6 2.6 2.6 2.6 2.6 2.8 2.8 2.8 2.9 2.9 2.9 2.9 2.9 2.9 3.3  |  52 57.5 85.4 124.6 253 372.2 383 610.8   (minutes)
+```
+**Eighteen of twenty-six fall in a ONE-MINUTE band**, and the other eight are spread over ten
+hours. That is much sharper than the recorded *"a fresh browser is 8x more likely to ramp"*,
+which was an enrichment ratio over a 6-minute window; this is a distribution, and it is bimodal
+with a spike.
+- **THE BAIL IS ~70 s AFTER THE ONSET, so the onset itself sits at ~1.2-2.1 minutes of browser
+  age** — i.e. a minute or two after the cold RC page load, which is where the ≤34-second mapping
+  burst lands. Consistent with the burst model; **not a new mechanism, and no mechanism is
+  written in.**
+- **IT VINDICATES `restart-rc` AS THE FORCING LEVER AND SIZES IT.** A restart produces exactly
+  this shape, and a cadence of ~11 minutes covers the 2.3-3.3 minute window every cycle. **It can
+  only ever reach the 69%**; the old-browser population needs hours of quiet, which is the
+  opposite of forcing.
+- **`MEM_DUMP_BASELINE_AFTER_MS` IS 3 MINUTES AND IS *NOT* IMPLICATED** — checked, because an
+  instrument firing inside the spike's own band is exactly the shape worth ruling out. The
+  baseline dump fires AFTER the onset, and 26 of 26 bails carry a completed baseline or none at
+  all rather than a dump in flight.
+
+##### A REAL HOLD IS QUEUED FOR 2026-09-17 08:00 PT, AND IT IS THE BEST FREE LEVER TODAY
+`#A124` at `rc-357`, status `requested` (with a second `offered` row for the same unit — the
+fairness line). `unit_name` is an RC site label and **not** the `TEST · <id>` prefix
+`rc-test-hold.mts` writes, so somebody real is waiting on it.
+- **`maybeAutoLogin` FIRES AT T−30 = 14:30 UTC AND NAVIGATES TO OKTA ON THE RESIDENT PAGE** —
+  which is the 09-10 17:53 ramp's own path (`Stalled in: auto-login`) and the exact renderer the
+  cure watches. It costs nothing and needs nobody. **That is the highest-value scheduled event of
+  the day for this proof.**
+- **STOP FORCING WELL BEFORE IT.** A `restart-rc` inside the T−3h warm-up window (from 12:00 UTC)
+  spends the warm-up's one turn per release, and one inside T−30 risks the cart itself: the
+  session takes ~11 minutes to recover from a restart, measured. **Forcing is safe only until
+  ~11:00 UTC**, and `dueHolds` does not serve the runner until T−90 s, so there is no profile
+  contention before then.
+
 #### TWO INDEPENDENT REASONS NOTHING NAVIGATES TO OKTA, BOTH READ LIVE OFF THE BOX
 The section above establishes that the Okta trip is the trigger and that it is not happening.
 A fresh `tail-log rc-keepwarm` at 04:15 UTC names **two** gates, and either alone is sufficient:
