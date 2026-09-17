@@ -12755,9 +12755,11 @@ A real user's Carpinteria hold (`#A124`, rc-357) was lost at the 15:00 UTC relea
 - **DO NOT read a `failed` hold as the burst being broken, or as a race lost, without that row.**
   That is the whole reason it exists.
 
-**BOT-SIDE — IT IS INERT UNTIL THE BOX UPDATES.** Confirm with
-`npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`** (it COALESCEs and can
-show a stale sha beside a live heartbeat).
+**IT IS LIVE ON THE BOX — `637316e`, applied 2026-09-17 17:44:17 UTC in twenty-four seconds**,
+read from `npx tsx scripts/bot-ask.mts git-status` and **never from `autocart.bot_version`** (that
+column COALESCEs and can show a stale sha beside a live heartbeat). `list-processes` showed exactly
+one `rc-keepwarm.mjs` node and one `rc-hold-runner.mjs`, so no payload was duplicated.
+**A hold tapped from 17:44 on is covered; an absent row for one tapped BEFORE it says nothing.**
 
 #### THE CAPTCHA BLOCK IS OVER — DO NOT ACT ON IT
 The 12:00 UTC warm-up was stopped by an image challenge on Okta's email step and the handover
@@ -12768,13 +12770,36 @@ to RC, not to the sign-in. **One CAPTCHA is an event, not an escalation** — th
 matter is whether the next unattended sign-in after a human one also meets one, and nobody has
 that.
 
-#### STATE, READ RATHER THAN REMEMBERED (2026-09-17 17:00 UTC)
+#### STATE, READ RATHER THAN REMEMBERED (2026-09-17 17:46 UTC)
 ```
-master          78f5fdf   (#358 merged)
-box             6fc7292   heartbeat 6s, session ok, token 55m, okta ALIVE to 09-18 04:40
-live holds      0         -> a box update costs the session and nothing else
+master          637316e   (#360 merged 17:42; #358 before it) — no open PRs
+box             637316e   applied 17:44:17 in 24s, read from bot-ask git-status
+fleet           3/3 shards held, worker heartbeat 5s, 11 watches, capacity 7/12
+live holds      0
+health          18 of 19 — the one warn is rc_session, the update's own cost
 bot_events 48h  mem-dump 27 · tab-close 87 · request-counts 6 · ramp-scan 2 · cart-burst 0
 ```
+**THE BOX AND THE WEB ARE ON THE SAME SHA FOR ONCE**, so `cart-burst`, `wedge.silent` and the
+decaying recycle budget are all live. **The cold restart was also a forcing lever and it did not
+pay**: commit stayed flat at ~7,550 MB through 17:46, `rc_mb` a real number throughout. One
+restart is not a trial — the recorded rate for a deliberate `restart-rc` is 2-for-4.
+
+#### A CANCELLED CI TWIN LEAVES A FIXTURE ROW, AND THE READOUT RENDERS IT AS A READING
+One push starts a `push` run and a `pull_request` run; the group cancels one, **and a cancelled
+run's `after()` never runs.** On 2026-09-17 that left
+`bot_events(source = '__tbe-3858-…', kind = 'ramp-scan')` in production — and
+`scripts/bot-events-readout.mts` has **no source filter**, so it printed as a real 10:16 PT
+ramp-scan with `commit undefined` and three "this is an ABSENCE, not a reading" glosses beneath
+it. **A phantom reading in the instrument that now prints CART BURSTS first.**
+- **IT WAS NOT SWEPT BY THE RUN THAT FINISHED.** `da4004c`'s `pull_request` twin went green and
+  the row survived — which is what identifies the **cancelled** twin as its owner.
+- **DELETED BY EXACT `source`, NEVER BY PREFIX.** `__tbe-<pid>-<ms>` is per-run, so a live run's
+  `after()` owns its own rows and a prefix sweep would delete them mid-assertion — the mutually
+  destructive shape #203 exists to prevent. A run WAS in flight at the time.
+- **RECORDED, NOT FIXED.** The honest repair is a `source NOT LIKE '\_\_%'` filter in
+  `recentBotEvents` — the same posture as `REAL_UNIT` filtering fixtures out of the CONSUMERS
+  rather than out of the tests — and it is a change to the leak investigation's primary readout,
+  which wants its own mutation-verified guard rather than a drive-by.
 
 #### AND I BROKE THE LANES RULE WHILE ENFORCING IT — AGAIN
 Merged #358 at 16:41 and started a local `npm run verify` while master's CI was running it; four
@@ -12791,6 +12816,9 @@ the second by somebody quoting the rule in the same session.
 - **#26** the request counter is attached with `page.on('request')` on the RESIDENT page only, so
   workers and every throwaway tab are invisible. `context.on('request')` closes two thirds of it.
   Bot-side; land it with something else bot-side.
+- **`recentBotEvents` HAS NO SOURCE FILTER**, so a cancelled CI twin's fixture row renders in the
+  readout as a real reading (above). One line, but it is the leak investigation's primary readout
+  and wants its own guard.
 - **The leak is diagnosed, contained and NOT fixed.** `base::SharedMemorySecurityPolicy`'s 32 GiB
   cap is the ceiling; the cure (recycle the wedged page) has fired **exactly once** in production
   and one firing is not a rate.
