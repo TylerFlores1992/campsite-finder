@@ -150,6 +150,37 @@ The cure's event now reports `commitUsedMb` even while the scan is blind, and th
 - **The update window shuts at 09:00 UTC anyway** (6 h before the release), and the box takes
   updates itself in the 02:00-05:00 PT quiet window once nothing is queued.
 
+### HOW TO READ THE FIRST FIRING — and the one way it could go wrong
+
+The event is `request-counts` with `reason: 'wedge-recycle'`. Read it, not the memory series:
+
+```sql
+SELECT at, detail FROM bot_events WHERE detail->>'reason' = 'wedge-recycle' ORDER BY at;
+```
+
+| field | reads | means |
+|---|---|---|
+| `closeMs` | 9-628 ms across 430 healthy production closes | a close in minutes, or `hung`, is the close inheriting the hang |
+| `tokenKept` | `written` / `already-stored` / `no-token` / `already-stored-stale` / `timeout` | the live token lives in PAGE memory and dies with the close |
+| `strikes` | 3 | fewer means `WEDGE_STRIKES` moved |
+| `recycles` | **always 1** — see below | |
+| `memKnown` / `memWhy` | `false` / `memory reading has no rc figure` while the scan is blind | honest, not a fault |
+| `commitUsedMb` | `null` on the box today; ~7,040 baseline vs 35,000-47,000 for the leak | **the leak-versus-baseline discriminator** |
+
+- **A SECOND FIRING WITHIN MINUTES IS THE RECYCLE LOOP, AND IT IS THE ONE WAY THIS GOES WRONG.**
+  `WEDGE_MAX_RECYCLES` **cannot bind**: `wedge` is reset on every browser reopen, and every
+  recycle *produces* a reopen, so `recycles` is 0 whenever the decision is taken and the
+  `escalate` branch is unreachable. A page that wedges within 30 s of every fresh load would
+  recycle → reopen → wedge → recycle for ever, and `supervise.ps1` cannot see it because the
+  process never exits. **Already recorded; deliberately not fixed** — the repair is a counter
+  that survives a reopen and DECAYS, which is bot-side, and an update resets the browser age.
+- **IT IS UNLIKELY AND IT IS LOUD.** A fresh browser loading RC's home page is normally
+  responsive, and re-wedging within 30 s of every load is the burst population's shape — which
+  has been absent since 09-15 09:04. If it happens the session never establishes and
+  `holdAtRisk` rings the phone at T−45; it is not a silent failure.
+- **AND IT IS NOT OBVIOUSLY WORSE THAN THE STATUS QUO ANTE.** Before the cure a wedge was
+  handled by `HUNG_MS` at twelve minutes, which cost the session too.
+
 ### If a reading IS wanted at a known moment, in order of cost
 
 1. **`rc-test-hold.mts --in 120`** — the only recipe with a recorded hit rate (**3 in 7**). It
