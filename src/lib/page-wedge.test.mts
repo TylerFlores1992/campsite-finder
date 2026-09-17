@@ -112,14 +112,43 @@ test('the recycle budget ESCALATES rather than looping for ever', async () => {
   assert.equal(under.act, 'recycle', 'inside the budget it must still recycle');
 });
 
+/**
+ * Read a `Number(process.env.NAME || <expr>)` default out of the keep-warm's source.
+ *
+ * `rc-keepwarm.mjs` STARTS THE KEEP-WARM ON IMPORT, so the one number this guard has to be
+ * measured against cannot be imported — it has to be parsed. That parsing has been got wrong
+ * twice in this repo and both times it read a threshold far smaller than the real one: a bare
+ * `(\d+)` stops at the underscore in `60_000` (reporting 60) and again at the space in
+ * `40 * 60_000` (reporting 40). Underscores are stripped and a product is multiplied out, and
+ * an unparseable default THROWS rather than returning a number — a guard that silently reads
+ * the wrong threshold approves the wrong value later.
+ */
+function keepwarmEnvDefault(name: string): number {
+  const m = kw.match(new RegExp(`process\\.env\\.${name}\\s*\\|\\|\\s*([0-9_ *]+?)\\s*\\)`));
+  assert.ok(m, `${name} default not found in rc-keepwarm.mjs — this guard is measuring nothing`);
+  const value = m![1].replace(/_/g, '').split('*').reduce((a, part) => a * Number(part.trim()), 1);
+  assert.ok(Number.isFinite(value) && value > 0, `${name} default did not parse: ${m![1]}`);
+  return value;
+}
+
 test('the timings are bounded from both sides', async () => {
   // Long enough that a busy-but-healthy page answers; short enough that three of them is far
-  // inside the 120s the cheapest existing arm needs.
+  // inside what the cheapest existing arm needs.
   assert.ok(WEDGE_PROBE_TIMEOUT_MS >= 500 && WEDGE_PROBE_TIMEOUT_MS <= 5_000);
   assert.ok(WEDGE_PROBE_EVERY_MS >= 2_000 && WEDGE_PROBE_EVERY_MS <= 30_000);
+
+  // DERIVED FROM THE RAMP ARM'S OWN CONSTANT, never restated as a literal. Ordering is already
+  // pinned above (`probeAt < rampAt`) — and ORDER IS NOT TIMING: both arms read the same
+  // `stalledMs`, so whichever bar is crossed first is the one that acts, whatever the source
+  // order. A literal here keeps passing if `RC_KEEPWARM_RAMP_STALL_MS` is ever lowered, and the
+  // cure would then be beaten to every event by the arm that costs the whole browser while
+  // nothing went red. That is the grace-versus-dump-timeout shape (a 15s hold against a 20s
+  // budget: two constants with no stated relationship, ordered the wrong way round).
+  const rampStallMs = keepwarmEnvDefault('RC_KEEPWARM_RAMP_STALL_MS');
   assert.ok(
-    WEDGE_STRIKES * WEDGE_PROBE_EVERY_MS < 120_000,
-    'this arm must act sooner than the ramp arm or it buys nothing',
+    WEDGE_STRIKES * WEDGE_PROBE_EVERY_MS < rampStallMs,
+    `this arm must act sooner than the ramp arm or it buys nothing: `
+      + `${WEDGE_STRIKES} strikes x ${WEDGE_PROBE_EVERY_MS}ms vs a ${rampStallMs}ms stall bar`,
   );
 });
 
