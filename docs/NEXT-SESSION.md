@@ -133,6 +133,23 @@ the cure : 3 strikes -> recycle, 243 -> 0 mappings in 520ms
   been absent for 25+ hours. Everything else — the mechanism, the detector on Windows/149, the
   release path — is measured.
 
+### DO **NOT** UPDATE THE BOX FOR THE COMMIT UNGATING — the browser's clock costs more
+
+The cure's event now reports `commitUsedMb` even while the scan is blind, and that is a
+**bot-side** change, so the box does not have it. **Leave it.**
+
+- An update runs `stop-all`, which kills the Chromium and **resets the browser age to zero** —
+  the one age at which the surviving ramp population has never fired. The commit field is a
+  discriminator on an event that may not happen; the clock IS the experiment.
+- It also ends the RC session with a real user hold at 15:00 UTC. `maybeAutoLogin` would restore
+  it at 14:30, but that spends the thing being watched.
+- **If the cure fires before the next update it still reports honestly** — `memKnown: false`,
+  `memWhy: "memory reading has no rc figure"`, `commitUsedMb: null`. What is missing is only the
+  leak-versus-baseline discriminator, and `chromium_memory_samples.commit_used_mb` carries it
+  independently at a two-minute cadence.
+- **The update window shuts at 09:00 UTC anyway** (6 h before the release), and the box takes
+  updates itself in the 02:00-05:00 PT quiet window once nothing is queued.
+
 ### If a reading IS wanted at a known moment, in order of cost
 
 1. **`rc-test-hold.mts --in 120`** — the only recipe with a recorded hit rate (**3 in 7**). It
