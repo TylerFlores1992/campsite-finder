@@ -347,6 +347,29 @@ async function report(body) {
   }).catch((e) => log(`  report failed for ${body.id}: ${e.message}`));
 }
 
+/**
+ * A BOT EVENT (migration 075) — a structured observation with no series of its own, stored
+ * where nothing can roll it and no later writer overwrites it.
+ *
+ * WHY THE BURST NEEDS ONE. Its summary used to live in two places that both destroy it:
+ * `error` on a loss, which the slow lane's ~110 retries overwrite within twenty minutes, and
+ * `log()` on a win, which `tail-log` rolls past in thirteen minutes. On 2026-09-17 that made
+ * "did the fast lane fire, or is it broken?" unanswerable about a real user's lost campsite.
+ * `src/lib/bot-events.ts` → `cartBurstReading` carries the full account.
+ *
+ * FIRE-AND-FORGET, ALWAYS. This runs feet from the cart at 08:00:00, and a diagnostic that
+ * can delay the thing it observes is not worth having — the same rule `recordClientReports`
+ * and the keep-warm's own reporter follow. Never await it on the cart path.
+ */
+function reportBotEvent(kind, detail) {
+  if (!TOKEN) return Promise.resolve();
+  return fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ source: 'rc-hold-runner', event: { kind, detail } }),
+  }).then(() => {}, (e) => log(`  (could not store the ${kind} event: ${e.message})`));
+}
+
 /** RC's rdApi wants the token in BOTH headers, plus two constants. */
 const rcHeaders = (token) => ({
   'Content-Type': 'application/json',
@@ -776,6 +799,37 @@ async function runPass() {
       // The pool every hold in this group draws on. Shared rather than per-hold: carts run
       // CART_CONCURRENCY at a time, so a per-hold budget multiplies by the number of holds.
       let burstBudget = BURST_BUDGET;
+      // MEASURED, NOT DERIVED. `-BURST_LEAD_MS` would be arithmetic about where we MEANT to
+      // wake; this is where we actually did, which is the only version that can show the sleep
+      // overshooting. Negative is the ordinary case and is the point — see cartBurstReading.
+      const laneOpenedAt = Date.now();
+      /**
+       * ONE ROW PER HOLD PER RELEASE PASS, and only on the pass that waited for the release.
+       *
+       * NOT gated on the burst having retried: a lane that armed and stopped on attempt 1 is a
+       * DIFFERENT fault from one that raced and lost, and both are different from a lane that
+       * never ran. Only guaranteed presence on this pass makes an ABSENT row mean "the runner
+       * never arrived before T" — which is the reading the owner actually needed on 2026-09-17
+       * and the reason this exists at all.
+       *
+       * The ~110 ordinary retries behind this pass emit NOTHING. `waitedForRelease` is what
+       * separates them, exactly as it separates a fast lane from a hundred bursts against RC.
+       */
+      const noteBurst = (h, { attempts, won, elapsedMs, reason, why }) => {
+        if (!waitedForRelease) return;
+        void reportBotEvent('cart-burst', {
+          unit: h.unitName ?? h.unitId,   // RC's own label. Never a cart key and never a token.
+          holdId: h.id,
+          releaseAt,
+          attempts,
+          won,
+          firstOffsetMs: laneOpenedAt - releaseMoment,
+          lastOffsetMs: elapsedMs,
+          budgetLeft: burstBudget,
+          reason: String(reason ?? '').slice(0, 120),
+          ...(why == null ? {} : { why: String(why).slice(0, 200) }),
+        });
+      };
       mark(`carting ${holds.length} hold(s) for ${releaseAt} PT`);
       if (holds.length > 1) {
         log(`  carting ${holds.length} hold(s) ${Math.min(CART_CONCURRENCY, holds.length)} at a time`);
@@ -838,6 +892,7 @@ async function runPass() {
             ? ` — ${describeBurst({ attempts, elapsedMs: Date.now() - releaseMoment, won: true })}`
             : '';
           log(`  ✓ held ${h.unitName ?? h.unitId} (${h.arrivalDate}) — entry ${check.entryKey}${how}`);
+          noteBurst(h, { attempts, won: true, elapsedMs: Date.now() - releaseMoment, reason: 'carted' });
           await report({ id: h.id, ok: true, cartKey, cartEntryKey: check.entryKey });
           return;
         } else {
@@ -870,6 +925,7 @@ async function runPass() {
             ? ` (${describeBurst({ attempts, elapsedMs: Date.now() - releaseMoment, won: false, reason: decision.reason })})`
             : '';
           log(`  ✗ could not hold ${h.unitName ?? h.unitId}: ${why}${burstNote}`);
+          noteBurst(h, { attempts, won: false, elapsedMs: Date.now() - releaseMoment, reason: decision.reason, why });
           // The cart key travels even though this failed. If the submit landed and only the
           // read-back did not, the site is locked in THAT cart and the retry has to return
           // to it -- see reportCartFailure. Sending null when there is no key is fine; the
