@@ -554,14 +554,20 @@ test('the margin is reported once per browser life, and zero probes is its own r
   // IT MUST BE INSIDE THE `worthReporting` GATE. The hold runner has taken the profile every
   // ~11 seconds through a retry window, running this `finally` about a hundred times in
   // twenty-one minutes; an ungated line there buries the ~31-minute log window.
-  const tdFrom = kw.indexOf('const worthReporting =');
-  assert.ok(tdFrom > -1, 'the teardown block moved — this guard is measuring nothing');
-  const tdTo = kw.indexOf('await Promise.race([', tdFrom);
-  assert.ok(tdTo > tdFrom, 'could not bound the teardown block — this guard is measuring nothing');
-  const teardown = kw.slice(tdFrom, tdTo);
-  const gate = teardown.indexOf('if (worthReporting) {');
-  const line = teardown.indexOf('resident-page probe:');
-  assert.ok(gate > -1 && line > gate, 'the margin line must sit inside the worthReporting gate');
+  //
+  // BOUND THE GATE'S BODY, NOT ITS OPENING. The first version of this guard asserted
+  // `line > gate` — which is ORDERING and reads like CONTAINMENT, and a line moved below the
+  // `} else {` satisfies it exactly. Mutation-verified: that version passed against the line
+  // hoisted out of the gate entirely, which is the regression it exists for.
+  const gate = kw.indexOf('if (worthReporting) {');
+  assert.ok(gate > -1, 'the teardown gate moved — this guard is measuring nothing');
+  const gateEnd = kw.indexOf('} else {', gate);
+  assert.ok(gateEnd > gate, 'could not bound the teardown gate — this guard is measuring nothing');
+  const gated = kw.slice(gate, gateEnd);
+  assert.ok(gated.includes('resident-page probe:'),
+    'the margin line must sit INSIDE the worthReporting gate, not merely after it opens');
+  assert.ok(gated.includes('teardown.probes = wedge.probes;'),
+    'the stored fields must be gated too — an ungated write reports a life nothing else describes');
   // ZERO PROBES IS NOT A ZERO MARGIN. "The arm took no healthy reading" and "it answered
   // instantly every time" are opposite facts and a bare 0 would merge them.
   assert.match(kw, /the arm took no healthy reading/,
