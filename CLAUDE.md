@@ -10858,6 +10858,51 @@ from a renderer whose main thread would not answer a single CDP call.
   is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
   A password submission from an address that has eaten a twelve-hour block, for a few per cent.
 
+#### TWO INDEPENDENT REASONS NOTHING NAVIGATES TO OKTA, BOTH READ LIVE OFF THE BOX
+The section above establishes that the Okta trip is the trigger and that it is not happening.
+A fresh `tail-log rc-keepwarm` at 04:15 UTC names **two** gates, and either alone is sufficient:
+```
+04:02:47  renewal stood down: the token has 22m left - waiting for it to lapse, because
+          renewing a live token is what leaks and it has never once worked
+04:02:47  RC session kept warm - token exp in 22m; renewed=no; src=live; okta=ALIVE (exp 16:02:48)
+04:14:10  RC session kept warm - token exp in 10m; renewed=no; src=live; okta=ALIVE (exp 16:14:11)
+```
+1. **`planRenewal` STANDS DOWN WHILE THE TOKEN IS ALIVE AT ALL** (the 2026-08-18 near-expiry
+   stand-down), so most polls never reach the renewal at all.
+2. **When it does act, it ends at `no-signin-control`** - the cell measured on 08-18 to allocate
+   nothing.
+**So the drought is over-determined**, and both gates are working exactly as designed. Neither is
+a fault to fix; together they are why an instrument armed for eighteen hours has had no event.
+
+##### AND THE OKTA WINDOW IS MEASURED ROLLING, TWICE, WHICH DATES THE PRECONDITION
+`exp - checked` is **+12.0000h on both readings** (04:02:47 -> 16:02:48, 04:14:10 -> 16:14:11).
+That is the discriminator this file already records: a rolling window prints exactly +12.0000h
+from the moment it was CHECKED, while the frozen absolute cap SHRINKS by the elapsed time.
+- **So `okta=GONE` is not imminent and our own probe is why.** `checkAndReport` calls
+  `oktaSessionAlive` unconditionally every 20 minutes, which refreshes the idle timer - the
+  2026-08-18 finding that this is *load-bearing by accident*, seen from the other end: it is what
+  keeps the session alive for days, and it is what makes the ramp trigger unreachable on demand.
+- **DO NOT "FIX" THE UNCONDITIONAL PROBE TO MAKE FORCING EASIER.** That entry's warning is
+  explicit - anyone who matches it to the renewal's careful guard starts the Okta session
+  expiring and forces real logins from an address that has eaten a twelve-hour block. **A
+  diagnostic convenience is not worth the household IP.**
+
+##### THE `AS t` TRAP REPRODUCED TWICE IN ONE SESSION, AND IT FAILED AS A DEAD INSTRUMENT
+`SELECT max(taken_at) AS t, count(*) ... FROM chromium_memory_samples WHERE taken_at > now() -
+interval '2 hours'` came back with `t` **undefined**, and it was read as **"the memory sampler
+has stopped"** - which under this file's own "A GAP IS THE SIGNATURE, NEVER A ZERO" rule is an
+emergency, and would have redirected the whole session into diagnosing a healthy box.
+- **The sampler was fine**: 716 samples in 24h, newest one minute old, flat at ~300 MB with
+  commit 7.1/43.8 GB. Re-running with the column aliased `ts` returned every field.
+- **IT IS THE ABSENT-READING-AS-A-NEGATIVE SHAPE HANDED OVER BY THE TOOLING**, and worse than the
+  recorded form: the entry describes the symptom as *"a row count that looks right with every
+  field `undefined`"*, which reads as obviously broken. **An aggregate has no row count to look
+  right** - one `undefined` in one field is the whole signal, and it is indistinguishable from
+  the table genuinely being empty.
+- **The rule is NOT "always `AS`"** (the entry's own heading was corrected to that effect on
+  09-17): `AS` is irrelevant in both directions, and **the alias being `t` is everything**. It
+  cost two queries here because the first correction was read as being about the keyword.
+
 #### ~~THE 22:49 REHEARSAL IS WHAT STOPPED THE RAMPS~~ — FALSIFIED WITHIN THE HOUR, BY ITS OWN DISCRIMINATOR
 `rc_login_rehearsal_log` is a HISTORY table (the 2026-08-18 entry's complaint that
 `rc_login_rehearsal` keeps only one row was fixed and nobody had read the fix), and it puts a
