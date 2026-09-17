@@ -362,12 +362,14 @@ cure failing):
 | `memKnown` / `memWhy` | `false` / `memory reading has no rc figure` while the scan is blind | honest, not a fault |
 | `commitUsedMb` | ~7,040 baseline vs 35,000-47,000 for the leak | **the leak-versus-baseline discriminator** |
 
-**THE RECYCLE-LOOP DEFECT IS FIXED ON THE BRANCH (`1720e8b`) AND IS STILL LIVE ON THE BOX.**
-`WEDGE_MAX_RECYCLES` could never bind — `wedge` was reset on every reopen and every recycle
-*produces* a reopen — so `escalate` was dead code and a page that wedges within 30 s of each
-fresh load would recycle, reopen and wedge for ever, invisible to `supervise.ps1` because the
-process never exits. The fix is `decayedRecycles` (30 m). **Until the box updates: a second
-`wedge-recycle` within minutes is that loop**, and `restart-rc` breaks it.
+**THE RECYCLE-LOOP DEFECT IS FIXED AND THE BOX HAS IT** (squash-merged in #360, so `1720e8b`
+is not an ancestor of master but its content is — `git show origin/master:scripts/auto-cart-bot/
+page-wedge.mjs | grep decayedRecycles`). `WEDGE_MAX_RECYCLES` could never bind — `wedge` was reset
+on every reopen and every recycle *produces* a reopen — so `escalate` was dead code and a page
+that wedges within 30 s of each fresh load would recycle, reopen and wedge for ever, invisible to
+`supervise.ps1` because the process never exits. The fix is `decayedRecycles` (30 m).
+**A second `wedge-recycle` within MINUTES is still the shape to look at**; the two on record are
+eight hours apart, which is not it.
 
 ### If a reading IS wanted at a known moment, in order of cost
 
@@ -377,6 +379,12 @@ process never exits. The fix is `decayedRecycles` (30 m). **Until the box update
    is carted. **It refuses while a real hold is live.**
 2. **`restart-rc`** — cheapest by far (no campsite, no password, no Okta precondition), **and
    DENIED to an unattended session.** Ask a human.
+   - **A BOX UPDATE IS THE SAME LEVER AND IS NOT DENIED.** `update.bat` runs `stop-all` then
+     `start-all`, i.e. exactly the cold generation change `restart-rc` produces — and the
+     **17:44:39 `wedge-recycle` fired 22 seconds after the 17:44:17 update**, on the browser it
+     created. So an update that is happening anyway is a free shot at the burst population.
+     **Do not schedule one FOR this** (it costs the RC session); **do read `bot_events` after
+     every one.**
 3. **`test-login` — do NOT spend it while Okta is ALIVE.** It forces `prompt=login` by
    interception so it does navigate, but Okta answers from the cookie (09-07: eleven seconds,
    +24 MB) — the cheap cell. Rationed one per 6 h, and it costs a password submission from an
@@ -402,7 +410,8 @@ real logins from a blocked address.
 | fleet | worker heartbeat **5s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**. |
 | holds | **ZERO live.** `#A124` went `failed` at 15:20:01Z; its fairness-line sibling `expired`. |
 | RC session | **WARN, and that is the box update's own cost** — `stop-all` closed the Chromium the token lives in at 17:44. `planRenewal` repairs it unattended in ~11 minutes. **Do not reach for `rc-login.bat`**; it force-kills the browser the repair needs. |
-| the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* CURED — still NOT eliminated.** §2. The cure has fired **exactly once** (09-17 09:50:17 UTC). A is built, B is answered and off, C is built. |
+| the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* CURED — still NOT eliminated.** §2. The cure has fired **twice** (09-17 09:50:17 and 17:44:39 UTC), both on the burst population, neither followed by a ramp. A is built, B is answered and off, C is built. |
+| the last ramp | **09-17 14:31:49 UTC**, on an 82-minute browser (the OLD population), from the T-30 auto-login. The bail arm caught it at ~T+70 s; peak `rc_mb` **3,168 MB**, commit **45,568 / 48,894**. The walk is thirteenth-consistent and the dump is `target-silent` for the sixth time — **nothing left to read there.** |
 | the burst | **has never been observed firing.** `cart-burst` is LIVE on the box now and has **0 rows** — correct until the next tapped hold. §0. |
 | migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left** — the next main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 

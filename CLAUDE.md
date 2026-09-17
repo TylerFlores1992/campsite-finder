@@ -7229,6 +7229,27 @@ plain words while a master CI run was in flight:**
       `tab-close`, and 09-15 has a `bail:ramp` sixteen minutes AFTER its release. Its browser age
       (**6.2 h**) and the timing fit a renewal rather than a T-30 trip, which acts between T-30 and
       T-0 — so a killed auto-login is unlikely there and is not ruled out.
+    - **AND TODAY'S OWN RELEASE THEN PRODUCED FOUR IN FOUR MINUTES, WHICH IS TWICE THE ENTIRE
+      297-HOUR CORPUS.** The 09-17 15:00 release had a genuinely dead session (the 12:00 warm-up
+      was stopped by a CAPTCHA), so `maybeAutoLogin` acted — and its FIRST trip ramped:
+      ```
+      14:31:49  rc 3,168 MB   commit 45,568 / 48,894   pid 14608 renderer   <- one sample
+      14:32:00  ramp-scan (trigger both)      14:32:46  mem-dump (ramp)
+      14:32:56  bail:ramp   ageMs 4,924,386 = 82 MINUTES of browser age
+      14:34:00 / 14:35:01 / 14:36:01 / 14:37:06   tab-close auto-login   41.1 / 41.5 / 41.1 / 45.3 s
+      ```
+      **The bail killed the browser mid-trip, so that trip emitted no `tab-close` at all** — and
+      the four that follow are the arm retrying on fresh browsers, every one cheap
+      (`ramMb` +13 / −12 / −21 / −137). So a single release can produce a burst of them, and the
+      0.16/day figure is a MEAN over a corpus where most days have none.
+    - **IT IS ALSO THE MISSING-DENOMINATOR CAVEAT ABOVE, OBSERVED RATHER THAN REASONED.** That
+      bullet says a bail-killed trip is absent from the 427 and calls the rate an overestimate;
+      here is one, with the `bail:ramp` and the four retries either side of the hole it left.
+    - **THE RAMP ITSELF IS THE OLD POPULATION AND ADDS NOTHING NEW.** 82 minutes is inside the
+      52-611 minute band; the walk is thirteenth-consistent (16,386 regions / 16,381 allocation
+      bases / 32,778 MB, all anonymous, main thread at 103% of a core, GPU idle); and the dump is
+      **`target-silent` for the sixth time** — 8 of 8 answering pids in the walk's own list, the
+      ramping renderer alone absent. **Do not spend a ramp on the dump.**
 - **AND THE DASHBOARD HAS NO SUCH LUCK.** `autocart.rc_session` and the health route's hold counts
   go red for the length of a run — the 2026-08-23 finding recurring through a numeric fixture that
   **#202's `holdsAhead`/`holdsDueWithin` fix cannot see**, because that fix carries `REAL_UNIT` and
@@ -8029,7 +8050,8 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
      it cannot separate is `alive` from `inconclusive`; that is worth one line only if a later
      firing is genuinely ambiguous.
 ##### IT FIRED — 2026-09-17 09:50:17 UTC, ON A GENUINE BURST WEDGE, AND NO RAMP FOLLOWED
-**First production firing. `wedge-recycle` events, all time: 1.** Against the predictions written
+**First production firing. `wedge-recycle` events, all time: 1 at the moment this was written —
+2 by that evening; see "IT FIRED A SECOND TIME" below.** Against the predictions written
 before it, the log is a line-for-line match — the `♻`, the close, the reopen, and **no `✗ RAMP`
 and no `✗ WEDGED` beneath it**:
 ```
@@ -8204,6 +8226,33 @@ hard kill or a fault that ran no handler. The box did **not** update (`git-statu
 `HEAD 6fc7292 on master`, unchanged) and `auto-update.log` shows the guard **correctly refusing
 every run** that night — `SKIP - a hold releases in 5.3h`.
 
+
+
+##### IT FIRED A SECOND TIME AT 17:44:39, ON THE BROWSER A BOX UPDATE CREATED — SO THE COUNT IS TWO
+The entry above is written around one firing and calls the true-positive half **n=1**. It is
+**n=2 within eight hours**, and the second one arrived free, on work that was happening anyway.
+```
+17:44:17  the box applies 637316e (update.bat -> stop-all -> start-all)
+17:44:39  wedge-recycle — 25,828 asks on futurebookingstartsendsdates, statuses {}
+          commit flat 7,450-7,550 MB throughout; no ramp-scan, no bail:ramp
+```
+- **THE SIGNATURE IS THE SAME ONE, TWICE.** 30,631 answer-less asks at 09:50 against 25,828 here
+  — both on a cold RC home-page load in a browser under a minute old, both with `statuses: {}`,
+  both with every other path on the page answering normally. **That is the burst population, and
+  it is now the only population the cure has ever fired on.**
+- **SO A BOX UPDATE IS A FORCING LEVER FOR THIS WEDGE, AND IT COSTS NOTHING EXTRA.** `stop-all`
+  plus `start-all` is exactly the cold generation change `restart-rc` produces — which this file
+  already records as 2-for-2 at forcing the burst population — and an update performs one
+  anyway. **`restart-rc` is refused by the harness classifier**, so for a session with no human
+  present, **the update is the only reachable version of that lever.** Do not schedule an update
+  FOR this; do read the events after every one.
+- **NEITHER FIRING WAS FOLLOWED BY A RAMP, AND THAT IS STILL NOT EVIDENCE THE CURE PREVENTED
+  ONE.** A burst at full rate costing nothing is a recorded, observed outcome (2026-09-05 09:47:
+  19,008 hits in 120 s on a browser 0 m old, series flat at 208-227 MB). Two firings, two
+  quiet series, and the counterfactual is unavailable in both.
+- **WHAT IT DOES BUY IS THE FALSE-POSITIVE HALF, DOUBLED.** Two firings across ~30 browser lives,
+  both on a page demonstrably in a 25-30k answer-less burst, and not one firing on an ordinary
+  renewal, warm-up or auto-login trip.
 
 ##### AND THE LOG CARRIES TWO MORE THINGS: THE REOPEN, AND A BLIP THAT DELETES `tab-close` ROWS
 Pulled at 10:20 with `tail-log rc-keepwarm:400`, which still reached back to 09:29 — the colon is
