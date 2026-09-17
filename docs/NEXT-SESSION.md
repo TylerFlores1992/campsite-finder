@@ -943,6 +943,10 @@ that restarts the box, `sms-link-test.mts --send`.
 - **`git checkout -- <file>` reverts to HEAD**, so during mutation testing it deletes the
   uncommitted fix under test. Commit before mutating.
 - **`git rebase --onto origin/master <old-tip>`** for a branch cut from a squash-merged branch.
+- **A column aliased `t` makes `query()` return scalars, not row objects** — it collides with
+  `exec_select`'s own wrapper subquery alias, so `json_agg(t)` resolves to that COLUMN. Every
+  field reads `undefined` with a plausible row count. **`AS` is irrelevant in both directions;
+  the alias being `t` is everything.** Hit again on 09-17, the day it was recorded.
 - **`sqlit` interpolates, it does not bind**, and throws on a plain object — stringify jsonb.
 - **No non-ASCII in `.ps1`**, no `\"` inside a `powershell -Command` string in a `.bat`, no
   backticks in a SQL comment inside a template literal.
