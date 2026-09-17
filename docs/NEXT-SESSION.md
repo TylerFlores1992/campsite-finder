@@ -9,6 +9,27 @@ only copy of anything — the ten items that were, got folded into `CLAUDE.md` b
 stale, delete it rather than striking it through.** Strikethrough belongs in `CLAUDE.md`, where the
 correction is itself the record; here it is just weight.
 
+
+## 0. THE CURE FIRED — 2026-09-17 09:50:17 UTC. READ `CLAUDE.md` → "IT FIRED" FIRST.
+
+**`wedge-recycle` events, all time: 1.** The thing the last several sessions waited for has
+happened, the log was pulled ~7 minutes later, and the write-up is in `CLAUDE.md`. **Nothing here
+is the only copy.**
+
+- **It matched the written predictions line for line**, fired on a genuine burst wedge (30,631
+  answer-less RDR asks in a browser 44.6 s old), **no ramp followed**, and the RC session was lost
+  to the wedge rather than to the cure.
+- **THE BROWSER WAS REPLACED AT 09:49, so "hold the box to let the browser age" is DEAD.** That
+  was the whole reason for not updating; the clock restarted by itself. The remaining reason to
+  wait is the 15:00 release, not the age.
+- **`autocart.rc_session` IS RED AND THAT IS EXPECTED.** Okta is `GONE(404)`; `maybeAutoLogin` at
+  **14:30 UTC** is the designed repair and is the full password variant. **Do not reach for
+  `rc-login.bat` or `test-login`** — both cost the session again and the repair is scheduled.
+- **DO NOT CLAIM THE CURE PREVENTED A RAMP.** A burst at full rate costing nothing is already an
+  observed outcome; this event cannot separate the two readings.
+
+---
+
 ---
 
 ## 0a. THE MERGE IS STAGED — #358 FIRST, AND BOTH CONFLICTS ARE "KEEP BOTH"
@@ -18,31 +39,17 @@ rc-357) releases then. Both PRs rewrite `rc-keepwarm.mjs` and both carry `worker
 each merge fires a worker deploy and restarts all three pollers. **Check `poller.shards` after
 each.**
 
-> **AND THE BOX UPDATE AFTERWARDS CARRIES A NAMED RISK, BECAUSE `stop-all` IS CURRENTLY BLIND.**
-> The per-process scan cannot read the 8 Chromium command lines (since 04:15:31 UTC), and
-> `stop-all`, `stop-rc` and `orphan-sweep.mjs` **all kill Chromium by matching
-> `--user-data-dir`**. So an update stops the node/powershell payloads — those ARE readable —
-> and may leave the browser orphaned; the new keep-warm then meets a `user-data-dir` a live
-> Chromium still holds, which is `exitCode=21` (PROFILE IN USE), and five such exits in ten
-> minutes makes `supervise.ps1` **stop loudly and leave the RC pair dead.** That is worse than
-> the ~11 minutes an update normally costs.
+> **THE BLIND-SCAN RISK IS GONE — the per-process scan CLEARED at 09:41 UTC** with the browser
+> generation change, and `rc_mb` has read real figures since 09:51. So `stop-all`, `stop-rc` and
+> `orphan-sweep.mjs` can match `--user-data-dir` again and an update costs the ordinary ~11
+> minutes rather than risking an orphaned browser and `exitCode=21`. **Confirm before the update
+> rather than trusting this line** — one row of `chromium_memory_samples` says whether `rc_mb` is
+> a number.
 >
-> **IT IS BOUNDED BY TWO PRECEDENTS FROM TODAY, AND THEY POINT THE OTHER WAY.** The `restart-rc`
-> runs at **04:14:05 and 04:29:05 UTC** each killed **zero** chrome.exe — blind, exactly this
-> state — and the pair came back healthy both times; the keep-warm has run unbroken since
-> 04:29:05. The likeliest reason is that Playwright drives Chromium over `--remote-debugging-pipe`
-> and the browser exits when its node parent dies, so the 2026-08-18 orphan (a keep-warm
-> restarting MID-LOGIN) is a narrower path than "any kill".
->
-> **SO: proceed, and watch for the specific failure rather than assuming it.** After the update,
-> `bot-ask list-processes` should show ONE `rc-keepwarm.mjs` node and one `rc-hold-runner.mjs`;
-> repeated `starting: node rc-keepwarm.mjs` lines in `restarts.log` (Pacific!) inside ten minutes
-> is the crash-loop, and the remedy is a human at the box — `stop-rc.ps1` from an ELEVATED
-> prompt, which is the one thing that can see those command lines.
->
-> **AND THE UPDATE IS ALSO THE FREE EXPERIMENT ON THE BLIND SCAN.** It either clears it or does
-> not, and either answer narrows a question nothing else can reach. Read `rc_mb` in
-> `chromium_memory_samples` within two minutes of the box coming back.
+> **AFTER THE UPDATE:** `bot-ask list-processes` should show ONE `rc-keepwarm.mjs` node and one
+> `rc-hold-runner.mjs`. Repeated `starting: node rc-keepwarm.mjs` in `restarts.log` (**Pacific!**)
+> inside ten minutes is the crash-loop, and the remedy is a human at the box.
+
 
 1. **#358** (`claude/keepwarm-skip-dedupe`) — green, `unstable` only because of the cancelled CI
    twin, which is the documented one-push-two-runs behaviour and not a failure.
@@ -87,19 +94,24 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 0.5 DO THIS FIRST — the cure is live, has never fired, and forcing it is DENIED to an unattended session
+## 0.5 THE CURE HAS FIRED ONCE — read the box with these queries, not with the memory series
 
-**The box is on the cure** (`6fc7292` contains `e92a5a6`/#355, checked with `git merge-base
---is-ancestor` rather than by reading a version field), and the arm is unconditional in the
-watchdog timer. So "it never ran" is ruled out structurally. **§2.6 is the full account.**
-
-**Ask this ONE query before anything else. It is the whole state of the proof:**
+**One firing (09-17 09:50:17 UTC) is not a rate.** §0 and `CLAUDE.md` → "IT FIRED" are the
+account; this section is how to read the box for the NEXT one.
 
 ```sql
-SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 05:10
+SELECT at, detail->>'reason' FROM bot_events
+ WHERE detail->>'reason' = 'wedge-recycle' ORDER BY at DESC;   -- 1 row as of 09-17 10:20 UTC
 ```
 
-**THEN ASK THE SECOND ONE, BECAUSE A ZERO ABOVE HAS TWO CAUSES AND THEY ARE NOT THE SAME NEWS:**
+**A ~30 s cure fits entirely between two two-minute memory samples, so the SERIES IS THE WRONG
+INSTRUMENT** — and a wedge the cure wins produces **no** `bail:ramp`, **no** `ramp-scan` and
+**no** `mem-dump phase=ramp`. **So `bot_events` is now the only census of wedges there is, and a
+quiet one is not evidence that the box is quiet.** The event is in Postgres and cannot roll out of
+a log window; **the log lines that say the cure WORKED can and do** — pull
+`tail-log rc-keepwarm:400` within ~20 minutes of a firing.
+
+**IF THE COUNT IS STILL 1, THE SECOND QUERY SAYS WHETHER THE TRIGGER IS EVEN LIVE:**
 
 ```sql
 SELECT max(at) FROM bot_events WHERE kind = 'tab-close';   -- the last Okta trip
@@ -107,39 +119,28 @@ SELECT count(*) FROM bot_events WHERE detail->>'reason' LIKE 'bail:%'
    AND at > now() - interval '6 hours';                    -- 0 means no trip was KILLED
 ```
 
-Every Okta trip leaves a `tab-close` (the close is in a `finally`); a trip killed by a bail
-leaves none. **So `tab-close` recent = the trigger is live and the cure is genuinely waiting;
-`tab-close` hours old with zero bails = the trigger is OFF and the cure cannot fire at all.**
+Every Okta trip leaves a `tab-close` (the close is in a `finally`); a trip killed by a bail leaves
+none. **`tab-close` recent = the trigger is live and the cure is genuinely waiting; `tab-close`
+hours old with zero bails = the trigger is OFF and the cure cannot fire at all** — which is what
+the healthy self-sustaining regime looks like, because `planRenewal` stands down while the token
+is alive and the ESTABLISHED trigger is the Okta navigation.
 
-At 08:25 UTC on 09-17 it was the second: **222 minutes since the last trip, zero bails.**
-`planRenewal` stands down while the token is alive, RC's SPA has been silently re-minting since
-~04:32 (`renewed=no; src=live`, token `1m → 41m → 21m → 1m → 40m` across 06:29-07:49), and the
-ESTABLISHED trigger is the Okta navigation — **so the healthy self-sustaining regime is precisely
-the regime in which the leak cannot fire.** "Wait for a ramp" really means "wait for the
-self-renewal to lapse", and what ends that is Okta's ABSOLUTE cap. The reported window is
-**rolling** (`okta_expires_at − okta_checked_at` = 12.0000h, refreshed by our own 20-minute
-probe), so the cap is invisible until the window stops rolling — which is the signal the capture
-watch fires on.
+- **THE FALSE-POSITIVE HALF IS STILL THE MEASURED ONE.** ~2,400 probes across ~20 browser lives
+  since 21:50:59 UTC on 09-16 — through renewals, stand-downs, keepalive checks and five forced
+  restarts — **with no run of three**, and one genuine firing. Individual `wedged` readings were
+  never counted; `silent` counts them, and it is **bot-side, so it is inert until the box
+  updates.**
+- The detector itself is validated: `detail->>'reason'` resolves on every stored `request-counts`
+  row, and the keep-warm emits exactly `snapshot({ reason: 'wedge-recycle' })`.
 
-- **A ~30 s cure can fit entirely between two two-minute memory samples, so the SERIES IS THE
-  WRONG INSTRUMENT.** That event is in Postgres and cannot roll out of a log window. **Do not
-  read a quiet `chromium_memory_samples` as the cure working.**
-- The detector itself is validated: `detail->>'reason'` resolves on 5 of 5 stored
-  `request-counts` rows, and the keep-warm emits exactly `snapshot({ reason: 'wedge-recycle' })`.
-  So a zero is about the subject, not the query.
-- **AND THE ZERO NOW CARRIES ONE POSITIVE RESULT.** The arm has probed every 10 s since
-  21:50:59 UTC on 09-16 — **~2,400 probes across ~20 browser lives**, through renewals,
-  stand-downs, keepalive checks and five forced restarts — **with no run of three.** Individual
-  `wedged` readings were never counted; the arm counts them now (`silent`). That
-  is the half of the cure that costs an RC page load if it is wrong, measured in production on
-  Windows/149. It says nothing about the true-positive half.
 
-### FORCING A RAMP IS **DENIED** TO AN UNATTENDED SESSION — this is the blocker
+### FORCING A RAMP IS **DENIED** TO AN UNATTENDED SESSION — no longer the blocker, still true
 
 `restart-rc` is refused by the harness classifier as **"Interfere With Workloads"**. That is a
 permission denial, not a technical failure, and it is not to be worked around. `test-login` is
-not a substitute (below). **So a session with no human present cannot produce the event the cure
-needs**, and the proof waits on either a natural ramp or somebody with permission.
+not a substitute (below). **A session with no human present still cannot produce a ramp on
+demand** — what changed on 09-17 is that one arrived by itself, so this bounds how fast a SECOND
+reading can be obtained rather than whether any can.
 
 - **A HUMAN CAN DO IT IN ONE COMMAND**, and this is the single highest-value thing to ask for:
   `npx tsx scripts/bot-ask.mts restart-rc`, which makes a COLD browser loading RC's home page —
@@ -147,7 +148,10 @@ needs**, and the proof waits on either a natural ramp or somebody with permissio
   `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves the RC pair dead. Never
   inside the T−3h warm-up window of a real release.
 - **Do not quote the 2-for-4 as today's rate.** The two hits were 09-09 and 09-10, while the
-  young/burst population was live; it has not occurred naturally since **09-15 09:04**.
+  young/burst population was live. **That population is BACK** — 09-17 09:50 carried 30,631
+  answer-less asks on `futurebookingstartsendsdates` in a 44.6 s browser — after 46.5 hours away,
+  which was its longest recorded absence. So a forced restart is likelier to land now than it was
+  yesterday, and a natural one may arrive without asking.
 
 ### THE 14:30 UTC AUTO-LOGIN MAY NOT FIRE AT ALL — 1 OF 3 PRIOR RELEASES
 
