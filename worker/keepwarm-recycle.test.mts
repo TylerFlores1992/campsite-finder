@@ -633,8 +633,17 @@ test('RAMP: a blind scan still stands down under the bar, and without a commit f
   // is NaN, and `rc family NaN MB` reads as a reading rather than as its absence.
   assert.doesNotMatch(under.why, /NaN/, 'an absent rc figure must never be rounded into the verdict');
   assert.match(under.why, /UNATTRIBUTED/);
-  assert.equal(rampBailDecision({ ...base, stalledMs: 130_000, memory: blind(null) }).fire, false,
+  // TWO UNKNOWNS MUST REPORT AS UNKNOWN, NOT AS "UNDER THE BAR" — and `fire` alone cannot see
+  // the difference, because `byCommit` refuses a null figure anyway. Dropping the
+  // commit-present half of the gate leaves the decision identical and the SENTENCE wrong: a
+  // reading we could not take arrives as a measurement that came in low. That merge is the
+  // failure this repo has recorded more than any other.
+  const noFigure = rampBailDecision({ ...base, stalledMs: 130_000, memory: blind(null) });
+  assert.equal(noFigure.fire, false,
     'a blind scan AND no commit figure is two unknowns — the older-box case, and it must stand down');
+  assert.match(noFigure.why, /no rc figure/,
+    'it must report the reading as UNKNOWN, never as a family measured under the bar');
+  assert.doesNotMatch(noFigure.why, /under the bar/);
   assert.equal(rampBailDecision({ ...base, stalledMs: 30_000, memory: blind(40_000) }).fire, false,
     'BOTH CONDITIONS, ALWAYS — in this state the stall is the only discriminator there is');
 });
@@ -649,6 +658,17 @@ test('RAMP: ONLY the rc-blind branch is ungated — stale and wrong-browser read
     const d = rampBailDecision({ ...base, stalledMs: 130_000, memory: { known: false, why, ageMs: 400_000, commitUsedMb: 40_000 } });
     assert.equal(d.fire, false, `a reading refused for "${why}" must not fire on its commit figure`);
   }
+  // THE TRIGGER MAY NEVER NAME A FIGURE THE VERDICT REPORTS AS ABSENT. A blind reading that
+  // somehow carried an rcMb — a hand-built one, or a future writer that fills it on a branch
+  // this one does not — must still not produce `rcMb` or `both` beside `rcMb: null`. A
+  // self-contradictory verdict is worse than a coarse one: it is the half somebody quotes.
+  const contradiction = rampBailDecision({
+    ...base, stalledMs: 130_000,
+    memory: { ...blind(40_000), rcMb: 5_000 },
+  });
+  assert.equal(contradiction.trigger, 'commitUsedMb',
+    'an unattributed reading must not claim an rc trigger, whatever field happens to be on the object');
+  assert.equal(contradiction.rcMb, null);
   assert.match(rbCode, /rcBlind:\s*true/, 'the blind branch must NAME itself, or the caller has to infer it from a shape another branch could share');
   const stale = rbCode.slice(rbCode.indexOf('if (ageMs > maxAgeMs)'), rbCode.indexOf('const rcMb ='));
   assert.doesNotMatch(stale, /commitUsedMb/,
