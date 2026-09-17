@@ -6095,6 +6095,37 @@ only:
   time. That is the argument for the forcing recipe existing at all — and not for using it, which
   costs a password submission from an address that has eaten a twelve-hour block.
 
+###### AND THE RANGE IS A MIXTURE OF TWO POPULATIONS WITH DIFFERENT CADENCES (2026-09-17)
+Both corrections above are about the WINDOW. This one is about the POPULATION, and it does not
+fix itself with a longer window. `bail:ramp`'s own `request-counts` splits every ramp cleanly —
+`distinct=16` is the young/cold-load BURST shape, `distinct=76-79` the old-browser one — and
+**they have completely different cadences**, computed over the whole corpus:
+```
+BURST (young, cold RC load)   18 ramps   gaps 1.4h – 37.8h    current gap 46.5h  << OUTSIDE
+OLD browser                    8 ramps   gaps 11.6h – 62.2h   current gap 27.7h  (inside)
+```
+- **SO "2.3-18.6h" IS DOMINATED BY THE BURST POPULATION, which fires 2-3x as often.** Judging a
+  single population's gap against it is comparing one thing to a mixture of two. **On 2026-09-17
+  a 27.7-hour gap read as "outside the recorded range" and as a possible regime change; split, it
+  is squarely inside the surviving population's own range and needs no explanation at all.**
+- **WHAT IS GENUINELY ABSENT IS THE BURST POPULATION — 46.5h against a max of 37.8h**, and it has
+  been noted since its last appearance on 2026-09-15 09:04. That is 69% of all ramps gone, which
+  by itself predicts a ~3x longer POOLED gap — so the pooled figure is not merely a mixture, it
+  is a mixture whose weights have moved.
+- **AND IT DISSOLVES AN APPARENT ANOMALY IN THE PER-TRIP RATE.** 52 Okta trips since the last
+  ramp with none ramping is a **1.1%** outcome at the recorded "at most 1 in 12" — which reads as
+  something having changed. **The bound pools the same two populations**, and the burst one is
+  enriched by browser REPLACEMENT rather than by trips (the 8x association, and `restart-rc` being
+  a forcing lever at all), so the per-trip rate for the surviving population is lower by roughly
+  the population split — **around 1 in 37, where 52 clean trips is a 24% outcome.** Unremarkable.
+  **Do not quote 1-in-12 as a per-trip rate for a specific population**; it is an upper bound over
+  a mixture, and the file already labels it a bound "in a known direction".
+- **THE CONSEQUENCE FOR THE CURE'S PROOF IS THE SHARP PART.** The wedge the cure needs arrives
+  with a ramp, the burst population is the commoner source, and its shape is a COLD RC page load
+  in a fresh browser — which is what `restart-rc` and a box update produce. **So while forcing is
+  held, the proof waits on the population whose gaps run 11.6-62.2 hours.** That is the honest
+  expected wait, not "a few hours".
+
 ###### AND `bot_events` GOES SILENT FOR HOURS WHEN THE SESSION IS HEALTHY (2026-09-10 21:53 UTC)
 Checked for a new ramp and found something better: **the whole event stream had stopped, and that
 is the good regime.** Last event of ANY kind **19:31:28**, against a `tab-close` every ~31 minutes
