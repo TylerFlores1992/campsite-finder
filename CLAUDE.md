@@ -11550,6 +11550,54 @@ kinds (`tab-close` 433, `request-counts` 147, `mem-dump` 77, `ramp-scan` 29).
 
 ## Open / next session
 
+#### THE BOX'S `wedge-recycle` EVENT IS NEARLY EMPTY, AND THE LOG THAT CARRIES THE PROOF ROLLS IN 20 MINUTES (2026-09-17)
+
+The arm's reachability is now traced rather than argued from the sha. In the box's own
+`6fc7292` source the probe sits at code line 2240 of the watchdog timer, **between the 90 s
+stall trigger and `HUNG_MS`**, gated on nothing but
+`!bailing && !wedge.inFlight && now - lastProbe >= WEDGE_PROBE_EVERY_MS` — no `return` at the
+timer's statement level precedes it, and it is **above** the `let memory` block at 2293, which
+is the second confirmation that the blind scan cannot reach it. The import is at line 104, so
+the module loads or `rc-keepwarm.mjs` does not start at all, and the process is beating. **The
+fix-present-and-inert check passes**, by three independent routes.
+
+**WHAT THE TRACE ALSO FOUND IS THAT THE FIRING WILL BARELY SPEAK FOR ITSELF.** The box emits:
+
+```js
+void reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'wedge-recycle' }));
+```
+
+**The request counts and the reason. Nothing else.** `closeMs`, `tokenKept`, `strikes` and the
+three memory fields are in the version this session wrote and are NOT on the box — deliberately,
+because a box update resets the browser's clock to zero and the surviving ramp population's band
+starts at 52 minutes. So the durable record of the first firing is a bare counter snapshot, and
+**everything that says the cure WORKED — the `♻` line, `token on the way out`, `closed the wedged
+page in Nms`, and the absence of a `✗ RAMP`/`✗ WEDGED` beneath it — exists only in
+`logs\rc-keepwarm.log`.**
+
+- **AND THAT LOG ROLLS IN ABOUT TWENTY MINUTES, MEASURED.** `tail-log` returns the last 16,000
+  characters, and the keep-warm prints **two stand-down lines every 60 seconds**
+  (`auto-login stood down: the release is Nm away…` and `warm-up stood down: …`), which is
+  ~150 chars/minute of pure repetition. A 60-line read at 05:25 reached back to **04:57** — 28
+  minutes, and that window is mostly the two repeating lines. **PR #358's skip dedupe is the fix
+  and it is bot-side**, so it buys nothing until the box updates, which is the thing being
+  deliberately avoided.
+- **SO THE CAPTURE MONITOR IS LOAD-BEARING, NOT A CONVENIENCE.** It polls `bot_events` every
+  90 s and pulls `tail-log rc-keepwarm` the moment a `wedge-recycle` or a ramp appears. 90 s of
+  detection plus a bot-ask round trip is ~2.5 minutes against a 20-minute window — comfortable,
+  and it is the only thing standing between a firing and a firing nobody can read.
+- **THE TRADE WAS TAKEN DELIBERATELY AND IS WORTH RESTATING.** Updating the box would put all
+  six fields into Postgres where nothing can roll them — and would cost the RC session plus the
+  52 minutes the browser has already aged into the band. At one ramp every 6-26 hours the update
+  is cheap in expectation and the reading is better; what decides it the other way is that the
+  monitor already closes the gap, and the session is release-critical with a real user hold at
+  15:00 UTC. **If the monitor ever dies, that calculus inverts** — re-arm it or update the box.
+
+**AND THE DROUGHT IS AT THE LONG END OF ITS OWN DISTRIBUTION.** Commit ramps over 15 GB:
+09-15 09:03, 09-15 15:16 (+6.2 h), 09-16 03:51 (+12.6 h), then nothing for **25.6 hours**. The
+observed gap range is 6-26 h, so this is the tail rather than a new regime — **do not write the
+drought up as the cure working; the cure has never fired.**
+
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
 
 **Read "THE RECONCILE RAN AND THE BADGE STILL CANNOT SEE THE ONE CANCELLING SUBSCRIBER" before

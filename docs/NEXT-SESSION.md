@@ -152,6 +152,24 @@ The cure's event now reports `commitUsedMb` even while the scan is blind, and th
 
 ### HOW TO READ THE FIRST FIRING — and the one way it could go wrong
 
+> **⚠ THE TABLE BELOW DESCRIBES THE EVENT THIS SESSION WROTE, NOT THE ONE THE BOX EMITS.**
+> Verified against `6fc7292`'s own source, 2026-09-17: the box emits
+> `requestCounter.snapshot({ reason: 'wedge-recycle' })` and **nothing else** — the request
+> counts and the reason. `closeMs`, `tokenKept`, `strikes`, `rcMb`, `commitUsedMb` and
+> `commitLimitMb` are all in the unpushed/unshipped version and reach the box only on an
+> update, which is being avoided because it resets the browser's clock below the 52-minute
+> band. **So an absent `closeMs` is the BOX BEING OLD, never the cure failing** — read the
+> table as what to expect once the box updates, and read the log for everything else.
+>
+> **AND THE LOG ROLLS IN ABOUT TWENTY MINUTES.** `tail-log` returns the last 16,000 characters
+> and the keep-warm prints two stand-down lines every 60 s, so a 60-line read at 05:25 reached
+> back only to 04:57. PR #358's skip dedupe fixes it and is bot-side, i.e. inert until the same
+> update. **The capture monitor that pulls the log within ~90 s of a firing DIES WITH THE
+> SESSION THAT ARMED IT.** If you are a fresh session and a `wedge-recycle` has landed, pull
+> `bot-ask tail-log rc-keepwarm` FIRST, before anything else — the event cannot tell you
+> whether the close worked, and after ~20 minutes nothing can.
+
+
 The event is `request-counts` with `reason: 'wedge-recycle'`. Read it, not the memory series:
 
 ```sql
