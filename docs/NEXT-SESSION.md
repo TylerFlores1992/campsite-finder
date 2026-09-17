@@ -11,6 +11,34 @@ correction is itself the record; here it is just weight.
 
 ---
 
+## 0a. THE MERGE IS STAGED — #358 FIRST, AND BOTH CONFLICTS ARE "KEEP BOTH"
+
+**Blocked until 2026-09-17 15:00 UTC (08:00 PT)** — a real user's hold (`#A124`, unit 4642,
+rc-357) releases then. Both PRs rewrite `rc-keepwarm.mjs` and both carry `worker/**` guards, so
+each merge fires a worker deploy and restarts all three pollers. **Check `poller.shards` after
+each.**
+
+1. **#358** (`claude/keepwarm-skip-dedupe`) — green, `unstable` only because of the cancelled CI
+   twin, which is the documented one-push-two-runs behaviour and not a failure.
+2. **#360** (`claude/cure-forcing-readings`) — rebase onto master after #358 lands.
+
+**The rebase was dry-run in a throwaway worktree on 09-17 07:45 and the resolution verified
+(58/58, typecheck clean on both configs). `rc-keepwarm.mjs` AUTO-MERGES** — the risky file needs
+nothing. Two conflicts, both purely additive:
+
+- **`worker/rc-mem-dump.test.mts`** — both branches add `scripts/cdp-thread-probe.mjs` to the
+  probe-rot list with different comments. **Keep #358's comment** (it explains WHICH CDP domains
+  survive a wedged main thread, and why the 2026-09-05 counter-example is not one) **and keep
+  #360's `scripts/cure-end-to-end.mjs` entry below it.** Losing either leaves a probe that can
+  rot silently.
+- **`CLAUDE.md`** — one conflict, two sections inserted at the same place. **Keep both sides, in
+  order.** Nothing overlaps; a merge that drops either reads exactly like a finding nobody wrote.
+
+**Then update the box** — and note that the update is itself the best forcing lever available:
+it restarts the browser cold on RC's home page, which is the BURST population's shape.
+
+---
+
 ## 0. Ground yourself — four commands, in this order
 
 ```bash
