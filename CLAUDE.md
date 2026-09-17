@@ -11313,13 +11313,52 @@ per-mapping work to scale.
   before the 32 GiB cap. The fix then probed a page that was not leaking and **refused the
   `CURED` verdict** rather than claiming a release it had not performed. Same rule as
   `--concurrent-mint` refusing a race verdict when no submit was accepted.
-- **SO THE CONTAINER CANNOT REACH PRODUCTION SCALE AND DOES NOT NEED TO.** Its ceiling is the
-  harness's retention, not the cure's; **use the 30-second run**, which reaches the fix while
-  still climbing. A longer run kills the renderer first and proves nothing.
+- ~~**SO THE CONTAINER CANNOT REACH PRODUCTION SCALE AND DOES NOT NEED TO.** Its ceiling is the
+  harness's retention, not the cure's~~ — **THE CONCLUSION HOLDS AND THE CAUSE IS WRONG
+  (measured 2026-09-17).** `wedge-and-fetch` **retains nothing**: it is
+  `fetch('/body?'+(n++)).catch(()=>{})`, so the `Response` is discarded on the spot, and the only
+  arm that keeps one is `fetch-nodrain`, which is a different candidate. **Use the 30-second run**
+  still stands, for a different reason.
+- **THE REAL CEILING IS RAM RESIDENCY, AND IT IS A PLATFORM PROPERTY.** On Linux a data pipe's
+  ring buffer is a **memfd**, i.e. tmpfs, i.e. **REAL RAM**; on Windows the same section is
+  charged against **COMMIT and never touched** (`PAGEFILE allocatedMB=31,744` against
+  `peakMB=73` — 31.7 GB charged, 73 MB ever written). So the container pays ~2 MiB of RSS per
+  mapping where the box pays none, and 16 GB of RAM is the wall. Measured, `wedge-and-fetch-fast`
+  for 120 s:
+  ```
+  series … 54s:2577 56s:2694 58s:2718 60s:2724 62s:2730 64s:2730 … 118s:2732 120s:2732
+  pid=30644 type=renderer 2MiB=2732 (5.34 GiB)   RSS 12.4 GB   host: 14.4 GB used, 1.2 GB free
+  ```
+  **A PLATEAU, NOT A CRASH** — flat for sixty seconds with the renderer alive and reporting at
+  the end. So "a longer run kills the renderer first" is at best one of two outcomes, and the
+  plateau is the commoner one. **Reaching 16,383 here would need ~34 GB of RAM**, so it is not a
+  matter of running longer and never will be.
+  - **AND THE PLATEAU IS SILENT BY CONSTRUCTION.** `fetch(...).catch(()=>{})` swallows the
+    failure, so once allocation starts failing the loop spins on at full rate and the count
+    simply stops moving. **Do not read a flat tail as the leak stopping.**
+- **BUT THE SAME PLATFORM DIFFERENCE IS A GIFT FOR THE CURE'S PROOF, AND IT HAD NOT BEEN
+  COLLECTED.** Because Linux makes the mappings resident, **RSS is a second and independent
+  witness**: it separates *"the address space was unmapped"* from *"the memory came back"*, which
+  a `/proc/<pid>/maps` count alone cannot. Added to the `--fix` arm, and on its first run:
+  ```
+  FIX: probe=wedged strikes=3 act=recycle after 6004ms
+  FIX: chromium RSS 11649 -> 376 MB (-11273)
+  FIX: mappings 987 -> 0 in 2542ms   <<< CURED
+  ```
+  **11.3 GB of resident memory handed back in 2,542 ms**, corroborated by the host's own
+  `free -m` (14,437 MB used during the run, 1,772 MB after). That is the release half of the
+  cure measured in bytes rather than in map entries, for the first time.
+  - **THE RATIO IS ITSELF A FINDING AND IT DOES NOT TRANSFER.** 11,273 MB freed against
+    987 x 2 MiB = 1,974 MB of mappings is **~5.7x**, so on Linux the wedge costs far more than
+    its mappings — `deferred_messages_` and the per-response loader bookkeeping. Production is
+    the **opposite**: 2,981-4,587 MB of renderer private bytes against 32 GiB of mappings.
+    **Only the MAPPING COUNT is comparable between the two platforms; never quote a byte figure
+    across them.**
 - **WHAT IS STILL NOT CLAIMED: that a 32 GiB renderer CLOSES as readily as a 3 GiB one.** The
   close is a browser-process operation and does not ask the wedged renderer for anything — which
   is the same property that makes the probe's silence diagnosable — but no close of a 32 GiB
-  renderer has ever been observed on any platform.
+  renderer has ever been observed on any platform. **And the ceiling above says this container
+  can never observe one**, so that gap closes on the box or not at all.
 
 #### THE RENEWAL TRIP IS NOT WHAT RAMPS — 0 OF 331, AND THE RAMPING ONES ARE CENSORED
 `tab-close` carries **`ramMb`**, the free-RAM delta across the trip — a PER-TRIP cost
