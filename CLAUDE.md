@@ -11366,10 +11366,41 @@ The sampler names its own cause on every tick, in the `bot` log, and nobody had 
     above the `!memory?.known` return. And `HUNG_MS` reads the loop clock. So the box's
     protection order is cure → HUNG_MS → (ramp arm, dead) → RAM arm, and the first and last
     are unaffected.
-- **RECORDED, DELIBERATELY NOT FIXED.** Making the commit bar survive a blind scan is a
-  change to the arm that exits the process, on a day with a real user hold releasing at
-  15:00 UTC, and it needs a box update — which ends the RC session. The cure is first in the
-  timer and is the containment under test. **Do not take this as a drive-by.**
+- ~~**RECORDED, DELIBERATELY NOT FIXED.**~~ **FIXED THE SAME DAY (`0250fee`), once forcing a
+  ramp turned out to be denied and the alternative was an idle wait.** The reasoning for
+  holding off was about SHIPPING, not about writing: it is bot-side, so it is inert until the
+  box updates, and the update still waits for the 15:00 UTC hold. **Nothing about the box
+  changed today.**
+  - **`rcBlind: true` NAMES THE STATE, and the caller does not infer it.** `known` still means
+    "the memory is ATTRIBUTED", which it is not — inferring the state from *"known false but
+    `commitUsedMb` present"* would also match a future branch that carries commit for some
+    other reason. The age and browser-life checks both run ABOVE it, so a commit figure
+    reaching the decision is fresh and describes this browser; **the stale and
+    previous-browser branches carry no `rcBlind` and no commit, and still refuse.** Both
+    halves are guarded, because either alone would let a wrong reading through if the other
+    moved.
+  - **WHAT IS GIVEN UP IS WRITTEN INTO THE CODE RATHER THAN GLOSSED.** The arm's own comment
+    argues a whole-box commit figure is safe to act on *because `rcMb` cross-checks it* — and
+    in this state there is no cross-check, so the **120-second stall is doing all of the
+    discriminating.** Acceptable on the measured numbers (133 tab-closes, longest trip
+    **71,552 ms**, not one over 90,000, so a 120 s stall has never occurred outside a ramp)
+    and on the asymmetry: **a false fire costs a process restart (~11 min of session
+    recovery); not firing costs commit exhaustion, the only failure this box has ever had that
+    needed a human.**
+  - **AND IT WAS RENDERING `rc family NaN MB`.** `Math.round(undefined)` on the blind branch,
+    in the sentence a reader quotes — a measurement that is not one. It names the absence now.
+  - **NINE MUTATIONS, EACH VERIFIED TO APPLY. TWO SURVIVED THE FIRST ROUND AND NEITHER WAS
+    EQUIVALENT**, which is the part worth keeping:
+    - Dropping the commit-present half of the gate left `fire` **identical**, because
+      `byCommit` refuses a null figure anyway — so a `fire`-only guard could never see it.
+      What it changed was the SENTENCE: a reading we could not take arrived as *"a family
+      measured under the bar"*. **That merge of "unknown" and "low" is this file's
+      most-repeated failure**, and it survived a guard written by somebody quoting it.
+    - Dropping `memory.known === true` from `byRc` is equivalent on every shape
+      `readLatestMemory` produces (`undefined > n` is false). It is **not** equivalent on a
+      reading carrying both, where it yields **`trigger: 'both'` beside `rcMb: null`** — a
+      self-contradictory verdict, and the half somebody quotes. Pinned as an invariant: **the
+      trigger may never name a figure the verdict reports as absent.**
 - **WHAT THE CURE'S OWN DIAGNOSTIC DOES INSTEAD, because that half IS mine.** The wedge
   event reports `commitUsedMb` whenever it is a finite number rather than gating it on
   `known` — otherwise the one figure that separates *this page was holding the leak* from
