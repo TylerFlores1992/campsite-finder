@@ -72,6 +72,44 @@ needs**, and the proof waits on either a natural ramp or somebody with permissio
 - **Do not quote the 2-for-4 as today's rate.** The two hits were 09-09 and 09-10, while the
   young/burst population was live; it has not occurred naturally since **09-15 09:04**.
 
+### THE ONE FREE TRIGGER ON THE CALENDAR IS THE 14:30 UTC AUTO-LOGIN — and it will probably miss
+
+A **real user's hold** (`#A124`, unit 4642, rc-357, `requested`, with a fairness-line rival
+behind it) releases at **15:00 UTC / 08:00 PT**, so `maybeAutoLogin` fires at **T−30 = 14:30**.
+It is an Okta navigation that costs nothing and needs nobody. Both capture watches are armed.
+
+**PREDICTED, SO IT CAN BE FALSIFIED: no ramp.** Okta's window read `11.9999h` (rolling) with an
+expiry of **18:49 UTC**, four hours past the trip — so the sign-in is answered from the `idx`
+cookie, which is the **11-second, +24 MB** cell and **has never been observed to ramp**. All
+three ramping trips on record are `okta=GONE` password forms.
+
+- **It is not zero:** the browser will be ~10 hours old, inside the 52-611 min old band, and what
+  kind of trip the 611-minute ramp was making was never recorded.
+- **READ IT WITH THE ATTRIBUTION RULE** (`CLAUDE.md` → "THE CURE WATCHES ONE RENDERER OF TWO").
+  `maybeAutoLogin` runs in a **throwaway tab** and the cure probes **`residentPage` only**, so a
+  ramp in the trip's own renderer is invisible to it — and correctly so, because
+  `closeTabBounded` in the `finally` already reclaims that one. **"The cure did not fire" is not
+  a verdict on the cure until the ramp is attributed to a renderer.**
+- **THE BOX IS HELD UNTIL 15:00.** No `restart-rc`, no `kill-chrome`, no box update, no test
+  hold — a stranger is waiting on that campsite and the session takes ~11 minutes to recover
+  from a restart.
+
+### TWO WAYS TO MISREAD CI, BOTH MEASURED TODAY
+
+Both produced a wrong answer here, and both are one query away from producing another.
+
+- **`?head_sha=` SILENTLY OMITS RUNS.** It returns **200 with `total_count: 0`** for shas whose
+  runs exist — two of three checked hours later, while `?branch=` returned all of them in the
+  same second. A watch pinned to it reported nothing for twenty minutes **while that run
+  FAILED**. Not lag, not the short-sha trap. **Build on `?branch=<name>` and match the sha in
+  the results.**
+- **"THE PUSH RUN CARRIES THE VERDICT" IS FALSE.** One push starts a `push` run and a
+  `pull_request` run on the same sha; the concurrency group keys on `head_ref || ref_name`,
+  identical for both, so they cancel **each other** and the survivor is whichever started
+  second — measured in **both directions** on consecutive shas of one branch. **The verdict is
+  whichever twin is NOT cancelled**, and **both cancelled is its own reading**: a newer push
+  superseded that sha, so it will never get one.
+
 ### THE DROUGHT IS THE SELF-SUSTAINING REGIME — waiting is waiting for it to end
 
 **26 hours with no ramp** (last 09-16 03:51) against a 2.3-18.6 h gap range, and hourly peak
