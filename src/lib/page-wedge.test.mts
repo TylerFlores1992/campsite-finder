@@ -224,12 +224,28 @@ const recycleBody = (() => {
   return kw.slice(from, to);
 })();
 
+/**
+ * THE EVENT'S OWN OBJECT LITERAL, not the whole function.
+ *
+ * The first version of the guard below matched `\bcloseMs\b` anywhere in the body — which
+ * the `const closeMs = ...` declaration and the log line satisfy on their own, so deleting
+ * the field from the EVENT left the suite green. Caught by mutation; ~30th time a guard here
+ * has anchored on the wrong thing.
+ */
+const eventLiteral = (() => {
+  const from = recycleBody.indexOf("reportBotEvent('request-counts', {");
+  assert.ok(from > -1, 'the event literal moved — this guard is measuring nothing');
+  const to = recycleBody.indexOf('});', from);
+  assert.ok(to > from, 'could not bound the event literal — this guard is measuring nothing');
+  return recycleBody.slice(from, to);
+})();
+
 test('the firing carries the three facts that say what it DID', async () => {
   for (const field of ['closeMs', 'tokenKept', 'commitUsedMb']) {
-    assert.match(recycleBody, new RegExp(`\\b${field}\\b`),
-      `the wedge-recycle event must carry ${field} — without it the log is the only record`);
+    assert.match(eventLiteral, new RegExp(`(^|[{,\\s])${field}\\b`),
+      `the wedge-recycle EVENT must carry ${field} — without it the log is the only record`);
   }
-  assert.match(recycleBody, /reason: 'wedge-recycle'/,
+  assert.match(eventLiteral, /reason: 'wedge-recycle'/,
     'the durable marker must keep its exact literal — the readout matches on it');
 });
 
@@ -244,9 +260,9 @@ test('the memory is read BEFORE the close, because after it there is nothing to 
 test('an UNKNOWN memory reading reports itself, never a zero', async () => {
   // "we could not tell" and "the box was holding nothing" are opposite readings, and a bare
   // null in commitUsedMb renders as the second. The house rule, at the newest instrument.
-  assert.match(recycleBody, /memKnown/, 'the event must say whether the reading was known');
-  assert.match(recycleBody, /memWhy/, 'an unknown reading must carry its own reason');
-  assert.match(recycleBody, /mem\.known === true \? \(mem\.commitUsedMb/,
+  assert.match(eventLiteral, /memKnown/, 'the event must say whether the reading was known');
+  assert.match(eventLiteral, /memWhy/, 'an unknown reading must carry its own reason');
+  assert.match(eventLiteral, /mem\.known === true \? \(mem\.commitUsedMb/,
     'commitUsedMb must be gated on the reading being KNOWN, not merely present');
 });
 
