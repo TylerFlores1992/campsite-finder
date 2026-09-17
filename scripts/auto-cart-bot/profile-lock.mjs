@@ -42,6 +42,29 @@ export function profileLockHolder(profileDir) {
   }
 }
 
+/**
+ * WHO HOLDS THE PROFILE, WITH THE TWO FACTS THAT DECIDE WHAT TO DO ABOUT IT.
+ *
+ * The line this replaces read `profile busy (rc-keepwarm)` and nothing else, which is
+ * reassuring in exactly the fatal case: it cannot tell "mid-pass, fine" from "the holder died
+ * and we are waiting out STALE_MS" from "a live holder is wedged". `rc-check.bat` has the same
+ * complaint recorded against it, one file over.
+ *
+ * MEASURED 2026-09-16: the keep-warm exited silently at 00:03 UTC taking its Chromium with it,
+ * the supervisor restarted it at 00:04, and it then printed this line five times over seven and
+ * a half minutes against a lock whose recorded pid no longer existed. The pid was in the lock
+ * file the whole time — `profileLockHolder` returns it and this line threw it away — and so was
+ * the age, which is the number that says "this is stale, it will clear itself".
+ */
+export function profileHolderNote(held) {
+  if (!held) return 'another process';
+  const bits = [held.owner ?? 'another process'];
+  if (held.pid) bits.push(`pid ${held.pid}`);
+  const ms = held.at ? Date.now() - new Date(held.at).getTime() : null;
+  if (Number.isFinite(ms)) bits.push(`held ${Math.round(ms / 1000)}s`);
+  return bits.join(', ');
+}
+
 /** Take the lock if it's free. Returns true on success. */
 export function acquireProfileLock(profileDir, owner) {
   if (profileLockHolder(profileDir)) return false;

@@ -177,9 +177,40 @@ test('every auto-login gate names itself, and repeats collapse', () => {
     'a bare `return false` is a gate that fired silently — route it through autoLoginSkip()');
   assert.ok((fn.match(/autoLoginSkip\(/g) ?? []).length >= 6,
     'each distinct stand-down reason needs its own sentence');
-  // Asked every 60s, so an un-collapsed line is 1,440 identical entries a day — which hides
-  // the answer just as effectively as printing nothing.
-  assert.match(src, /lastAutoLoginSkip/);
+  /**
+   * THE COLLAPSE IS ON A STATE KEY, AND THIS GUARD USED TO PIN THE WEAKER VERSION.
+   *
+   * It asserted `lastAutoLoginSkip` by name — a dedupe that compared the SENTENCE — which was
+   * true and insufficient. Two of these reasons carry a minute count that changes on every
+   * ask ("the release is 922m away", "the release was 3m ago"), so with a release queued the
+   * comparison collapsed nothing at all: measured 2026-09-16, 72 of 79 timestamped lines and
+   * 86% of the characters in `rc-keepwarm.log` were those sentences counting down, and the
+   * readable `tail-log` window fell from most of a day to about ninety minutes.
+   *
+   * RE-ANCHORED ON THE PROPERTY, NOT RELAXED, and it asserts more than it did: the logger
+   * must be a `makeSkipLogger` (which compares a key), every call must pass one, and no key
+   * may carry the per-minute count — a key that ticks is the bug wearing the fix's clothes.
+   */
+  assert.match(src, /const autoLoginSkipLog = makeSkipLogger\(/,
+    'the collapse must go through makeSkipLogger, which compares a STATE key');
+  // WHITESPACE-TOLERANT ON PURPOSE: three of these calls are long enough that the key sits on
+  // its own line, and a regex demanding the key immediately after the paren is a guess about
+  // layout rather than a rule about the code. The first draft made exactly that guess, read
+  // 8 of 11, and its own failure is what found three multi-line stand-downs the conversion
+  // had missed — so the budget being about the CODE and not the formatting is load-bearing
+  // twice over. Same lesson as `rehearsal.test.mts`'s character window.
+  const calls = (fn.match(/autoLoginSkip\(/g) ?? []).length;
+  const keyed = (fn.match(/autoLoginSkip\(\s*(`[^`]*`|'[^']*'),\s/g) ?? []).length;
+  assert.equal(keyed, calls,
+    'every stand-down must pass a state KEY as well as a sentence');
+  for (const m of fn.matchAll(/autoLoginSkip\(\s*(`[^`]*`|'[^']*')/g)) {
+    assert.doesNotMatch(m[1], /Math\.round|\$\{(mins|secs|wait)\b/,
+      `a key carrying a per-minute count collapses nothing — that IS the bug: ${m[1]}`);
+  }
+  // An attempt is a state change the key cannot see, so the logger is cleared before one is
+  // spent. Without it a stand-down that names the same state after a sign-in is swallowed.
+  assert.match(src, /autoLoginSkipLog\.reset\(\)/,
+    'the dedupe must be cleared before a sign-in is spent — see makeSkipLogger.reset');
 });
 
 test('the hold runner stands off the profile after repeated dead-session passes', () => {

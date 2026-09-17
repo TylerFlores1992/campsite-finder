@@ -9,10 +9,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import fs, { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  profileHolderNote,
   acquireProfileLock, releaseProfileLock, releaseProfileLockIfMine,
   renewProfileLock, profileLockHolder,
   requestProfile, profileRequested, clearProfileRequest, forceProfileLock,
@@ -158,4 +159,56 @@ test('forcing never touches a free lock or our own', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── The busy line says WHO, WHICH PID and HOW LONG ────────────────────────────────────────
+//
+// THE DEFECT (measured 2026-09-16). The keep-warm exited silently at 00:03 UTC taking its
+// Chromium with it; the supervisor restarted it at 00:04; and it then printed
+//
+//     … profile busy (rc-keepwarm) — retrying in 30s, NOT a dead session
+//
+// five times over seven and a half minutes against a lock whose recorded pid no longer
+// existed — while `rc_procs` read 0 and the RC session was down. Two facts that would have
+// explained it were in hand and thrown away: the PID (`profileLockHolder` returns it) and the
+// lock's AGE, which is what says "this is stale and will clear itself in N minutes".
+//
+// It is the same complaint already recorded against `rc-check.bat`: a line that is reassuring
+// in exactly the fatal case, because it cannot tell "mid-pass, fine" from "the holder died"
+// from "a live holder is wedged". Those need three different responses.
+
+test('the busy note carries the pid and the age, and survives a missing or bad one', () => {
+  const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+  assert.equal(profileHolderNote(null), 'another process');
+
+  const full = profileHolderNote({ owner: 'rc-keepwarm', pid: 14996, at: ago(452) });
+  assert.match(full, /rc-keepwarm/);
+  assert.match(full, /pid 14996/, 'the pid is what says the holder is gone');
+  assert.match(full, /held 45[012]s/, 'the age is what says the lock is about to go stale');
+
+  // An absent field is omitted, never printed as a placeholder.
+  assert.doesNotMatch(profileHolderNote({ owner: 'x', at: ago(3) }), /pid/);
+  assert.doesNotMatch(profileHolderNote({ owner: 'x', pid: 1 }), /held/);
+  // AND A BAD DATE MUST NOT RENDER AS `held NaNs` — an unreadable lock is an absent age, not a
+  // number. Same rule as every other absent reading in this repo.
+  assert.doesNotMatch(profileHolderNote({ owner: 'x', pid: 2, at: 'not-a-date' }), /NaN|held/);
+});
+
+test('the retry cadence printed is the one actually waited', () => {
+  // IT SAID 30s AND THE REAL GAP WAS 90. `waitForProfileLock` spends its own timeout before
+  // the sleep, so the cadence is their SUM — observed at 00:05:00, 00:06:30, 00:08:00,
+  // 00:09:30, 00:11:00. A three-fold understatement in the one line somebody reads while the
+  // RC session is down and they are deciding whether to drive to the box.
+  const src = readFileSync(
+    new URL('../scripts/auto-cart-bot/rc-keepwarm.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const PROFILE_WAIT_MS = /, 'the wait must be a named constant');
+  assert.match(src, /const PROFILE_RETRY_MS = /, 'and so must the sleep');
+  assert.match(src, /waitForProfileLock\(PROFILE_DIR, LOCK_OWNER, PROFILE_WAIT_MS\)/,
+    'the wait constant must be the one actually passed');
+  assert.match(src, /await sleep\(PROFILE_RETRY_MS\)/,
+    'and the sleep constant the one actually slept');
+  // The printed number must be DERIVED from both, or it drifts from the behaviour again.
+  assert.match(src, /PROFILE_WAIT_MS \+ PROFILE_RETRY_MS\) \/ 1000\)}s, NOT a dead session/,
+    'the printed cadence must be computed from both waits, never a literal');
+  assert.doesNotMatch(src, /retrying in 30s/, 'the literal is the bug');
 });

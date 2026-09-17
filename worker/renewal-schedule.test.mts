@@ -282,3 +282,27 @@ test('every stand-down carries a STABLE key beside its changing sentence', () =>
   assert.equal(new Set(aging.map((c) => c.reason)).size, 3,
     'while the sentence still reports the current number — which is why they are separate');
 });
+
+test('the skip logger collapses on the KEY and can be reset', () => {
+  // THE POINT OF A KEY: the sentence may change on every ask (these all carry a minute count)
+  // and the line must still print once. Comparing the sentence is what made `autoLoginSkip`
+  // and `warmupSkip` flood `rc-keepwarm.log` with a countdown for as long as a release was
+  // queued — 86% of the file, measured 2026-09-16.
+  const out: string[] = [];
+  const skip = makeSkipLogger((r: string) => out.push(r));
+  for (let m = 900; m > 880; m--) skip('outside-lead', `the release is ${m}m away`);
+  assert.equal(out.length, 1, 'twenty asks, one state, one line');
+  assert.equal(out[0], 'the release is 900m away', 'and the FIRST sentence is the one kept');
+
+  // A different state prints again.
+  skip('inside-lead', 'the release is 20m away');
+  assert.equal(out.length, 2);
+
+  // RESET EXISTS BECAUSE AN ATTEMPT IS A STATE CHANGE THE KEY CANNOT SEE. `rc-keepwarm.mjs`
+  // clears both loggers immediately before it spends a sign-in; without it the stand-down that
+  // follows an attempt is swallowed whenever it names the state that preceded it.
+  assert.equal(typeof skip.reset, 'function', 'makeSkipLogger must expose reset()');
+  skip.reset();
+  skip('inside-lead', 'the release is 20m away');
+  assert.equal(out.length, 3, 'after a reset the same state must print again');
+});
