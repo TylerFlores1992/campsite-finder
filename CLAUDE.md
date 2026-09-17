@@ -7125,6 +7125,25 @@ plain words while a master CI run was in flight:**
 - **IT HAS NOT RUNG, AND THAT IS TIMING RATHER THAN DESIGN.** The alarm also needs a session
   reported dead in the same moment, the feed is polled every 15 s, and the row is deleted a
   statement later. **Do not read "it has never fired" as a guard.**
+- **AND IT IS FAR RARER THAN THIS ENTRY READS — COUNTED 2026-09-17: TWO AUTO-LOGIN TRIPS IN 297
+  HOURS.** `bot_events` holds **427 `tab-close` rows labelled `renewal` and exactly 2 labelled
+  `auto-login`** over twelve and a half days, across dozens of CI runs. The entry above says "the
+  second observed instance", which is right about the count and reads as though every `npm test`
+  produces one. **It does not**, and the reason is structural: `maybeAutoLogin` still requires the
+  token to be genuinely INADEQUATE at that moment, which is a narrow window inside the fixture's
+  own five minutes.
+  - **SO A SESSION CANNOT PUMP CI TO FORCE AN OKTA TRIP, and that question is now closed with a
+    number rather than a worry.** ~0.16 auto-logins per day is not a lever. **Pushing more often
+    does not buy ramps** — which matters, because the temptation while waiting out a drought is to
+    find work that needs a push.
+  - **IT ALSO SHARPENS THE TRIP POOL: ~99.5% of Okta trips are RENEWALS.** The "at most 1 in 12"
+    bound is caveated as pooling auto-login and warm-up trips too; in practice those are a rounding
+    error, so the caveat protects against almost nothing and the bound's real looseness is the
+    POPULATION split, not the trip mix.
+  - **THE DENOMINATOR IS SLIGHTLY TOO SMALL, IN THE SAFE DIRECTION.** A trip killed by a bail runs
+    no `finally` and emits no `tab-close`, so the ~26 ramping trips are missing from those 427.
+    That makes the measured per-trip rate an OVERestimate, which is the direction that cannot
+    flatter the argument above.
 - **AND THE DASHBOARD HAS NO SUCH LUCK.** `autocart.rc_session` and the health route's hold counts
   go red for the length of a run — the 2026-08-23 finding recurring through a numeric fixture that
   **#202's `holdsAhead`/`holdsDueWithin` fix cannot see**, because that fix carries `REAL_UNIT` and
