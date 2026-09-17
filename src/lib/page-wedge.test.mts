@@ -207,3 +207,70 @@ test('the strike and recycle state resets per browser life', async () => {
   const resets = kw.match(/wedge = \{ strikes: 0, recycles: 0/g) ?? [];
   assert.ok(resets.length >= 2, 'it must be reset on reopen, not only declared once');
 });
+
+/**
+ * THE FIRING IS THE WHOLE PROOF, SO IT HAS TO RECORD ITSELF.
+ *
+ * `tail-log` returns the last 16,000 characters, which is exactly how the 2026-08-23 ramp
+ * attributions were lost. The three facts that say what a firing DID — how long the close
+ * took, whether the token survived, and what the box was holding — must reach Postgres, not
+ * only the log. Same move as migration 066 for the alloc readings.
+ */
+const recycleBody = (() => {
+  const from = kw.indexOf('const recycleWedgedPage = async');
+  assert.ok(from > -1, 'recycleWedgedPage moved — these guards are measuring nothing');
+  const to = kw.indexOf('\n      };', from);
+  assert.ok(to > from, 'could not bound recycleWedgedPage — these guards are measuring nothing');
+  return kw.slice(from, to);
+})();
+
+test('the firing carries the three facts that say what it DID', async () => {
+  for (const field of ['closeMs', 'tokenKept', 'commitUsedMb']) {
+    assert.match(recycleBody, new RegExp(`\\b${field}\\b`),
+      `the wedge-recycle event must carry ${field} — without it the log is the only record`);
+  }
+  assert.match(recycleBody, /reason: 'wedge-recycle'/,
+    'the durable marker must keep its exact literal — the readout matches on it');
+});
+
+test('the memory is read BEFORE the close, because after it there is nothing to read', async () => {
+  const read = recycleBody.indexOf('readLatestMemory(');
+  const close = recycleBody.indexOf('.close({ runBeforeUnload: false })');
+  assert.ok(read > -1 && close > -1, 'anchors moved — this guard is measuring nothing');
+  assert.ok(read < close,
+    'the commit reading must be taken while the page still holds it; after the close it is gone');
+});
+
+test('an UNKNOWN memory reading reports itself, never a zero', async () => {
+  // "we could not tell" and "the box was holding nothing" are opposite readings, and a bare
+  // null in commitUsedMb renders as the second. The house rule, at the newest instrument.
+  assert.match(recycleBody, /memKnown/, 'the event must say whether the reading was known');
+  assert.match(recycleBody, /memWhy/, 'an unknown reading must carry its own reason');
+  assert.match(recycleBody, /mem\.known === true \? \(mem\.commitUsedMb/,
+    'commitUsedMb must be gated on the reading being KNOWN, not merely present');
+});
+
+test('it uses the ramp arm’s own reading, with the same notBefore', async () => {
+  // A sample taken before this browser existed cannot be about this page — the 2026-09-07
+  // defect, where a `ramp` dump measured the browser that REPLACED the one that ramped.
+  assert.match(recycleBody, /notBefore: browserLifeSince/,
+    'without notBefore this can confidently report the previous browser’s memory');
+});
+
+test('the report cannot delay the cure, and the token still goes first', async () => {
+  assert.match(recycleBody, /void reportBotEvent\('request-counts'/,
+    'the report must stay fire-and-forget — an awaited diagnostic delays the page close');
+  const token = recycleBody.indexOf('persistLiveToken(');
+  const close = recycleBody.indexOf('.close({ runBeforeUnload: false })');
+  assert.ok(token > -1 && token < close,
+    'the live token dies with the page, so it must be persisted before the close');
+});
+
+test('the recycle count is PASSED IN, not read after an await', async () => {
+  // `wedge` is REASSIGNED on every reopen, and this function reads its arguments after two
+  // awaits — so reading `wedge.recycles` there races the reopen this very close triggers.
+  assert.match(kw, /recycleWedgedPage\(d\.why, d\.strikes, wedge\.recycles\)/,
+    'the call site must capture strikes and recycles before any await');
+  assert.doesNotMatch(recycleBody, /wedge\.recycles/,
+    'reading wedge.recycles inside the async body races the reopen that the close causes');
+});

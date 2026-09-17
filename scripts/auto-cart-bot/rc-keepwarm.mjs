@@ -2919,23 +2919,60 @@ async function warmResident() {
        * so `ctx.close()` in that `finally` has nothing left to wait for: a `browser.close()`
        * against a still-wedged renderer is what hung the probe this arm was measured with.
        */
-      const recycleWedgedPage = async (why) => {
+      const recycleWedgedPage = async (why, strikes, recycles) => {
         log(`♻ ${why}`);
         const kept = await Promise.race([
           persistLiveToken(residentPage).catch(() => 'error'),
           new Promise((r) => setTimeout(() => r('timeout'), 2000)),
         ]);
         log(`  token on the way out: ${kept}`);
+        /**
+         * READ THE MEMORY BEFORE THE CLOSE, BECAUSE AFTER IT THERE IS NOTHING TO READ.
+         *
+         * `commitUsedMb` is the number that says WHAT THIS FIRING WAS. A page holding ~40 GB
+         * of commit is the leak; a page at the ~7 GB baseline was merely unresponsive. Without
+         * it the event cannot tell those apart, and they want opposite responses.
+         *
+         * It is a `readFileSync` of a file another process writes — no CDP and no spawn, which
+         * is what makes it safe on this path: the page will not answer CDP by definition, and
+         * spawning is what fails first at high commit. The reading is the SAME
+         * `readLatestMemory` the ramp arm uses, with the same `notBefore`, so a sample from the
+         * previous browser is UNKNOWN rather than a confident wrong number — and an unknown
+         * carries its own `why` instead of a null that reads as zero.
+         */
+        const mem = readLatestMemory(MEMORY_LATEST_PATH, {
+          maxAgeMs: RAMP_READING_MAX_AGE_MS, notBefore: browserLifeSince,
+        });
         const t0 = Date.now();
         await Promise.race([
           residentPage?.close({ runBeforeUnload: false }).catch(() => {}),
           new Promise((r) => setTimeout(r, 5000)),
         ]);
-        log(`  closed the wedged page in ${Date.now() - t0}ms — the loop reopens from here`);
-        // The counts are the only record of what that page was asking for, and the reopen
-        // resets the counter. Fire-and-forget: a diagnostic that delays the cure has
-        // inverted the priority, which is the rule the bail's own block is careful about.
-        void reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'wedge-recycle' }));
+        const closeMs = Date.now() - t0;
+        log(`  closed the wedged page in ${closeMs}ms — the loop reopens from here`);
+        /**
+         * THE EVENT IS THE DURABLE RECORD AND THE LOG IS NOT. `tail-log` returns the last
+         * 16,000 characters, which is how the 2026-08-23 ramp attributions were lost; the
+         * three facts that say what this firing DID — how long the close took, whether the
+         * token survived, and what the box was holding — would otherwise live only there.
+         * Same move as migration 066 for the alloc readings.
+         *
+         * Fire-and-forget, unchanged: a diagnostic that delays the cure has inverted the
+         * priority, which is the rule the bail's own block is careful about.
+         */
+        void reportBotEvent('request-counts', {
+          ...requestCounter.snapshot({ reason: 'wedge-recycle' }),
+          closeMs,
+          tokenKept: kept,
+          strikes,
+          recycles,
+          memKnown: mem.known === true,
+          memWhy: mem.known === true ? null : (mem.why ?? null),
+          rcMb: mem.known === true ? (mem.rcMb ?? null) : null,
+          commitUsedMb: mem.known === true ? (mem.commitUsedMb ?? null) : null,
+          commitLimitMb: mem.known === true ? (mem.commitLimitMb ?? null) : null,
+          memAgeMs: Number.isFinite(mem.ageMs) ? mem.ageMs : null,
+        });
       };
       /**
        * THE STALL TRIGGER, BEFORE EVERY ARM AND CONSULTING NO FILE.
@@ -2998,7 +3035,7 @@ async function warmResident() {
               // count and the budget never binds.
               wedge.recycles += 1;
               wedge.strikes = 0;
-              void recycleWedgedPage(d.why);
+              void recycleWedgedPage(d.why, d.strikes, wedge.recycles);
             } else if (d.act === 'escalate' && !bailing) {
               reportAndBail(
                 `✗ WEDGED PAGE — still unresponsive after ${wedge.recycles} page recycle(s).`,
