@@ -10871,10 +10871,24 @@ that entry exists to keep apart.
   allocation sample, all of which need a live browser and a live CDP session. So our Chromium is
   among those eight with an unreadable command line, not absent. **Do not read `OURS 0` as "the
   browser is gone"** — read the keep-warm's log, which is what settled it here.
-- **THE CONSEQUENCE IS SHARPER THAN A MISSING DASHBOARD: EVERY MEMORY-FED ARM IS DISABLED.**
-  `readLatestMemory` returns `known: false` on a null rc figure, so **the ramp arm cannot fire**;
-  `ramp-scan` triggers on the same figure, so **no walk would be taken**; and the memory series
-  cannot see an onset at all.
+- **THE CONSEQUENCE IS SHARPER THAN A MISSING DASHBOARD, AND IT WAS READ IN SOURCE RATHER THAN
+  INFERRED.** `readLatestMemory` returns `known: false` on a null rc figure, and
+  `maybeMemoryDump`'s second line is `if (!forcedPhase && !memory?.known) return;`. So:
+  ```
+  DISABLED   the ramp arm (rampBailDecision needs a known reading)
+  DISABLED   ramp-scan and its region walk (triggered off the same figure, in bot.mjs)
+  DISABLED   the BASELINE memory dump - none since 04:05:55, across three browser lives
+  DISABLED   the memory series as an onset detector (rc_mb is the column it watches)
+  ARMED      the STALL-triggered ramp dump - `forcedPhase` bypasses the memory check entirely
+  ARMED      the wedge arm (the cure) - it probes the page
+  ARMED      HUNG_MS at twelve minutes
+  ```
+  **The two arms that matter both survive, and both survive BY DESIGN rather than by luck** —
+  each was built after a ramp was lost to a reading another process writes every two minutes,
+  and `maybeMemoryDump`'s own comment says so: *"a trigger that consults no file cannot meet any
+  of them."* The missing baseline is the visible symptom that led here; **do not read it as
+  `attachHeapProbe` having failed** — the log carries `alloc trail: resident renderer armed` on
+  the current browser, so the probe is live and it is the memory gate that is refusing.
 - **THE CURE IS THE ONE ARM UNAFFECTED, AND THAT IS ITS DESIGN RATHER THAN LUCK.**
   `page-wedge.mjs`'s own header says why it exists: *"every existing arm reads a signal that
   cannot see this in time … this arm reads the page directly, needs no file, and is instant."*
