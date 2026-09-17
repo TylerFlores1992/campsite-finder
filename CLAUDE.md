@@ -11030,6 +11030,33 @@ a healthy page — which costs an RC page load on the page an 08:00 cart depends
   zero probes rendering as `0ms`, and both fields dropped from the event. **Guards under `src/`,
   in neither of `worker-deploy.yml`'s `paths:` lists — read, not remembered.**
 
+###### THE CURE WATCHES ONE RENDERER OF TWO, AND THAT DECIDES HOW TO READ THE 14:30 AUTO-LOGIN (2026-09-17)
+Checked in source before the day's one free ramp trigger, because getting it wrong means reading
+a silent arm as a broken one. **`maybeAutoLogin` runs entirely in a throwaway tab**
+(`ctx.newPage()`, never `residentPage`), and **the cure probes `residentPage` alone** — so a ramp
+that lands in the trip's own renderer is INVISIBLE to it, by construction.
+- **THAT IS NOT A COVERAGE GAP, IT IS AN ATTRIBUTION RULE, and the difference is the whole
+  point.** A tab that ramps is already reclaimed by `closeTabBounded` in `maybeAutoLogin`'s
+  `finally` — whose own comment says *"the renderer dies with the tab"* — bounded at 30 s and
+  measured 430 times in production at 8-628 ms. The cure exists for the **resident** page
+  precisely because that one has no `finally` to close it.
+- **SO THE THREE OUTCOMES ARE SEPARABLE AND EACH IS A READING:**
+  - ramp in the **resident** renderer → `probeResidentPage` goes silent → 3 strikes at 10 s →
+    **`wedge-recycle`**, which is the proof.
+  - ramp in the **tab's** renderer → the cure correctly does NOT fire; the `finally` reclaims it,
+    and the evidence is a `tab-close` event with a large `ramMb`.
+  - the trip never returns at all → the `finally` never runs → the ramp arm at a 120 s stall, or
+    `HUNG_MS` at twelve minutes.
+- **WHICH ONE AN AUTO-LOGIN PRODUCES IS NOT ESTABLISHED.** The 09-04 renewal measurements put the
+  ramp in the RESIDENT renderer with the tab flat (`[renewal] −4 MB over 640s`), because the
+  trigger there was the SPA's own `prompt=none` running in the resident page. The 09-10 17:53
+  event is `Stalled in: auto-login` and this file records it as explicitly **unattributed**. Both
+  remain live; **do not write one in.**
+- **THE CONSEQUENCE FOR THE NEXT READING: "the cure did not fire" is not a verdict on the cure**
+  until the ramp has been attributed to a renderer. Read the `tab-close` event's `ramMb` and the
+  alloc trail's per-target lines first — they say which renderer grew, and only the resident one
+  is the cure's subject.
+
 ###### `line > gate` IS ORDERING AND READS LIKE CONTAINMENT — AND THE FIRST MUTATION FOR IT WAS A NO-OP
 Two defects in the guards above, both found by mutation-testing them twenty minutes after writing
 them, and both are shapes this file has paid for before in other costumes.
