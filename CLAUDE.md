@@ -11440,6 +11440,44 @@ BURST (distinct 16, busiest path 16,583-80,244)                    18 ramps
   43,774; a ramp charges ~32 GiB in ≤34 s and takes it to 35-47 GB. `rc_mb` has been NULL since
   04:15:30 and cannot see one.
 
+#### THE CURE'S REOPEN DOES NOT WORK THE WAY ITS OWN HEADER SAYS, AND THE REAL MECHANISM IS BORROWED (2026-09-17)
+`recycleWedgedPage` closes the page "precisely so that whatever the loop awaits rejects with
+`Target closed` and the existing reopen path runs". **Read against the loop, that mechanism does
+not exist** — and the reopen is guaranteed by something better, written months earlier for an
+unrelated reason.
+- **EVERY PAGE-TOUCHING AWAIT IN THE RESIDENT LOOP IS INDIVIDUALLY `.catch()`ED** —
+  `readLiveToken`, `maybeAutoLogin`, `maybeWarmupLogin`, `maybeRehearse`, `oktaSessionAlive` and
+  `checkAndReport` all swallow and continue — and **a page close leaves the CONTEXT untouched**,
+  so nothing propagates out of the loop at all.
+- **WHAT REOPENS IS AN EXPLICIT CHECK AT THE TOP OF A 1-SECOND LOOP:**
+  ```js
+  if (!ctx.pages().length || page.isClosed()) { log('⚠ the RC window was closed — reopening it'); break; }
+  ```
+  `break` → the `finally` (`ctx.close()`, `clearInterval(renew)`) → `warmResident`'s OUTER
+  `for (;;)` relaunches. **Reopen latency is ~1 second plus whatever await was in flight**, and
+  it is bounded on every path: an in-flight `renewSession` on a throwaway tab is 45-70 s, and an
+  unbounded await on the wedged page rejects at the close and lands in the outer `catch`, which
+  reaches the same `finally`. Every route ends in a relaunch.
+- **AND WITHOUT THAT CHECK THE CURE WOULD BE A ZOMBIE-MAKER, WHICH IS THE PART TO KEEP.**
+  `probeResidentPage` returns `inconclusive` on a closed page (`page.isClosed()`), so **no strike
+  accrues and the cure cannot re-fire**; the loop keeps advancing, so **`HUNG_MS` cannot fire
+  either**. The keep-warm would spin for ever against a dead page with no session — strictly
+  worse than the wedge it replaced, and nothing anywhere would say so.
+- **SO A LINE WRITTEN FOR "somebody tidying up closed the visible window" IS NOW LOAD-BEARING
+  FOR A FEATURE IT PREDATES.** That is the shape this file records more than any other, and it
+  is pinned now rather than left to be re-derived: `src/lib/page-wedge.test.mts` asserts the
+  check exists, that it BREAKS rather than continues (a `continue` is the zombie with an extra
+  keyword), and that it sits AHEAD of the caught awaits — below them it still works, but
+  `readLiveToken` would fail a full iteration first and `checkAndReport` reports that as a dead
+  SESSION. A second guard pins the premise — that those awaits DO swallow — so the two cannot
+  drift apart and quietly make the reasoning wrong.
+- Three mutations, each verified to apply and to fail: the `isClosed()` test deleted, `break`
+  turned into `continue`, and `checkAndReport` made to propagate.
+- **I NEARLY FILED THE OPPOSITE FINDING.** Reading the caught awaits first, the obvious
+  conclusion is that the cure strands the keep-warm — which would have been reported as a
+  release-critical defect in the thing under test. The explicit check is forty lines below where
+  the reading stopped. **Trace to the loop's own top before concluding a close cannot be seen.**
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies

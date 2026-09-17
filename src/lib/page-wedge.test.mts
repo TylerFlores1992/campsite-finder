@@ -329,3 +329,60 @@ test('the recycle count is PASSED IN, not read after an await', async () => {
   assert.doesNotMatch(recycleBody, /wedge\.recycles/,
     'reading wedge.recycles inside the async body races the reopen that the close causes');
 });
+
+// ── THE REOPEN: WHAT ACTUALLY BRINGS THE PAGE BACK ─────────────────────────────────────────
+// `recycleWedgedPage`'s own header says it closes the page "precisely so that whatever the loop
+// awaits rejects with 'Target closed' and the existing reopen path runs". READ AGAINST THE
+// LOOP, THAT MECHANISM DOES NOT EXIST: every page-touching await in the resident loop is
+// individually `.catch()`ed — `readLiveToken`, `maybeAutoLogin`, `maybeWarmupLogin`,
+// `maybeRehearse`, `oktaSessionAlive` and `checkAndReport` all swallow and continue — and the
+// CONTEXT is untouched by a page close, so nothing propagates out.
+//
+// WHAT REOPENS IS AN EXPLICIT `page.isClosed()` CHECK AT THE TOP OF THE 1-SECOND LOOP, written
+// months earlier for "somebody tidying up closed the visible window". Without it the cure would
+// close the page and the loop would spin for ever against a dead one: `probeResidentPage`
+// returns `inconclusive` on a closed page, so NO strike accrues and the cure cannot re-fire,
+// while the loop keeps advancing, so `HUNG_MS` cannot fire either. A permanent zombie, and
+// strictly worse than the wedge it replaced.
+//
+// SO THAT CHECK IS LOAD-BEARING FOR A FEATURE IT WAS NOT WRITTEN FOR, which is the shape this
+// repo records more than any other. Pinned here rather than left to be re-derived.
+test('the reopen rests on an explicit isClosed() break, not on a rejection propagating', () => {
+  const loop = (() => {
+    const anchor = kw.indexOf('residentPage = page;');
+    assert.ok(anchor > -1, 'the resident page assignment moved — this guard is measuring nothing');
+    const from = kw.indexOf('for (;;) {', anchor);
+    assert.ok(from > -1, 'the resident poll loop moved — this guard is measuring nothing');
+    const to = kw.indexOf('\n    } catch (err) {', from);
+    assert.ok(to > from, 'could not bound the resident loop — this guard is measuring nothing');
+    return kw.slice(from, to);
+  })();
+  const closed = loop.indexOf('page.isClosed()');
+  assert.ok(closed > -1,
+    'the resident loop must test page.isClosed() — without it a closed page is a permanent zombie: no strike accrues and the loop keeps advancing, so neither the cure nor HUNG_MS can fire');
+  // It must BREAK to the reopen. A `continue` leaves the loop spinning on the dead page, which
+  // is the zombie with an extra keyword.
+  assert.match(loop.slice(closed, closed + 200), /\bbreak;/,
+    'the closed-page check must break out to the reopen, never continue');
+  // NEAR THE TOP, AHEAD OF THE CAUGHT AWAITS. Below them it still works, but every one of them
+  // would run a full iteration against a dead page first — and `readLiveToken` failing is what
+  // `checkAndReport` reports as a dead SESSION.
+  const firstCaught = loop.search(/\.catch\(/);
+  assert.ok(firstCaught > -1, 'the caught awaits moved — this guard is measuring nothing');
+  assert.ok(closed < firstCaught,
+    'the closed-page check must precede the caught awaits, or a dead page is reported as a dead session first');
+});
+
+test('every page-touching await in the resident loop is caught, which is WHY the check is needed', () => {
+  // This is not a style rule — it is the premise of the guard above, asserted so that the two
+  // cannot drift apart. If these ever stop being caught, a rejection WOULD propagate and the
+  // reopen would have a second path; the reasoning above would then need revisiting rather
+  // than silently becoming wrong.
+  const loop = kw.slice(kw.indexOf('for (;;) {', kw.indexOf('residentPage = page;')));
+  for (const call of ['readLiveToken(page)', 'maybeAutoLogin(ctx, page)', 'checkAndReport(ctx, page)']) {
+    const at = loop.indexOf(call);
+    assert.ok(at > -1, `${call} moved — this guard is measuring nothing`);
+    assert.match(loop.slice(at, at + 160), /\.catch\(/,
+      `${call} is expected to swallow — if it no longer does, re-read the reopen guard's reasoning`);
+  }
+});
