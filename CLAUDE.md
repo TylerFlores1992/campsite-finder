@@ -11039,6 +11039,28 @@ renewals in a throwaway tab, auto-login and warm-up stand-downs, keepalive check
 - **AND IT SAYS NOTHING ABOUT THE TRUE-POSITIVE HALF**, which is the whole proof and still waits
   on an event. A detector that never fires is consistent with a perfect detector and with a dead
   one; only the sha separates them today.
+- ~~**THAT IS THE FALSE-POSITIVE HALF OF THE CURE, MEASURED**~~ — **AND "ZERO FALSE POSITIVES"
+  IS THE STRONGER OF TWO FACTS, STATED FROM EVIDENCE FOR THE WEAKER (2026-09-17).** What zero
+  `wedge-recycle` events establishes is that **no THREE CONSECUTIVE probes came back `wedged`**.
+  It does not establish that none ever did: one `alive` resets `strikes`, so any number of
+  isolated `wedged` readings produce exactly this record. **The claim in the heading is about
+  runs of three; the words are about individual probes.**
+  - **AND IT IS THE SAME GAP AS THE RECORDED FLAPPING PREDICTION, WHICH IS WHY IT IS WORTH
+    CLOSING RATHER THAN RE-WORDING.** That prediction — a page answering one probe in three holds
+    its 32 GiB for ever and never reaches the threshold — was answered from **five joined memory
+    dumps arguing the silence lasts minutes**, which is an argument. `silent > 0` beside no
+    firing IS the flapping case, seen.
+  - **SO THE ARM COUNTS IT NOW** (`wedge.silent`, reported at the teardown and carried on a
+    firing). `inconclusive` is deliberately NOT counted: "Target closed" and "execution context
+    was destroyed" reject INSTANTLY and mean the page is CHANGING — the healthy reopen — so
+    folding them in would report every ordinary recycle as a near miss and bury the reading.
+  - **HOW TO READ IT:** `0 silent` over a browser life is the false-positive claim finally
+    measured rather than inferred. **Any non-zero count with no firing is a finding** and goes
+    straight to the flapping prediction — the repair there is a DECAYING strike counter, not a
+    lower threshold.
+  - **BOT-SIDE, so it reads nothing until the box updates**, and the teardown line is the only
+    copy until then: `worthReporting` gates it, so a browser life under `TEARDOWN_MIN_MS` is
+    counted forward rather than reported.
 
 ###### AND "ZERO FALSE POSITIVES" IS A BINARY WHILE THE BUDGET IS A NUMBER — THE MARGIN IS MEASURED NOW (2026-09-17)
 The entry above is the strongest thing the drought has produced and it is a **count of events that
@@ -11762,7 +11784,8 @@ the cure : 3 strikes -> recycle, 243 -> 0 mappings in 520ms
   mutations (a probe removed, the import "fixed" to bare `playwright`) verified caught.
 
 **SO WHAT IS AND IS NOT PROVEN, STATED PLAINLY.** The mechanism is proven with controls both
-ways. The detector is proven live on the box (~2,400 probes, zero false positives) and its
+ways. The detector is proven live on the box (~2,400 probes, **no run of three** — see the
+correction under that entry: individual `wedged` readings were never counted and are now) and its
 wedge-silence half is corroborated by production's own alloc trail. The release half rests on
 the browser-process/renderer split, which is architectural, plus 430 healthy Windows closes
 showing that call path is sound there. **What remains unproven is a single end-to-end firing in

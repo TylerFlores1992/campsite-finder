@@ -578,3 +578,35 @@ test('the margin is reported once per browser life, and zero probes is its own r
   assert.match(kw, /teardown\.probes = wedge\.probes;/,
     'the count must ride the teardown event, or the only copy rolls out of the log window');
 });
+
+test('a SILENT probe is counted — zero firings is not zero near misses', () => {
+  // "~2,400 healthy probes, ZERO FALSE POSITIVES" stated the stronger of two facts from
+  // evidence for the weaker: no firing means no RUN OF THREE, never that no probe ever came
+  // back `wedged`. This is also the direct test of the recorded flapping prediction — one
+  // `alive` resets `strikes`, so a page answering one probe in three holds its mappings for
+  // ever and never reaches the threshold. `silent > 0` with no firing IS that case, observed.
+  assert.match(kw, /else if \(reading === 'wedged'\) \{[\s\S]{0,1400}?wedge\.silent \+= 1;/,
+    'a wedged reading must be counted, or the false-positive claim stays inferred');
+  // `inconclusive` MUST NOT COUNT. "Target closed" and "execution context was destroyed"
+  // reject INSTANTLY and mean the page is CHANGING — the healthy reopen — so counting them
+  // would report every ordinary recycle as a near miss and bury the reading.
+  const silentAt = kw.indexOf('wedge.silent += 1;');
+  assert.ok(silentAt > -1, 'the counter moved — this guard is measuring nothing');
+  const branch = kw.slice(kw.lastIndexOf('else if (', silentAt), silentAt);
+  assert.match(branch, /reading === 'wedged'/,
+    'only a WEDGED reading may count as a near miss — inconclusive is the page changing');
+  assert.doesNotMatch(branch, /inconclusive/,
+    'inconclusive must not reach the near-miss counter');
+  // IT RIDES BOTH RECORDS. The teardown covers the quiet case, which is the one that has
+  // happened ~2,400 times; the firing carries it so a recycle says what preceded it.
+  const gate = kw.indexOf('if (worthReporting) {');
+  const gateEnd = kw.indexOf('} else {', gate);
+  assert.ok(gate > -1 && gateEnd > gate, 'the teardown gate moved — this guard is measuring nothing');
+  assert.ok(kw.slice(gate, gateEnd).includes('teardown.silent = wedge.silent;'),
+    'the near-miss count must ride the teardown event, inside the gate');
+  assert.match(kw, /void recycleWedgedPage\(d\.why, d\.strikes, wedge\.recycles, wedge\.probes, wedge\.slowestAliveMs, wedge\.silent\)/,
+    'a firing must carry the near-miss count — it is what says whether the page flapped first');
+  // PER BROWSER LIFE, like `strikes` and `probes`: it describes a page a reopen replaces.
+  assert.match(kw, /slowestAliveMs: 0,\n\s*silent: 0,/,
+    'the counter must reset with the browser life, or it aggregates across pages');
+});

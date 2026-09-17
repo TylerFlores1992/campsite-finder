@@ -53,7 +53,8 @@ SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 
   So a zero is about the subject, not the query.
 - **AND THE ZERO NOW CARRIES ONE POSITIVE RESULT.** The arm has probed every 10 s since
   21:50:59 UTC on 09-16 — **~2,400 probes across ~20 browser lives**, through renewals,
-  stand-downs, keepalive checks and five forced restarts — **with zero false positives.** That
+  stand-downs, keepalive checks and five forced restarts — **with no run of three.** Individual
+  `wedged` readings were never counted; the arm counts them now (`silent`). That
   is the half of the cure that costs an RC page load if it is wrong, measured in production on
   Windows/149. It says nothing about the true-positive half.
 

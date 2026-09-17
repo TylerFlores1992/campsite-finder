@@ -2663,7 +2663,7 @@ async function warmResident() {
      * `inFlight` is not optional: once the page goes quiet EVERY probe costs its full timeout,
      * so without it they pile up one per tick — the lesson the heap trail already paid for.
      */
-    let wedge = { strikes: 0, recycles: 0, lastRecycleAt: 0, inFlight: false, lastProbe: 0, probes: 0, slowestAliveMs: 0 };
+    let wedge = { strikes: 0, recycles: 0, lastRecycleAt: 0, inFlight: false, lastProbe: 0, probes: 0, slowestAliveMs: 0, silent: 0 };
     // Opened at launch while the browser is healthy — see collectHeapFacts. Negotiating a new
     // CDP session at trip time is what produced `no answer in 3000ms` on the first real firing.
     let heapProbe = null;
@@ -2926,7 +2926,7 @@ async function warmResident() {
        * so `ctx.close()` in that `finally` has nothing left to wait for: a `browser.close()`
        * against a still-wedged renderer is what hung the probe this arm was measured with.
        */
-      const recycleWedgedPage = async (why, strikes, recycles, probes, slowestAliveMs) => {
+      const recycleWedgedPage = async (why, strikes, recycles, probes, slowestAliveMs, silent) => {
         log(`♻ ${why}`);
         const kept = await Promise.race([
           persistLiveToken(residentPage).catch(() => 'error'),
@@ -2978,6 +2978,7 @@ async function warmResident() {
           // page that had been degrading, and those are different events.
           probes,
           slowestAliveMs,
+          silent,
           memKnown: mem.known === true,
           memWhy: mem.known === true ? null : (mem.why ?? null),
           /*
@@ -3067,6 +3068,25 @@ async function warmResident() {
             if (reading === 'alive') {
               wedge.probes += 1;
               wedge.slowestAliveMs = Math.max(wedge.slowestAliveMs, Date.now() - probeStartedAt);
+            } else if (reading === 'wedged') {
+              /*
+               * THE NEAR MISS, AND IT IS THE ONLY THING THAT CAN MEASURE THE FALSE-POSITIVE
+               * CLAIM. Zero firings means no RUN OF THREE — it does not mean no `wedged`
+               * reading ever happened, and "~2,400 healthy probes, zero false positives" was
+               * stating the stronger of the two from evidence for the weaker.
+               *
+               * It is also the direct test of the recorded flapping prediction: one `alive`
+               * resets `strikes`, so a page that answers one probe in three can hold 32 GiB
+               * for ever and never reach the threshold. Five joined memory dumps argue the
+               * silence lasts minutes rather than flapping, which is an argument. THIS IS A
+               * COUNT: `silent` > 0 with no firing IS the flapping case, seen.
+               *
+               * `inconclusive` is deliberately NOT counted. "Target closed" and "execution
+               * context destroyed" reject INSTANTLY and mean the page is CHANGING — the
+               * healthy reopen case — so folding them in would report every ordinary
+               * recycle as a near miss and bury the reading this exists to take.
+               */
+              wedge.silent += 1;
             }
             const d = wedgeDecision({
               reading,
@@ -3112,7 +3132,7 @@ async function warmResident() {
               // `decayedRecycles` correctly refuses to age it — which would make it permanent.
               wedge.lastRecycleAt = Date.now();
               wedge.strikes = 0;
-              void recycleWedgedPage(d.why, d.strikes, wedge.recycles, wedge.probes, wedge.slowestAliveMs);
+              void recycleWedgedPage(d.why, d.strikes, wedge.recycles, wedge.probes, wedge.slowestAliveMs, wedge.silent);
             } else if (d.act === 'escalate' && !bailing) {
               reportAndBail(
                 `✗ WEDGED PAGE — still unresponsive after ${wedge.recycles} page recycle(s).`,
@@ -3338,6 +3358,7 @@ async function warmResident() {
         // Per browser life, like strikes: a probe timing describes the page that answered it.
         probes: 0,
         slowestAliveMs: 0,
+        silent: 0,
       };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
@@ -3968,9 +3989,11 @@ async function warmResident() {
          * fact from a page that always answered instantly.
          */
         log(`  resident-page probe: ${wedge.probes} healthy answer(s), slowest `
-          + `${wedge.probes ? `${wedge.slowestAliveMs}ms of a ${WEDGE_PROBE_TIMEOUT_MS}ms budget` : 'n/a — the arm took no healthy reading'}`);
+          + `${wedge.probes ? `${wedge.slowestAliveMs}ms of a ${WEDGE_PROBE_TIMEOUT_MS}ms budget` : 'n/a — the arm took no healthy reading'}`
+          + `, ${wedge.silent} silent`);
         teardown.probes = wedge.probes;
         teardown.slowestAliveMs = wedge.probes ? wedge.slowestAliveMs : null;
+        teardown.silent = wedge.silent;
       } else {
         suppressedTeardowns += 1;
       }
