@@ -10852,12 +10852,56 @@ we navigate to Okta, and that is measured:
   the full 32 GiB in <=34 s. There is no lever on our side of the allocation; the only thing that
   changes per-event cost is Chromium's, and it is compile-time.
 
-#### `exec_select` SILENTLY RETURNS A SCALAR FOR A BARE COLUMN ALIAS
-`SELECT taken_at::text t, round(commit_used_mb) u` comes back as the bare string
+#### ~~`exec_select` SILENTLY RETURNS A SCALAR FOR A BARE COLUMN ALIAS~~ — IT IS THE ALIAS `t`, AND `AS` CHANGES NOTHING (corrected 2026-09-17)
+~~`SELECT taken_at::text t, round(commit_used_mb) u` comes back as the bare string
 `"2026-09-11 17:10:58"` instead of a row object, while the same query with `AS t` / `AS u`
-returns `{t, u}`. Valid Postgres either way; the wrapper is what differs. **The failure is a row
-count that looks right with every field `undefined`** — which reads as the query having returned
-nothing useful rather than as a syntax preference. **Always `AS` in a `query()` call.**
+returns `{t, u}`. Valid Postgres either way; the wrapper is what differs.~~ **Always `AS` in a
+`query()` call.** The OBSERVATION was real and the CAUSE named here is wrong; the remedy it
+prescribes does not work, and following it is what produced seven rows of `undefined` while
+reading the memory series on 2026-09-17. **The failure is a row count that looks right with
+every field `undefined`** — which reads as the query having returned nothing useful rather
+than as a syntax preference, and that half stands.
+
+**THE EXACT PAIR THIS ENTRY CLAIMS DIFFER BEHAVE IDENTICALLY.** Run against production, both
+arms in one command:
+```
+SELECT taken_at::text t,    round(commit_used_mb) u     -> ["2026-09-17 01:04:22.870013+00"]
+SELECT taken_at::text AS t, round(commit_used_mb) AS u  -> ["2026-09-17 01:04:22.870013+00"]
+SELECT taken_at::text AS ts, round(commit_used_mb) AS u -> [{"ts":"…","u":7107}]
+SELECT taken_at::text ts,    round(commit_used_mb) u    -> [{"ts":"…","u":7107}]
+```
+**`AS` is irrelevant in both directions. The alias being `t` is everything**, and the 09-11
+example happened to use it.
+
+- **THE MECHANISM, READ OUT OF THE FUNCTION RATHER THAN INFERRED.** `exec_select` is
+  `EXECUTE format('SELECT coalesce(json_agg(t), ''[]''::json) FROM (%s) t', query_text)`.
+  When the caller's own SELECT list contains a column aliased `t`, Postgres resolves
+  `json_agg(t)` to that **COLUMN** rather than to the whole row — so the result is an array of
+  that column's VALUES and `r[0].anything` is `undefined`. **`exec_dml`'s RETURNING path has
+  the identical shape** (`WITH __dml__ AS (%s) SELECT … json_agg(t) … FROM __dml__ t`), which
+  is the sharper exposure: that one WRITES, and the hold claims, `claimBotCommands` and
+  `claimSyncJob` all read `RETURNING`.
+- **THE TYPE AND THE POSITION ARE BOTH IRRELEVANT, which is why bisecting it took six rounds.**
+  `rc_mb AS t` (a plain integer, first) collapses; `rc_mb AS rc, to_char(…) AS t` (second)
+  collapses; `AS tt` on the same expression is fine; `AS "T"` is fine (a different identifier);
+  a bare `max_type` column first is fine. Four hypotheses died first — "it is `to_char`", "it is
+  `AT TIME ZONE`", "it is a text expression", "it is the first column" — each fitting every
+  reading up to the one that killed it.
+- **GUARDED: `src/lib/sql-row-alias.test.mts`.** A tree scan (zero hits today) plus a real-DB
+  assertion that **the trap is still live**, so the day somebody fixes the wrapper the guard
+  says to delete itself rather than rotting into a rule about nothing. The scan excludes
+  `AS t(` — `jsonb_array_elements(…) AS t(x)` in `src/lib/rc-holds.ts` is a set-returning
+  function's table alias, produces no output column called `t`, and cannot collide; a naive
+  `\bAS\s+t\b` cries wolf on it, and a guard that cries wolf gets deleted.
+- **THE REAL FIX IS ONE WORD AND IS DELIBERATELY NOT MADE.** Rename the wrapper's subquery
+  alias (`__ch_row`) in both functions and the collision is gone for ever. It is a
+  `SECURITY DEFINER` DDL replacement on the path **every read in the product takes**, and it was
+  raised fourteen hours before a release a real user was waiting on. A probe copy under a new
+  name was created and could not be exercised — PostgREST's schema cache does not expose a
+  fresh function, and the SQL-level call to it was refused — so it would have been an
+  unverified replacement of the most-used function in the repo. **Dropped the probe, recorded
+  the finding, left the function alone.** Nothing in the tree aliases a column `t`, so the
+  trade is a scan now against a verified migration later.
 
 > ### 2026-09-11 — THE LEAK IS DIAGNOSED AND CONTAINED. IT IS **NOT FIXED**.
 >
