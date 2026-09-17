@@ -7770,11 +7770,32 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
      bail whose diagnostics are the whole point of escalating. `supervise.ps1`'s
      five-exits-in-ten-minutes rule cannot catch it either, because the process never exits.
      Reachable during an RC outage, which is a state this file records three times.
-     **RECORDED, NOT FIXED.** The honest repair is a counter that survives a reopen and
-     **DECAYS** — reset after a stretch of healthy page, not after every reopen — which
-     satisfies both the comment's concern and the budget's. That is the same shape as the
-     repair for (1) above, it is bot-side, it is on the one path between a queued hold and a
-     cart, and it was found fourteen hours before a release. Neither is a drive-by.
+     ~~**RECORDED, NOT FIXED.**~~ **FIXED THE SAME DAY**, once forcing a ramp turned out to be
+     unavailable and the wait had nothing left to spend. The repair is exactly the one named
+     here — a counter that survives a reopen and **DECAYS** — as `decayedRecycles` +
+     `WEDGE_RECYCLE_DECAY_MS` (30 m) in `page-wedge.mjs`, read at the DECISION site rather than
+     only at the reset so a long-lived healthy browser hands the budget back without needing a
+     reopen to do it. **A count with no timestamp is NOT decayed**: that is an absent reading
+     about WHEN, and a budget whose job is stopping a loop fails safe by being preserved.
+     - **THE WINDOW IS BOUNDED BY TWO MEASURED NUMBERS RATHER THAN CHOSEN.** Below, it must
+       clear one episode (`WEDGE_PROBE_EVERY_MS` x `WEDGE_STRIKES` ~ 30 s) or the budget decays
+       between the strikes that make one and can never reach three. Above, it must stay under
+       the **shortest observed gap between ramps — 2.3 h over eleven onsets across four days**
+       — or two unrelated ramps accumulate against each other and the arm retires on events
+       that had nothing to do with one another.
+     - **AND A PRE-EXISTING GUARD REQUIRED THE BUG, which is why this could not be a quiet
+       edit.** *"the strike and recycle state resets per browser life"* pinned the zeroing
+       literal by exact expression, so the fix could not be made without it going red — the
+       `held-offer-scope` shape. **Inverted with the reason written in, not relaxed**, and the
+       half it was right about is kept and asserted separately: strikes MUST still reset,
+       because they describe a page that no longer exists.
+     - Nine mutations, each asserted to APPLY and each caught — including the reset zeroing the
+       budget (the bug verbatim), the decision reading the raw field (fix-present-and-inert),
+       an undateable budget cleared, the recycle forgetting to stamp its time (the opposite
+       failure: a budget with no clock is permanent), the window pushed past 2.3 h, and strikes
+       carried across a reopen. **Guards under `src/`, in neither of `worker-deploy.yml`'s
+       `paths:` lists — read, not remembered — so it fires no worker deploy. Bot-side, so it is
+       inert until the box updates.**
   2. **THE ARM IS SILENT ON THE HEALTHY PATH, so "ran and found the page alive" and "never ran"
      write the same nothing.** That is the house shape, accepted here only because the
      discriminator is free: the arm runs unconditionally on every tick while not bailing, so
@@ -11632,6 +11653,77 @@ page in Nms`, and the absence of a `✗ RAMP`/`✗ WEDGED` beneath it — exists
 09-15 09:03, 09-15 15:16 (+6.2 h), 09-16 03:51 (+12.6 h), then nothing for **25.6 hours**. The
 observed gap range is 6-26 h, so this is the tail rather than a new regime — **do not write the
 drought up as the cure working; the cure has never fired.**
+
+
+#### THE DROUGHT IS THE SILENT SELF-SUSTAINING REGIME, AND FORCING IS NOT AVAILABLE TO ME (2026-09-17)
+
+The cure has still never fired, and the reason is now read off three instruments rather than
+guessed. **26.1 hours since the last ramp, against an observed gap range of 2.3-18.6 h** — so
+the drought is past the recorded maximum and wanted an explanation. (That range is the
+four-day recount at the 1,500 MB onset bar; the entry above quotes 6-26 h at the 15 GB commit
+bar over a shorter window. **They are different bars, not a contradiction** — quote the bar.)
+
+**THE FIRST CANDIDATE — "no Okta trip, therefore no trigger" — IS HALF RIGHT AND THE HALF THAT
+IS WRONG IS THE ONE I NEARLY PUBLISHED.** `bot_events` carries **33 `tab-close` events in 30
+hours**, so trips have been firing constantly. What it also carries is where they stop:
+```
+09-16 17:39 -> 22:43   ELEVEN trips, every one 68.3-69.6s
+09-17 00:13 -> 04:31   EIGHT trips, 11.4 / 11.5 / 45.2 / 46.7 / 46.9 / 48.6 / 48.6 / 49s
+09-17 04:31 -> now     NOTHING, 1.5 hours
+```
+- **THE 21-SECOND STEP-DOWN IS NOW WELL SAMPLED** — eleven trips at ~69 s, a clean break, then
+  eight at <=49 s. That entry was one observation and is now nineteen. **Duration and cost track
+  each other seven for seven**, so a regime of 47-49 s trips is a regime of cheap trips.
+- **AND EVEN THE 69 s BAND DID NOT RAMP.** It ran 17:39-22:43 on 09-16 with nothing. The last
+  ramp predates all nineteen.
+- **THE SILENCE SINCE 04:31 IS THE SELF-SUSTAINING REGIME, READ IN THE KEEP-WARM'S OWN LOG:**
+  `token exp in 2m` at 05:29:26 and `token exp in 41m` at 05:49:26 with **`renewed=no`** —
+  the SPA re-minted it, unaided. `planRenewal` stands down while a token is alive, so there is
+  no Okta trip to be the trigger. **That regime has been measured to run TEN HOURS.**
+
+**SO WAITING IS WAITING FOR A REGIME TO END, AND THE OLD-BAND EXPERIMENT HAS ALREADY BEEN RUN
+AND LOST — TWICE, OVERNIGHT.** `request-counts` carries `ageMs` at every graceful teardown:
+```
+09-16 03:00:46  teardown    browser lived 704.2 min   <- no ramp
+09-16 22:49:07  teardown    browser lived   7.1 min
+```
+**704 minutes is the longest browser life on record and it produced nothing**, and hourly peak
+commit has been **7,200-7,800 MB for 26 straight hours** with one 45,175 spike at 09-16 03:00.
+So "let a browser age into the 52-611 minute band" is not an experiment waiting to run; it is
+an experiment that ran to the top of the band and failed.
+
+**AND THE ONE LEVER LEFT IS NOT AVAILABLE IN THIS SESSION.** `restart-rc` — 2-for-4, cheap, no
+campsite, no password, and the recipe whose cold RC home-page load IS the young-population shape
+— is refused by the harness as *Interfere With Workloads*. It is a permission denial, not a
+technical failure, and it is not to be worked around. **So a session with no human present
+cannot force a ramp at all**, and the honest state is that the cure's production proof waits on
+an event nobody here can produce.
+- **`test-login` IS NOT A SUBSTITUTE, and it is the tempting one.** It navigates on the RESIDENT
+  renderer, which is the right renderer — and with Okta ALIVE it is answered from the cookie in
+  **eleven seconds**, which is the cheap cell and has never ramped. `window_h` read **11.9997**
+  all session, i.e. the ROLLING window our own probe refreshes, so the expensive cell is not
+  reachable either.
+
+**THE BLIND SCAN MAKES THIS THE CLEANEST TEST BED THE BOX WILL EVER BE, WHICH IS AN ARGUMENT
+FOR SPENDING AN EVENT RATHER THAN SAVING ONE.** `rc_mb` has been NULL since 04:15:31, so
+`readLatestMemory` returns `known: false` and **the ramp arm and both memory dumps are
+disabled** — the cure is first in the timer and uncontested, with only `HUNG_MS` behind it at
+twelve minutes. That state is not durable (it cleared for one sample already), so a ramp
+arriving while it holds is worth more than one arriving later.
+
+#### AND A `Monitor` CANNOT CARRY A LOAD-BEARING WATCH — IT EXPIRES AT 30 MINUTES BY CONSTRUCTION
+This file recorded, hours earlier and in my own words, that *"the capture monitor is
+load-bearing, not a convenience"* and that *"if the monitor ever dies, that calculus inverts"*.
+**The monitor then died on schedule** — `Monitor expired after 30m with no events delivered` —
+because **`timeout_ms` is capped at 1,800,000 ms**. So a watch built that way is guaranteed to
+lapse repeatedly, and every re-arm leaves a gap in which a firing can land and its log can roll.
+- **THE RIGHT SHAPE IS A BACKGROUND BASH TASK WITH A TERMINATING CONDITION**, which has no cap
+  and exits exactly once when it has something to say. The watch script already exits on each of
+  its terminal signals, so it was a `Monitor` only by habit.
+- **THE COST OF GETTING THIS WRONG IS THE WHOLE EVIDENCE PATH**, because the box's
+  `wedge-recycle` event carries only the request counts and the log rolls in ~31 minutes
+  (measured again today: a 70-line read at 06:00 reached back to 05:29, and all but four lines
+  of it were the two stand-down lines PR #358 exists to dedupe).
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
 
