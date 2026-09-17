@@ -7144,6 +7144,20 @@ plain words while a master CI run was in flight:**
     no `finally` and emits no `tab-close`, so the ~26 ramping trips are missing from those 427.
     That makes the measured per-trip rate an OVERestimate, which is the direction that cannot
     flatter the argument above.
+  - **AND THE REAL T-30 AUTO-LOGIN IS ITSELF A COIN FLIP — 1 OF 3 PRIOR RELEASES.** Five real
+    releases fall inside the 297-hour `bot_events` window (09-05, 09-09, 09-15 and today's pair),
+    and the only auto-login trip that pairs with one is **09-05 14:42 against a 15:00 release**,
+    i.e. T-18. **09-09 and 09-15 produced none at all**, because `maybeAutoLogin` stands down when
+    the token already covers the hold — a renewal mints ~60 minutes and the requirement is
+    `LEAD + CART_HOLD_MIN + AUTOLOGIN_MARGIN_MIN` = 60. Whether it fires turns on where the last
+    renewal happened to land.
+    - **SO "the T-30 auto-login is the day's one free ramp trigger" OVERSTATES IT**, and that
+      sentence was in this session's own handover. **A quiet arm at T-30 is the ordinary case, not
+      a fault** — check for an `auto-login` `tab-close` before concluding anything ran.
+    - **ONE CAVEAT, STATED BECAUSE IT CANNOT BE EXCLUDED:** a trip killed by a bail emits no
+      `tab-close`, and 09-15 has a `bail:ramp` sixteen minutes AFTER its release. Its browser age
+      (**6.2 h**) and the timing fit a renewal rather than a T-30 trip, which acts between T-30 and
+      T-0 — so a killed auto-login is unlikely there and is not ruled out.
 - **AND THE DASHBOARD HAS NO SUCH LUCK.** `autocart.rc_session` and the health route's hold counts
   go red for the length of a run — the 2026-08-23 finding recurring through a numeric fixture that
   **#202's `holdsAhead`/`holdsDueWithin` fix cannot see**, because that fix carries `REAL_UNIT` and
@@ -11168,9 +11182,10 @@ a healthy page — which costs an RC page load on the page an 08:00 cart depends
   in neither of `worker-deploy.yml`'s `paths:` lists — read, not remembered.**
 
 ###### THE CURE WATCHES ONE RENDERER OF TWO, AND THAT DECIDES HOW TO READ THE 14:30 AUTO-LOGIN (2026-09-17)
-Checked in source before the day's one free ramp trigger, because getting it wrong means reading
-a silent arm as a broken one. **`maybeAutoLogin` runs entirely in a throwaway tab**
-(`ctx.newPage()`, never `residentPage`), and **the cure probes `residentPage` alone** — so a ramp
+Checked in source before the day's T−30 auto-login, because getting it wrong means reading a
+silent arm as a broken one. (**That trip is a coin flip rather than a scheduled event** — it
+fired on 1 of 3 prior real releases; see the entry above.) **`maybeAutoLogin` runs entirely in
+a throwaway tab** (`ctx.newPage()`, never `residentPage`), and **the cure probes `residentPage` alone** — so a ramp
 that lands in the trip's own renderer is INVISIBLE to it, by construction.
 - **THAT IS NOT A COVERAGE GAP, IT IS AN ATTRIBUTION RULE, and the difference is the whole
   point.** A tab that ramps is already reclaimed by `closeTabBounded` in `maybeAutoLogin`'s

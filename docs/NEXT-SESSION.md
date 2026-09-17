@@ -101,11 +101,23 @@ needs**, and the proof waits on either a natural ramp or somebody with permissio
 - **Do not quote the 2-for-4 as today's rate.** The two hits were 09-09 and 09-10, while the
   young/burst population was live; it has not occurred naturally since **09-15 09:04**.
 
-### THE ONE FREE TRIGGER ON THE CALENDAR IS THE 14:30 UTC AUTO-LOGIN — and it will probably miss
+### THE 14:30 UTC AUTO-LOGIN MAY NOT FIRE AT ALL — 1 OF 3 PRIOR RELEASES
 
 A **real user's hold** (`#A124`, unit 4642, rc-357, `requested`, with a fairness-line rival
 behind it) releases at **15:00 UTC / 08:00 PT**, so `maybeAutoLogin` fires at **T−30 = 14:30**.
 It is an Okta navigation that costs nothing and needs nobody. Both capture watches are armed.
+
+**AND IT IS NOT A CERTAINTY — MEASURED, AFTER THIS HEADING FIRST CALLED IT "the one free
+trigger".** Five real releases fall inside the 297-hour `bot_events` window, and exactly ONE
+pairs with an `auto-login` tab-close: **09-05 14:42 against a 15:00 release**, i.e. T−18.
+**09-09 and 09-15 produced none at all**, because `maybeAutoLogin` stands down when the token
+already covers the hold — a renewal mints ~60 minutes and the requirement is
+`LEAD + CART_HOLD_MIN + AUTOLOGIN_MARGIN_MIN` = 60. **So whether it fires turns on where the
+last renewal happened to land, and a quiet arm at T−30 is the ORDINARY case rather than a
+fault.** Check `bot_events` for an `auto-login` `tab-close` before concluding anything ran.
+(One caveat: a trip killed by a bail emits no `tab-close`, and 09-15 has a `bail:ramp` sixteen
+minutes AFTER its release — its browser age of 6.2 h fits a renewal, so a killed auto-login is
+unlikely there and is not excluded.)
 
 **PREDICTED, SO IT CAN BE FALSIFIED: no ramp.** Okta's window read `11.9999h` (rolling) with an
 expiry of **18:49 UTC**, four hours past the trip — so the sign-in is answered from the `idx`
