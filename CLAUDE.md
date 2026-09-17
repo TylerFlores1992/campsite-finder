@@ -11478,6 +11478,46 @@ unrelated reason.
   release-critical defect in the thing under test. The explicit check is forty lines below where
   the reading stopped. **Trace to the loop's own top before concluding a close cannot be seen.**
 
+#### "THE OLD POPULATION HAS NO BURST" IS A CLAIM ABOUT THE RESIDENT PAGE, NOT THE RENDERER (2026-09-17)
+The `bail:ramp` counters were read for `distinct` and `ageMs` and never for `recentTotal`, which
+is the field that changes what the other two mean. All eight old-browser ramps:
+```
+09-16 03:52  age 52.0m   distinct=76  recent=4  lifetime=95
+09-15 15:16  age 372.2m  distinct=79  recent=0  lifetime=168
+09-14 16:00  age 253.0m  distinct=79  recent=0  lifetime=170
+09-12 15:26  age 383.0m  distinct=79  recent=0  lifetime=175
+09-11 05:30  age 610.8m  distinct=79  recent=0  lifetime=196
+09-10 17:53  age  57.5m  distinct=78  recent=0  lifetime=185
+09-08 03:42  age  85.4m  distinct=78  recent=0  lifetime=110
+09-06 03:29  age 124.6m  distinct=79  recent=0  lifetime=109
+```
+- **SEVEN OF EIGHT MADE ZERO REQUESTS IN THE 120 SECONDS BEFORE THE BAIL**, and 95-196 across a
+  browser life of 52-611 minutes — about one request every two to six minutes. **The resident
+  page is IDLE when this population ramps.**
+- **BUT THE COUNTER IS ATTACHED TO THE RESIDENT PAGE ONLY** (`requestCounter.attach(page)`), and
+  every Okta trip runs in a **throwaway tab** — which, because `signin.reservecalifornia.com`
+  and `www.reservecalifornia.com` share an eTLD+1, is **the same renderer process**. So the
+  traffic that could drive a promise-rejection storm in the renderer that ramps is **exactly the
+  traffic this counter cannot see.**
+- **SO THE DECOUPLING'S OLD-POPULATION LEG IS WEAKER THAN RECORDED.** "A busiest path of 3-24
+  lifetime requests" is not "this ramp had no burst" — it is "no burst **on the resident
+  page**", and the renderer's own traffic is unmeasured. The decoupling's other leg is
+  untouched: young ramps carry 16k-80k requests on one path and produce the same 32 GiB as
+  events whose counters are flat, which is a statement about the same instrument on both sides.
+  **Do not quote the old-population leg as independent evidence.**
+- **AND `distinct` IS NOT AN INDEPENDENT AXIS — it is a proxy for age.** A cold load touches 16
+  paths; a browser that has been up for hours of keepalive checks has touched 76-79. The two
+  populations were described as separating on `ageMs` AND `distinct` with nothing off-diagonal;
+  those are one axis read twice. **The BURST is the discriminating fact.**
+- **IT ALSO SHARPENS WHY 14:30 IS THE SHOT.** The old population ramps on an idle resident page
+  in a browser 52-611 minutes old — which is a renderer doing nothing until a tab navigates
+  through Okta in it. The hold's T−30 auto-login is exactly that, on a browser that will be
+  ~10 hours old.
+- **CLOSING THE BLIND SPOT IS `context.on('request')` RATHER THAN `page.on('request')`** — a
+  context event covers every page in it, which is the recorded one-line fix for the same gap in
+  the leak's own accounting. **NOT DONE**: it is bot-side, so it needs a box update, and an
+  update resets the browser age that is currently the experiment.
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
