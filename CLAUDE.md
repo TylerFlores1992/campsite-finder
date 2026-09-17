@@ -11518,6 +11518,36 @@ is the field that changes what the other two mean. All eight old-browser ramps:
   the leak's own accounting. **NOT DONE**: it is bot-side, so it needs a box update, and an
   update resets the browser age that is currently the experiment.
 
+#### THE REGION WALK IS THE MOST EXPENSIVE INSTRUMENT HERE AND ITS OUTPUT IS STORED NOWHERE (2026-09-17)
+Reading all eight old-browser ramps' stacks was one query away and returned nothing, and the
+reason is not that the walk did not run. **`bot_events`' `ramp-scan` detail stores
+`vmwalk: true` — a four-character BOOLEAN saying the walk completed** — beside `rcMb`, `maxPid`,
+`maxType`, `trigger`, `complete`, `ramFreeMb` and the three thresholds. **There is no text
+field, on any of the 29 stored scans, and no sibling table**: `bot_events` has exactly four
+kinds (`tab-close` 433, `request-counts` 147, `mem-dump` 77, `ramp-scan` 29).
+- **SO EVERY WALK FINDING IN THIS FILE CAME FROM A LIVE `tail-log`** — the 16,385 regions, the
+  allocation-base count, the protection histogram, the anonymous name census with its
+  file-backed control, `VMTHREAD`'s spinning main thread, `VMSTACK`'s `chrome.dll+0x18096c6`,
+  `VMSPAN`. Each was read by somebody who happened to be looking within the window before
+  `tail-log`'s 16,000 characters rolled.
+- **AND THE ONES NOBODY WATCHED ARE GONE FOR EVER.** Eight old-browser ramps happened; **two**
+  have a recorded stack, and they disagree (JIT-dominant at 57.5 min, `HandlerAdded`-dominant at
+  611 min). That is precisely why the age split is labelled a LABEL rather than an established
+  variable — **and the other six readings existed and were not kept.** The question cannot be
+  settled from stored data at any point in the future.
+- **IT IS EXACTLY THE FAILURE PR #169 FIXED FOR THE ALLOC READINGS AND NEVER FOR THE WALK.**
+  That change moved attributions into Postgres because *"the 2026-08-23 ramp attributions were
+  lost to a 16,000-character `tail-log` window"*. The walk spawns PowerShell, compiles C# and
+  sweeps a whole address space — the costliest thing this investigation does — and it reports
+  into the one place that cannot keep it.
+- **THE FIX IS THE SHAPE ALREADY IN THE FILE**: store the walk's text on the `ramp-scan` event,
+  capped and NUL-stripped like every other `bot_events` detail. **NOT DONE** — it is bot-side, so
+  it needs a box update, and an update resets the browser age that is currently the experiment.
+  **Do it in the same update as `context.on('request')`**, which closes the counter's own blind
+  spot and has the identical cost.
+- **UNTIL THEN, READ `tail-log rc-keepwarm` WITHIN MINUTES OF A `ramp-scan` EVENT.** A
+  `ramp-scan` row in `bot_events` is a receipt that a reading existed, not the reading.
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
