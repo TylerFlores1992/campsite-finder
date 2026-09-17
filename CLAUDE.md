@@ -11774,6 +11774,60 @@ The sampler names its own cause on every tick, in the `bot` log, and nobody had 
   `restart-rc` is as likely to cause this as to clear it**, and the recorded plan to "clear
   the blind scan with one restart" should not be followed on that reasoning.
 
+##### A SECOND TOOL LOST THE SAME ABILITY IN THE SAME WINDOW — SO IT IS NOT THE SAMPLER'S QUERY (2026-09-17)
+The entry above concludes *"what changed is the browser generation"* from the sampler alone.
+`restarts.log` corroborates it from a completely different process, and adds a consequence
+nobody had drawn. **Twelve `stop-rc` runs are on file; `stop-rc.ps1` kills Chromium by matching
+`--user-data-dir`, which needs the command line, and it PRINTS each pid it stops:**
+```
+15:30 PT  9 chrome.exe      20:12 PT  9 chrome.exe      21:02:39 PT  10 chrome.exe   <- last sighted
+15:41 PT 10 chrome.exe      20:27 PT  9 chrome.exe      21:14:02 PT   0
+15:52 PT  9 chrome.exe      20:40 PT 10 chrome.exe      21:29:02 PT   0
+16:17 PT  9 + 18            20:51 PT  9 chrome.exe
+```
+- **THE DISCRIMINATING RUN IS 21:26:44 PT**, not the two zeroes. Those two each follow a watchdog
+  line saying both payloads were DOWN, and a payload that exits normally closes its browser in
+  `ctx.close()` — so zero is legitimately ambiguous there. **21:26:44 is not**: it enumerated six
+  of our processes **including two `node.exe`** (so the keep-warm was UP, and a running keep-warm
+  holds a resident browser by construction) and **zero chrome.exe**.
+- **THE TWO ONSETS BRACKET EACH OTHER.** `stop-rc` last saw Chromium at **21:02:39 PT = 04:02:39
+  UTC**; the sampler went blind at **04:15:31 UTC**. Two tools, two processes, one ~13-minute
+  window. **That retires "the sampler's WMI query" as the unit of explanation** — and with it the
+  sampler's own message, which names elevation while `list-processes`, run BY `bot.mjs` in the
+  same second, returns **14 readable command lines** (node, cmd, powershell, cloudflared).
+- **THE CONSEQUENCE, AND IT IS THE HALF WORTH ACTING ON: `stop-all`, `stop-rc` AND
+  `orphan-sweep.mjs` ALL KILL BY `--user-data-dir`. WHILE BLIND, NONE OF THEM CAN KILL AN
+  ORPHAN.** That is exactly the 2026-08-18 25 GB runaway — a Chromium nobody owns, fully visible
+  to the measurement and invisible to the remedy — with the remedy now invisible too. The 08-18
+  entry says *"a blind scan under-kills and can never over-kill… safe by construction"*, which is
+  true and is about SAFETY; **what it does not say is that in this state the sweep protects
+  nothing.**
+- **THE CONSTANT IS THE OTHER TELL: exactly 8, on 100 consecutive `bot` log lines across 3h20m.**
+  Not a flapping partial and not a race — one browser generation, wholly unreadable, for hours.
+- **STILL NOT ESTABLISHED, AND DO NOT WRITE ONE IN.** Candidates nobody has separated: something
+  about the generation the 04:14:05 UTC `restart-rc` launched, a Windows-side change in that
+  window, or a Chromium sandbox/token difference between launches. **What would settle it costs
+  nothing extra**: the box update already scheduled after the 15:00 hold either clears it or does
+  not, and that is a free experiment riding on work that was happening anyway.
+
+###### AND `restarts.log` IS IN PACIFIC WHILE EVERY OTHER READING HERE IS UTC (2026-09-17)
+Its lines read `[2026-09-16 21:29:25]`, which is **2026-09-17 04:29:25 UTC** — seven hours later
+and a different DAY. Read as UTC at 08:10 UTC it says the log has been silent for **ten hours
+and forty minutes**; it had been silent for **three hours and forty**. The first reading is the
+2026-08-17 incident's exact signature (`supervise.ps1` and the watchdog both silent while the box
+looks healthy), so it is the one that sends somebody hunting a dead supervisor.
+- **IT WAS WRONG IN THE ALARMING DIRECTION AND IT WAS WRITTEN DOWN BEFORE IT WAS CHECKED.**
+  What caught it was `bot_task_heartbeat`: `watchdog` beat **3.7 minutes** ago and `auto-update`
+  **1.7** — migration 060 doing precisely the job it was built for, which is telling a silent
+  watchdog from one that never ran.
+- **THE SAME SEVEN HOURS ALSO MOVES EVERY EVENT IN THAT FILE ONTO THE OTHER SIDE OF THE BLIND
+  ONSET.** Read as UTC, the last `restart-rc` is "yesterday evening" and unrelated; read as
+  Pacific it is **04:29 UTC**, i.e. the same minute the blind window resumed — which is what made
+  the corroboration above visible at all.
+- **`release_at` IS ZONE-LESS PACIFIC TEXT TOO** and this file already records that; the rule is
+  the same one arriving through a log instead of a column. **Convert before comparing, and do not
+  compare a rendered timestamp with a clock read somewhere else.**
+
 #### AND THIRTEEN OKTA NAVIGATIONS SINCE THE BOX TOOK THE CURE HAVE PRODUCED ZERO RAMPS
 Every `tab-close` since 2026-09-16 21:50:59 UTC, when the box took `e92a5a6`:
 ```
