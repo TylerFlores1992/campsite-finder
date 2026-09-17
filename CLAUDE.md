@@ -12606,54 +12606,194 @@ kinds (`tab-close` 433, `request-counts` 147, `mem-dump` 77, `ramp-scan` 29).
 - **UNTIL THEN, READ `tail-log rc-keepwarm` WITHIN MINUTES OF A `ramp-scan` EVENT.** A
   `ramp-scan` row in `bot_events` is a receipt that a reading existed, not the reading.
 
+### THE 08:00 FAST LANE HAS NEVER ONCE BEEN OBSERVED RUNNING (2026-09-17)
+
+A real user's hold was lost at the 15:00 UTC release and the owner asked the only question that
+matters: *"I need to know if the burst fired, because that will prove one of two things. We still
+got beat even with a 500ms search, or our burst broke somehow and that needs to be fixed."*
+
+**NEITHER COULD BE ANSWERED, AND THE REASON IS THAT THE BURST HAS NO DURABLE RECORD.** It has been
+live since 2026-09-03 and across all of history there is not one stored trace of it:
+```
+bot_commands  output ilike '%fast attempt%'      0 rows
+bot_commands  output ilike '%until 15s before%'  0 rows
+rc_hold_requests  a burst summary in a note      0 rows
+```
+
+- **ON A LOSS THE SUMMARY RIDES IN `error`, AND THE SLOW LANE OVERWRITES IT.**
+  `reportCartFailure` deliberately keeps a hold `requested` while the feed's 20-minute grace is
+  open — which is correct, and is what let #76 cart at T+7:14 once a seat freed on 08-13 — so the
+  runner retries every 15 s and **~110 later failures each overwrite the one note that carried the
+  burst.** The instrument is destroyed by a feature working as designed.
+- **ON A WIN IT IS NOT REPORTED AT ALL.** `describeBurst` goes to `log(...)` and
+  `report({ ok: true, cartKey, cartEntryKey })` carries no burst field. So the 09-04 `#L034` cart
+  at **T+1.44 s** — the fastest at any real 08:00 release, and the best evidence the lane has ever
+  produced — is a log line nobody kept.
+- **AND THE LOG IS NOT A RECORD.** `tail-log` returns 80 lines by default, `Math.min(400, …)` at
+  most, then a 16,000-character cap, **with no offset and no rotation**. On the day itself the
+  runner log reached back only to 15:13 and the keep-warm only to 15:15 — minutes after the event.
+
+**SO A CART THAT FAILED AND A LANE THAT NEVER ARMED PRODUCED THE IDENTICAL EVIDENCE: NONE.** That
+is the shape this file records more than any other, and it was sitting on the one path where the
+product either gets somebody a campsite or does not.
+
+#### THE LOGIC IS INTACT, AND INTACT LOGIC IS NOT EVIDENCE THAT IT RAN
+Everything checkable from a session checks out, and none of it answers the question:
+- `worker/cart-burst.test.mts` **21/21**.
+- `isNotAvailable("The unit is not available for the date(s) specified.")` -> **true**, so RC's
+  own refusal is retryable and not mistaken for a cap.
+- Replayed against the day's real inputs, `shouldRetryBurst` gives **31 attempts from T-14.0 s to
+  T+31.0 s**, stopping on the WINDOW and not the budget (40).
+- `cart-burst.mjs` is present and imported at the box's own commit `6fc7292`, the feed's 90 s lead
+  and the runner's 15 s poll both demonstrably fired that morning.
+**None of that says the runner arrived before T on this release**, which is the whole question.
+
+#### THE TWO-WAY SPLIT OMITS THE READING THAT MATTERS, AND IT IS THE ONE TO FEAR
+The owner's framing was "beaten, or broken". There is a third, and it is the quiet one:
+
+| what the row says | what happened | where the fault is |
+|---|---|---|
+| many attempts | RACED and lost | nowhere — the burst works |
+| **exactly one attempt** | the lane ARMED and declined to retry | **ours** — a session, a wedge, a WAF refusal; the reason names it |
+| **NO ROW AT ALL** | the runner never arrived before T | **ours** — the burst did not run |
+
+**ONE ATTEMPT IS NOT A RACE**, and reporting it as one sends the next reader to RC's side of a
+fault that is ours. **NO ROW is the owner's feared case**, and it is the only one that cannot be
+distinguished by adding detail to an existing record — it has to be a row that is guaranteed to
+exist whenever the lane armed.
+
+#### WHAT SHIPPED: ONE `cart-burst` EVENT PER HOLD PER RELEASE PASS
+`bot_events` (migration 075) is already in Postgres, already read by a readout, and already
+survives a rolling log — the exact problem PR #169 solved for the alloc readings and nobody had
+applied here. `cart-burst` joins `BOT_EVENT_KINDS` and the runner emits on **both** paths.
+- **GATED ON `waitedForRelease`, NOT ON ATTEMPTS.** Ungated, the ~110 ordinary retries each emit a
+  row and an absent row then means nothing at all. Gated on the burst having RETRIED, the
+  one-attempt reading is discarded — which is the second row of that table, and it is the one that
+  says the fault is ours. Both mutations are guarded.
+- **`firstOffsetMs` IS MEASURED (`laneOpenedAt - releaseMoment`), NEVER `-BURST_LEAD_MS`.** The
+  constant is arithmetic about where we MEANT to wake; only the measurement can show the sleep
+  overshooting, which is the failure mode that would cost a site while every constant read right.
+- **THE OFFSETS ARE SIGNED.** `T-14.0s` is the only way this project can ever record an early
+  lapse, and the 09-04 and 09-10 release-window readings say RC does let go before its own
+  predicted release.
+- **FIRE-AND-FORGET, NEVER AWAITED.** A diagnostic that can delay the thing it observes is not
+  worth having at 08:00:00 — the rule `recordClientReports` already follows.
+- **THE DETAIL CARRIES RC'S OWN UNIT LABEL AND NOTHING ELSE.** No cart key, no entry key, no
+  token: do not collect a field you then have to filter. An OAuth code and a password have each
+  reached a report in this repo by exactly that route.
+- **THE READOUT PRINTS IT FIRST**, above every memory section, because those are about a spare
+  machine and this is about whether a real person got the campsite they were promised — and its
+  **empty branch says an absent row is the finding**, not an all-clear.
+
+#### FOUR OF THE TWELVE GUARDS SURVIVED THEIR FIRST MUTATION, AND TWO MUTATIONS WERE THE WRONG RULE
+Fourteen mutations, each asserted to APPLY before its red was trusted.
+- **`void 0 && noteBurst(...)` PASSED BOTH EMIT GUARDS**, and `void 0 && cartBurstReading(x)`
+  passed the readout guard — the call present and dead, which is how a dead `maybeMemoryDump`
+  once passed 33 tests. All three are anchored at the START OF A LINE now, so neither `void 0 &&`
+  nor `if (false)` matches.
+- **TWO OF MY OWN MUTATIONS APPLIED AND EXPRESSED THE WRONG RULE.** One replaced the FIRST
+  occurrence of `cartBurstReading(` — which is the **import line**, not the call site. The other
+  replaced one line of the readout's empty branch and left the sentence the guard anchors on
+  intact. **A mutation that applies is not the same as a mutation that expresses the rule**, and
+  the harness can only check the first: read the mutated region, not the exit status.
+- **AND THE ABSENT-READING FAILURE WAS INSIDE THE INSTRUMENT ITSELF.** `cartBurstReading` dropped
+  the timing window entirely when an offset was missing, so *"we recorded no timing"* and *"the
+  timing was not worth showing"* rendered identically. Its own guard caught it; both spellings are
+  named now (`T?` on the single-offset branches, `(no timing recorded)` on the window).
+
+#### TWO NEIGHBOUR GUARDS BROKE, AND ONLY ONE OF THEM WAS WRONG
+- `worker/bot-events.test.mts` pins `BOT_EVENT_KINDS` **by value**, on purpose, so adding a kind
+  is a DECISION rather than a drift. Taken, with the reason written in. That guard did its job.
+- `worker/runner-wedge.test.mts` bounded its pre-release-hold slice at **"under 20 lines"**.
+  Twenty lines of burst instrumentation landing legitimately inside that region took it to 29, so
+  it failed over behaviour that had not moved. **Fourth time a window measured in lines or
+  characters has broken a guard here**, after `rehearsal.test.mts`'s 220, `rc-login-script`'s 500
+  and the US-spelling guard's indentation. Re-anchored on what it was really protecting —
+  **exactly one ticking sleep in the region, inside the `waitedForRelease` gate** — and
+  re-verified against both regressions it exists for.
+
+#### WHAT THIS DOES NOT DO
+**It does not make the burst faster and it does not prove it works.** It makes the next contested
+release answerable, and until one happens the row count is zero — which is the expected state and
+not a fault. **BOT-SIDE**, so it is inert until the box updates; confirm with
+`npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`.
+
+#### AND THE POLLER'S 15 SECONDS IS NOT THE CART'S CADENCE — I QUOTED IT AS IF IT WERE
+Asked whether the site was carted, I answered with `rc-hold-outcome.ts`'s verdict — *"the poller
+never saw this unit open at any 15-second sample"* — and the owner corrected it: *"Why was it only
+checking every 15 seconds? I thought we changed to a burst."* **They were right.** Those are two
+independent loops on two different machines: the **Fly poller** samples availability every 15 s,
+and the **mini-PC hold runner** carts at 500 ms across a 45-second window. The sentence is about
+detection and says nothing about the cart.
+- **AND I THEN READ THE POLLER'S SILENCE AS EVIDENCE THE SITE NEVER OPENED.** The owner rejected
+  that too — *"these are very sought-after sites that will be picked up in less than 15 seconds"* —
+  and the arithmetic is on their side: `claimNotification` is stamped on every cycle a site is
+  open, so an empty `watch_site_alerts` means zero **sampled** open cycles, which at a 15-second
+  cadence is exactly what a sub-15-second flip looks like. **An instrument that cannot resolve the
+  event is not evidence about the event.** Both corrections came from the owner, and both are the
+  reason this instrument exists.
+
 ## Open / next session
 
-#### 2026-09-17 — A CAPTCHA IS BLOCKING THE UNATTENDED SIGN-IN, AND A REAL USER'S HOLD IS AT 15:00 UTC
+#### 2026-09-17 — THE CART BURST RECORDS ITSELF NOW, AND IT NEEDS ONE CONTESTED RELEASE
 
-**THIS IS THE ONE THING ON THIS PAGE WITH A CLOCK ON IT. Read "A CAPTCHA STOPPED THE WARM-UP"
-above.** At 12:00 UTC the T-3h warm-up fired on a real user's hold (`#A124`, rc-357) and was
-stopped by an image challenge on Okta's email step — the 2026-08-06 signature to the letter
-(`visible=true enabled=true`, every click timing out on the overlay).
+**Read "THE 08:00 FAST LANE HAS NEVER ONCE BEEN OBSERVED RUNNING" above before anything else.**
+A real user's Carpinteria hold (`#A124`, rc-357) was lost at the 15:00 UTC release — RC answered
+*"The unit is not available for the date(s) specified."*, the row went `failed` at 15:20:01Z and
+`notifyHoldMissed` told the user on all three channels — and **nothing could say whether the
+500 ms lane fired.** It does now.
 
+- **THE ROW COUNT IS ZERO AND THAT IS THE EXPECTED STATE.** One `cart-burst` event is emitted per
+  hold per release pass that waited for the release, so the first one arrives on the next
+  **tapped** hold. Untapped offers produce nothing and that is not a fault.
+- **HOW TO READ THE FIRST ONE.**
+  `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` — **CART BURSTS prints first.**
+  Many attempts = raced and lost, the burst works. **Exactly one attempt = the lane armed and
+  declined to retry, and the fault is OURS** — the `reason` names it. **No row at all, for a hold
+  that was tapped and whose release has passed = the runner never arrived before T.** Cross-check
+  against `scripts/rc-holds-readout.mts` before reading silence as quiet.
+- **DO NOT read a `failed` hold as the burst being broken, or as a race lost, without that row.**
+  That is the whole reason it exists.
+
+**BOT-SIDE — IT IS INERT UNTIL THE BOX UPDATES.** Confirm with
+`npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`** (it COALESCEs and can
+show a stale sha beside a live heartbeat).
+
+#### THE CAPTCHA BLOCK IS OVER — DO NOT ACT ON IT
+The 12:00 UTC warm-up was stopped by an image challenge on Okta's email step and the handover
+said a human sign-in was needed before 14:30. **It was not, and both predictions were falsified by
+the box itself:** the session repaired unattended, `maybeAutoLogin` ran four trips at 14:34-14:37,
+and `session_live_since` is **14:37:05**. The 15:00 release had a live session; the site was lost
+to RC, not to the sign-in. **One CAPTCHA is an event, not an escalation** — the reading that would
+matter is whether the next unattended sign-in after a human one also meets one, and nobody has
+that.
+
+#### STATE, READ RATHER THAN REMEMBERED (2026-09-17 17:00 UTC)
 ```
-12:51 UTC heartbeat: session_ok false | okta_alive false | okta_expires_at NULL
-          "no token at all - signed out; okta session GONE (404)"
-          session_live_since 10:54 UTC (unmoved), bot_commit 6fc7292
-live holds: #A124 rc-357, release 2026-09-17 08:00 PT = 15:00 UTC
-            one row `requested` (TAPPED 2026-09-16 23:21 UTC), one `offered` ahead of it in line
+master          78f5fdf   (#358 merged)
+box             6fc7292   heartbeat 6s, session ok, token 55m, okta ALIVE to 09-18 04:40
+live holds      0         -> a box update costs the session and nothing else
+bot_events 48h  mem-dump 27 · tab-close 87 · request-counts 6 · ramp-scan 2 · cart-burst 0
 ```
 
-- **`maybeAutoLogin` AT 14:30 UTC RUNS THE SAME `attemptLogin`** and will meet the same overlay,
-  spend both attempts and ring the phone. **The scheduled repair is not late, it is structurally
-  unavailable** — and the previous handover said the opposite in as many words.
-- **THE REMEDY IS A HUMAN SIGN-IN AND THE USUAL OBJECTION TO IT DOES NOT APPLY.**
-  `mini-pc\rc-login.bat` force-kills the Chromium the token lives in — **there is no token**, so
-  this is the one configuration where it costs nothing. Headful; it detects the challenge and
-  waits up to five minutes for a person to solve it. That is the 08-06 design working as written:
-  a human signs in ONCE with "Keep me signed in" ticked.
-- **NOBODY IN A SESSION CAN DO IT.** `restart-rc` is refused by the harness, and a CAPTCHA needs a
-  human at a display by construction. **This is an owner action or the cart is missed.**
-- **A MISSED CART IS NOT A SILENT FAILURE** — `expire-holds.ts` marks the row `failed` and sends
-  `hold_missed` on all three channels. Worth knowing before treating the aftermath as a new fault.
+#### AND I BROKE THE LANES RULE WHILE ENFORCING IT — AGAIN
+Merged #358 at 16:41 and started a local `npm run verify` while master's CI was running it; four
+`claim.test.mts` tests failed and **passed 14/14 alone in a clean window minutes later.** The
+three conditions held (the diff cannot reach `worker/claim.ts`, it passes alone, and master's push
+run is timestamped 16:41:40-16:50:28Z over the local one), so the re-run was honest — but the
+breach was mine, and it is the *named* one: **a merge IS a test run.** Third recorded time, and
+the second by somebody quoting the rule in the same session.
 
-**THE REST, IN ORDER.**
-- **DO NOT MERGE ANYTHING UNTIL AFTER 15:00 UTC.** This branch touches `worker/**`, so a merge
-  fires `worker-deploy.yml` and restarts all three pollers. Pushing the BRANCH is safe and is what
-  CI runs on. After 15:00: merge, then update the box (the update carries `wedge.silent` and the
-  decaying recycle budget).
-- **THE CURE HAS FIRED EXACTLY ONCE AND ONE FIRING IS NOT A RATE.** 2026-09-17 09:50:17 UTC, on a
-  genuine burst wedge, **no ramp followed** — and that is not evidence it prevented one, because a
-  burst at full rate costing nothing is already an observed outcome. False-positive half: ~2,400
-  healthy probes with no run of three. True-positive half: n=1. `wedge.silent` is what turns the
-  next teardown into a measurement of how close the probe came.
-- **`idx` IS ABSENT FROM THE PROFILE AND THE MECHANISM IS NOT ESTABLISHED.** Session-scoped (so a
-  browser generation change costs the Okta session) versus the absolute cap are different facts
-  with different consequences, and the first would make every `restart-rc` more expensive than it
-  is currently written to be. **The next human sign-in is the free discriminator** — read the
-  cookie census across the browser generation change after it.
-- **THE WARM-UP'S ONE TURN IS SPENT FOR THIS RELEASE** and the auto-login's two attempts are
-  intact. Both are correct accounting of a repair that cannot succeed; do not read either as a
-  gate misbehaving.
+#### STILL OPEN, UNCHANGED
+- **#22** `hold-fixture-invisibility` borrows `SELECT id FROM users LIMIT 1` — a REAL account with
+  a phone — and asserts `holdAtRisk` returns its numeric fixture. Give it its own inserted,
+  phoneless user. Real-DB and in `worker/**`, so verifying it restarts all three pollers.
+- **#26** the request counter is attached with `page.on('request')` on the RESIDENT page only, so
+  workers and every throwaway tab are invisible. `context.on('request')` closes two thirds of it.
+  Bot-side; land it with something else bot-side.
+- **The leak is diagnosed, contained and NOT fixed.** `base::SharedMemorySecurityPolicy`'s 32 GiB
+  cap is the ceiling; the cure (recycle the wedged page) has fired **exactly once** in production
+  and one firing is not a rate.
 
 #### THE BOX'S `wedge-recycle` EVENT IS NEARLY EMPTY, AND THE LOG THAT CARRIES THE PROOF ROLLS IN 20 MINUTES (2026-09-17)
 
