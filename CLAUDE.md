@@ -8034,6 +8034,20 @@ tell". What settles it is that the REPLACEMENT browser is demonstrably healthy: 
 dump answered **in 229 ms** at 09:53:31, and `okta session GONE (404)` is an HTTP answer rather
 than an evaluate. Two instruments that do not share the wedged page's failure mode.
 
+**AND THE CURE IS A WEDGE DETECTOR, WHICH IS A CAPABILITY NOTHING HAD BEFORE.** Until now a wedge
+was only ever INFERRED — from a ramp, or from `HUNG_MS` firing twelve minutes later. This is the
+first time one has been observed **directly, and in the absence of a ramp**. So the reading it
+buys is new: **a burst can wedge a page without producing a 32 GiB mapping.**
+- **CAUSALITY IS NOT ESTABLISHED, AND THE KNOWN MECHANISM RUNS ONE WAY.** `statuses: {}` over
+  30,631 asks is 30,631 **rejected** fetches, and `blink::RejectedPromises::HandlerAdded` is
+  driven by promise rejection — so the burst feeding the spin is the documented chain. Which came
+  first is not in this event, and *"the page wedged and the SPA's retry loop is what a wedged page
+  does"* fits it just as well. **Do not write one in.**
+- **IT ALSO MEANS THE CURE'S EVENTS ARE NOW THE ONLY CENSUS OF WEDGES.** A wedge the cure wins
+  produces no `bail:ramp`, no `ramp-scan` and no `mem-dump` — so counting `wedge-recycle` rows is
+  the only way anyone will ever know how often this happens. **A quiet `bot_events` is no longer
+  evidence that the box is quiet.**
+
 **AND IT IS THE FIRST PRODUCTION CONFIRMATION OF THE REOPEN MECHANISM, which is not the one the
 module's own header claims.** `⚠ the RC window was closed — reopening it` is the explicit
 `!ctx.pages().length || page.isClosed()` check at the top of the 1-second loop — the line recorded
