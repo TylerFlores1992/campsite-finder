@@ -33,7 +33,7 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 0.5 DO THIS FIRST — the cure is live, has never fired, and is waiting on an EVENT
+## 0.5 DO THIS FIRST — the cure is live, has never fired, and **DO NOT RUN `restart-rc`**
 
 **The box is on the cure** (`6fc7292` contains `e92a5a6`/#355, checked with `git merge-base
 --is-ancestor` rather than by reading a version field), and the arm is unconditional in the
@@ -42,7 +42,7 @@ watchdog timer. So "it never ran" is ruled out structurally. **§2.6 is the full
 **Ask this ONE query before anything else. It is the whole state of the proof:**
 
 ```sql
-SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 03:40
+SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 04:45
 ```
 
 - **A ~30 s cure can fit entirely between two two-minute memory samples, so the SERIES IS THE
@@ -51,40 +51,73 @@ SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 
 - The detector itself is validated: `detail->>'reason'` resolves on 5 of 5 stored
   `request-counts` rows, and the keep-warm emits exactly `snapshot({ reason: 'wedge-recycle' })`.
   So a zero is about the subject, not the query.
+- **AND THE ZERO NOW CARRIES ONE POSITIVE RESULT.** The arm has probed every 10 s since
+  21:50:59 UTC on 09-16 — **~2,400 probes across ~20 browser lives**, through renewals,
+  stand-downs, keepalive checks and five forced restarts — **with zero false positives.** That
+  is the half of the cure that costs an RC page load if it is wrong, measured in production on
+  Windows/149. It says nothing about the true-positive half.
 
-### What is blocking it, and it is not the cure
+### DO NOT FORCE WITH `restart-rc` — it is aimed at a population that is absent
 
-**No ramp since 09-16 03:51 (4,692 MB)** — and the last `bail:ramp` predates the cure going live
-by eighteen hours. Okta trips ARE happening and simply not ramping, which is the recorded bound:
-**a renewal trip ramps at most about one in twelve.** A 23.5-hour gap is longer than the observed
-2.7-17.3 h range and **no cause is written in**.
+`bail:ramp` carries the request counter, and reading it beside `ageMs` splits **all 26 ramps
+with nothing on the off-diagonal**:
 
-### Forcing it, in order of cost
+```
+YOUNG  2.3-3.3 min   distinct=16     busiest path 16,583-80,244 lifetime   x18   (the RDR burst)
+OLD    52-611 min    distinct=76-79  busiest path 3-24 lifetime            x8    (no burst)
+```
 
-1. **`restart-rc` — 2-for-4, not 2-for-2.** Two attempts on 09-17 (03:02:24, 03:12:48) replaced
-   the browser and neither ramped (peaks 316 MB, 355 MB). Still the cheap lever: no campsite, no
-   password, no Okta precondition, and it leaves the profile token-less, which is the cell that
-   reaches `authorize`. **The box refuses one per 10 minutes on its own clock**; pace at ~15 to
-   stay under `supervise.ps1`'s five-exits-in-ten-minutes stop.
-2. **`rc-test-hold.mts --in 120`** — the only recipe with a recorded hit rate (**3 in 7**). It
+- **The burst population has not occurred since 2026-09-15 09:04 — 43 hours.** `restart-rc`
+  produces exactly that young cold-load shape, which is why it was 2-for-2 historically and why
+  09-17 ran it five times for nothing. **Do not quote the 2-for-2 as today's rate.**
+- **And restarting every ~11 minutes STRUCTURALLY FORBIDS the other population**, which needs a
+  browser alive for 52 to 611 minutes (median ~190).
+- **So the lever today is to LEAVE THE BROWSER ALONE.** No `restart-rc`, no `kill-chrome`, no box
+  update, until the browser has aged. The free scheduled event is **`maybeAutoLogin` at T−30 of a
+  real release**, which navigates to Okta on the RESIDENT page — the 09-11 05:28 ramp's exact
+  profile (610.8 min old, `distinct=79`, busiest path 20 lifetime).
+- **The per-browser-life ramp rate is ~30%, not 10%.** A browser that ramps at 2.3 min never
+  reaches the 3-minute baseline dump, so baselines count the lives that did NOT ramp: 61 against
+  26 over nine days. **09-16 was 8% and 09-17 is 0% across 20 lives**, which at 30% is P ~ 0.0008
+  — so something changed, and **no mechanism is written in.** RDR's `futurebookingstartsendsdates`
+  answers **200 in 1.2 s** from a session right now, so "the endpoint broke" is ruled out.
+
+### If a reading IS wanted at a known moment, in order of cost
+
+1. **`rc-test-hold.mts --in 120`** — the only recipe with a recorded hit rate (**3 in 7**). It
    needs **`okta=GONE` AND a dead token**, opens the T−3h..T−30 warm-up window at once with
    ninety minutes of margin, and the hold is deleted the moment the trip is under way so nothing
    is carted. **It refuses while a real hold is live.**
-3. **`test-login` — do NOT spend it while Okta is ALIVE.** It forces `prompt=login` by
+2. **`test-login` — do NOT spend it while Okta is ALIVE.** It forces `prompt=login` by
    interception so it does navigate, but Okta answers from the cookie (09-07: eleven seconds,
    +24 MB) — the cheap cell. It is rationed one per 6 h and costs a password submission from an
    address that has eaten a twelve-hour block.
+3. **`restart-rc`** — last, for the reasons above, and only once the burst population returns
+   (a `request-counts` row with `distinct=16` is how you would know).
 
 **`okta=GONE` cannot be brought forward.** The reported expiry is the ROLLING window our own
-`/api/v1/sessions/me` probe refreshes. **The discriminator is one subtraction:**
-`okta_expires_at - okta_checked_at`. 12.0000h is rolling and says nothing about the cap; a window
-that SHRINKS is the frozen absolute cap, which is the precondition.
+`/api/v1/sessions/me` probe refreshes — **measured +12.0000h on two readings twenty minutes apart
+on 09-17**. **The discriminator is one subtraction:** `okta_expires_at - okta_checked_at`.
+12.0000h is rolling and says nothing about the cap; a window that SHRINKS is the frozen absolute
+cap, which is the precondition. **Do not "fix" the unconditional probe to make forcing easier** —
+that is the entry warning that it is load-bearing by accident, and the cost is real logins from a
+blocked address.
 
 ### How to read the first firing
 
 In `logs\rc-keepwarm.log`: a `♻` line naming the wedge, then `closed the wedged page in Nms`,
-then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED` beneath it. Plus the
-`wedge-recycle` event above, which carries what that page was asking for.
+then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED` beneath it.
+
+**But read the EVENT first, because since #360 it is self-recording.** `wedge-recycle` now
+carries `closeMs`, `tokenKept`, `strikes`, `recycles` and the memory reading
+(`commitUsedMb`/`rcMb`/`memKnown`/`memWhy`) taken BEFORE the close. **`commitUsedMb` is the
+number that says what the firing WAS**: ~40 GB is the leak, the ~7 GB baseline is a page that was
+merely unresponsive, and those want opposite responses. An unknown reading carries its own `why`
+rather than a null that renders as zero.
+
+**Expect the close to take ~2.5 s regardless of how much it releases.** Measured: 1,877 mappings
+in 2,532 ms against 0 mappings in 2,516 ms — **16 ms apart**, so the release is O(1) in the count
+and `page.close()` destroying the renderer process is why.
 
 **One known defect on that path, recorded and deliberately not fixed:** `WEDGE_MAX_RECYCLES`
 cannot bind, because `wedge` is reset on every reopen and every recycle produces a reopen — so
