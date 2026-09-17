@@ -8122,6 +8122,64 @@ hard kill or a fault that ran no handler. The box did **not** update (`git-statu
 every run** that night — `SKIP - a hold releases in 5.3h`.
 
 
+##### AND THE LOG CARRIES TWO MORE THINGS: THE REOPEN, AND A BLIP THAT DELETES `tab-close` ROWS
+Pulled at 10:20 with `tail-log rc-keepwarm:400`, which still reached back to 09:29 — the colon is
+what made the firing and the two hours after it readable in one call.
+
+**THE REOPEN MECHANISM FIRED IN PRODUCTION FOR THE FIRST TIME, AND IT IS THE BORROWED ONE.**
+```
+09:50:17   closed the wedged page in 596ms — the loop reopens from here
+09:50:18 renewing the session — the app holds no usable token (src=none)
+09:50:18   x could not open a renewal tab: browserContext.newPage: Protocol error
+           (Target.createTarget): Failed to open a new tab — the browser may be unwell
+09:50:18 check failed: page.evaluate: Target page, context or browser has been closed
+09:50:19 (warn) the RC window was closed — reopening it        <- the explicit isClosed() check
+09:50:21   alloc trail: resident renderer armed
+09:50:37 RC loaded and STAYING OPEN — token source: none
+```
+CLAUDE.md records that `recycleWedgedPage`'s own header describes a mechanism that **does not
+exist** (every page-touching await in the loop is individually `.catch()`ed, so nothing propagates
+out), and that what actually reopens is the `if (!ctx.pages().length || page.isClosed()) break`
+at the top of the 1-second loop — a line written months earlier for *"somebody tidying up closed
+the visible window"*. **That line is what ran, two seconds after the close, and the browser was
+back with a loaded page in twenty.** The reasoning was traced in source and is now observed.
+
+**A BOX NETWORK BLIP DELETES A `tab-close` ROW, AND IT IS INVISIBLE IN `bot_events`.**
+```
+10:00:46 renewing the session — the app holds no usable token (src=none)
+10:00:46   renew failed: page.goto: net::ERR_NAME_NOT_RESOLVED at https://www.reservecalifornia.com/
+10:00:56   okta session unknown
+10:00:56   (could not report session health: fetch failed)
+10:00:56   (could not store the tab-close event: fetch failed)
+```
+`ERR_NAME_NOT_RESOLVED` is DNS failing **on the box**, not RC refusing us — and `camphawk.app` was
+unreachable in the same second, which is what settles it: two different hosts, one instant.
+- **SO A TRIP RAN AND `bot_events` HAS NO ROW FOR IT.** The table's gap across this period is
+  **04:31:56 → 10:12:03, 340 minutes**, and at least one renewal demonstrably happened inside it.
+  **That gap is an UPPER BOUND on the stand-down, never a measurement of it.**
+- **IT IS A SECOND EXCEPTION TO A RULE THIS FILE STATES WITH ONLY ONE.** The recorded rule is that
+  no `tab-close` is positive evidence no trip ran, *"with one exception: a process KILLED mid-trip
+  runs no `finally` and emits nothing"* — and that one is separable, because a bail emits its own
+  `request-counts` and `ramp-scan`. **A network blip emits nothing in either stream**, so it is the
+  worse of the two and it was not on the list.
+- **THE DISCRIMINATOR IS FREE AND RETROSPECTIVE: THE MEMORY SERIES' CADENCE.** `bot.mjs` is a
+  different process and posts every two minutes, and it lost the same tick —
+  `09:59:18 → 10:02:59` is **221 s** against a steady 120 either side. So a blip WIDENS a gap in
+  `chromium_memory_samples` while deleting a row outright in `bot_events`. **Before reading a
+  `tab-close` gap as a stand-down, diff the sample timestamps across it.**
+- **AND IT RESCUES THE 2026-09-11 OVERNIGHT READING RATHER THAN WEAKENING IT.** That entry treats
+  ten hours of `bot_events` silence as proof the token never lapsed, corroborated by *"312 samples
+  across the same window"*. Mere presence would not have been enough — **the cadence is what rules
+  a blip out**, and at 312 samples in ten hours it is unbroken.
+
+**OKTA'S ABSOLUTE CAP LAPSED INSIDE A 21-MINUTE BRACKET: ALIVE at 09:29:33 (`exp 21:29:33`, i.e.
+the rolling +12.0000h our own probe refreshes), GONE(404) at 09:50:50.** The bracket contains both
+the ~09:40 keep-warm death and the cure, and **neither is implicated** — the recorded finding is
+that the cap runs on its own schedule and our probing cannot move it. It does not pin the cap's
+origin either, because when that session was established is not in this window. Recorded as a
+bracket, not a mechanism.
+
+
 ##### A WORKING CURE SILENCES EVERY OTHER RAMP INSTRUMENT — read that as success, not regression (2026-09-17)
 Read out of the box's own `6fc7292` rather than reasoned: the watchdog timer's arms are, in
 order, the **mem-dump stall trigger** (line 2959, `stalledMs > MEM_DUMP_STALL_MS`, 90 s), **the
@@ -12288,9 +12346,25 @@ after the firing with `tail-log rc-keepwarm:400`).
 lost to the wedge rather than to the cure.**
 
 **WHAT IS STILL OPEN, IN ORDER.**
+- **THE T-3h WARM-UP SHOULD FIRE AT ~12:00 UTC WITH A FULL PASSWORD FORM, AND IT IS A FREE SHOT AT
+  THE MOST RAMP-PRONE TRIP THERE IS.** All four gates were read in `warmupPlan`'s source rather
+  than recalled, and all four hold: the window is T-180..T-30 = **12:00..14:30 UTC**;
+  `oktaAlive === false` (heartbeat and the 09:50:50 log line agree); `tokenSecondsLeft` is not
+  positive (`the app holds no usable token (src=none)`); and `spent` is 0 — the only `auto-login`
+  tab-close today is the 04:31:56 one, which is the recorded `npm test` phantom-release fixture.
+  **The `okta=GONE` password cell has ramped three times in seven**, so this is the best odds the
+  calendar offers, it costs no campsite and no forced restart, and **the password submission is
+  one the system was going to make anyway** — the module's whole argument is that it MOVES a
+  sign-in rather than adding one. The capture watch is armed for the ramp.
+  - **STATED BEFORE THE EVENT SO IT CAN BE FALSIFIED:** expect a `warming up the session` line at
+    ~12:00, `email field` -> `password entered`, and then either a clean ~16 s sign-in (the four
+    recorded misses) or a multi-minute climb the cure or the RAM arm ends. **A stand-down naming
+    `the Okta session state is UNKNOWN` is a network blip, NOT a gate failing** — that arm keeps
+    the turn and retries, by design.
+  - **IF IT DOES NOT FIRE AT ALL, THAT IS THE FINDING AND THE 14:30 TRIP IS THE EXPENSIVE ONE.**
 - **A REAL USER HOLD (#A124) RELEASES AT 15:00 UTC AND OKTA IS `GONE(404)`**, so `maybeAutoLogin`
-  at **14:30 UTC** is the full password variant and is the only thing between that hold and a
-  missed cart. The capture for it is already armed as a background task. **Do not touch the box
+  at **14:30 UTC** is the full password variant **unless the warm-up above lands first**, and is
+  the only thing between that hold and a missed cart. The capture for it is already armed as a background task. **Do not touch the box
   before 15:00** — no update, no `restart-rc`, no `test-login`: the session recovers by design and
   every lever costs it again.
 - **DO NOT MERGE ANYTHING UNTIL AFTER 15:00 UTC.** This branch touches `worker/**`, so a merge
