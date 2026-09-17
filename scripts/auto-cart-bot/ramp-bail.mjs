@@ -153,7 +153,30 @@ export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP
     return { known: false, why: `memory reading predates this browser by ${Math.round((Number(notBefore) - at) / 1000)}s — it describes the one before it`, at, ageMs };
   }
   const rcMb = j?.rcMb == null ? null : Number(j.rcMb);
-  if (rcMb == null || !Number.isFinite(rcMb)) return { known: false, why: 'memory reading has no rc figure', at, ageMs };
+  if (rcMb == null || !Number.isFinite(rcMb)) {
+    /*
+     * THE RC FIGURE AND THE COMMIT FIGURE COME FROM DIFFERENT HALVES OF THE SAMPLER, and on
+     * this box one of them goes blind on its own. `rc_mb` is the per-process scan, which
+     * reports UNKNOWN whenever a Chromium's command line is unreadable ("8 Chromium had an
+     * unreadable command line — this process may not be elevated", observed continuously from
+     * 2026-09-17 04:15:30); `commitUsedMb` is `Win32_OperatingSystem` and kept answering
+     * throughout. So this branch is "we could not attribute the memory", NEVER "we do not know
+     * what the box is holding" — and the ~32 GiB mapping is charged to COMMIT, which is the
+     * figure that says whether an event was the leak or the ~7 GB baseline.
+     *
+     * IT IS RETURNED ON THIS BRANCH ONLY, deliberately. The age check and the browser-life
+     * check both run ABOVE it, so a commit figure reported here is fresh and describes this
+     * browser's lifetime; the stale and previous-browser branches carry no commit at all,
+     * because there a number would be confidently wrong rather than merely unattributed.
+     *
+     * `known` STAYS FALSE, because it names whether the memory is ATTRIBUTED and it is not.
+     * `rcBlind` is the discriminator the caller needs: it says WHY the reading is unknown, so
+     * the commit arm can act on a figure that is fresh, in-life and unaffected — see
+     * rampBailDecision. A caller inferring this state from "known false but commitUsedMb
+     * present" would also match a build that writes commit and no rc for some other reason.
+     */
+    return { known: false, rcBlind: true, why: 'memory reading has no rc figure', at, ageMs, commitUsedMb: num(j?.commitUsedMb), commitLimitMb: num(j?.commitLimitMb) };
+  }
   // COMMIT IS OPTIONAL AND ITS ABSENCE IS NOT AN UNKNOWN READING. A box running a build older
   // than this writes no commit field, and the whole reading must stay usable there — the arm
   // then behaves exactly as it does today, on `rcMb` alone. `known` therefore still turns on
@@ -187,12 +210,36 @@ export function rampBailDecision({
   if (!Number.isFinite(Number(stalledMs))) { out.why = 'no stall reading, so the loop state is UNKNOWN'; return out; }
   out.stalledMs = Number(stalledMs);
   // Condition B — the rc family, from the sampler's file.
-  if (!memory?.known) {
+  /*
+   * A BLIND PROCESS SCAN MUST NOT TAKE THE COMMIT ARM DOWN WITH IT (2026-09-17).
+   *
+   * `rc_mb` is the per-process scan and it goes UNKNOWN on its own — continuously since
+   * 04:15:30 on 09-17, because a Chromium's command line is unreadable to an unelevated
+   * query. `commitUsedMb` is `Win32_OperatingSystem` and answered perfectly throughout. And
+   * the commit bar exists PRECISELY because commit crosses its threshold while private bytes
+   * are still under theirs — so gating it on the rc figure existing disabled the arm built for
+   * the case the rc figure cannot carry. Measured consequence: the whole ramp arm has been
+   * inert on this box for hours, verified against these functions rather than read off source.
+   *
+   * WHAT IS GIVEN UP, SAID PLAINLY. The comment below argues the whole-box commit figure is
+   * safe to act on because `rcMb` cross-checks it; in this state there IS no cross-check, and
+   * the 120-second stall is doing all of the discriminating. That is acceptable on the
+   * measured numbers — across 133 tab-closes the longest trip is 71,552 ms and not one exceeds
+   * 90,000, so a 120 s stall has never once occurred outside a ramp — and on the asymmetry: a
+   * false fire costs a process restart (~11 min of session recovery), while not firing costs
+   * commit exhaustion, which is the only failure this box has ever had that needed a human.
+   *
+   * THE AGE AND BROWSER-LIFE CHECKS ALREADY RAN ABOVE, so a commit figure reaching here is
+   * fresh and describes this browser's lifetime. The stale and previous-browser branches carry
+   * no `rcBlind` and no commit, so they still refuse — which is the half that must not move.
+   */
+  const blindCommit = memory?.rcBlind === true && num(memory?.commitUsedMb) != null;
+  if (!memory?.known && !blindCommit) {
     out.why = memory?.why ?? 'memory reading UNKNOWN';
     if (Number.isFinite(memory?.ageMs)) out.readingAgeMs = memory.ageMs;
     return out;
   }
-  out.rcMb = memory.rcMb;
+  out.rcMb = memory.known ? memory.rcMb : null;
   out.commitUsedMb = num(memory.commitUsedMb);
   out.readingAgeMs = memory.ageMs;
   const stalled = out.stalledMs > stallMs;
@@ -222,7 +269,10 @@ export function rampBailDecision({
    * fire: a box on a build older than this writes none, and the negated form would fire on
    * every tick of one. Same trap `ramp-scan.mjs` names at its own commit trigger.
    */
-  const byRc = memory.rcMb > thresholdMb;
+  // `byRc` is FALSE, never `undefined > n`, when the scan is blind — there is no rc reading to
+  // compare, and an absent figure must never fire. `trigger` then reports `commitUsedMb`
+  // alone, so a bail taken without attribution cannot be mistaken for one that had it.
+  const byRc = memory.known === true && memory.rcMb > thresholdMb;
   const byCommit = out.commitUsedMb != null && out.commitUsedMb >= commitThresholdMb;
   const big = byRc || byCommit;
   // WHICH ONE FIRED IS THE READING, NOT BOOKKEEPING — an in-burst bail and an after-the-fact
@@ -236,7 +286,12 @@ export function rampBailDecision({
     out.fire = true;
     out.why = `the loop is stalled AND the box is over a bar (${out.trigger})`;
   } else if (stalled) {
-    out.why = `the loop has been stalled ${Math.round(out.stalledMs / 1000)}s but rc family ${Math.round(memory.rcMb)} MB is under the bar (${thresholdMb}), ${commitSaid}`;
+    // `rc family NaN MB` is what the blind branch used to render here. An absent figure is
+    // named as absent, never rounded into a number a reader would quote.
+    const rcSaid = out.rcMb == null
+      ? 'the rc family is UNATTRIBUTED (the process scan is blind)'
+      : `rc family ${Math.round(out.rcMb)} MB is under the bar (${thresholdMb})`;
+    out.why = `the loop has been stalled ${Math.round(out.stalledMs / 1000)}s but ${rcSaid}, ${commitSaid}`;
   } else if (big) {
     out.why = `over a bar (${out.trigger}) but the loop advanced ${Math.round(out.stalledMs / 1000)}s ago`;
   } else {

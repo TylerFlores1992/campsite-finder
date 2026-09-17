@@ -135,6 +135,16 @@ try {
   page.evaluate(CANDIDATES[CAND]).catch(() => {});
 
   const top = () => Math.max(0, ...chromeProcesses().map(([p]) => count2MiBShared(p)?.n ?? 0));
+  // RESIDENT bytes, not merely mapped ones. On Linux a data pipe's memfd ring buffer is tmpfs,
+  // so every one of these mappings costs REAL RAM — which is why this container plateaus near
+  // 2,700 (~5.3 GiB) while production reaches 16,383: Windows charges the same sections against
+  // COMMIT and never touches them (`PAGEFILE allocatedMB=31,744` against `peakMB=73`). That
+  // difference is a nuisance for scale and a GIFT for the cure's proof: it makes RSS a second,
+  // independent witness that the close gave the MEMORY back rather than merely unmapping it.
+  const rssMb = () => Math.round(chromeProcesses().reduce((t, [p]) => {
+    try { return t + Number(/^VmRSS:\s+(\d+)/m.exec(readFileSync(`/proc/${p}/status`, 'utf8'))?.[1] ?? 0); }
+    catch { return t; }
+  }, 0) / 1024);
   const series = [];
   for (let t = 2; t <= SECS; t += 2) {
     await new Promise((r) => setTimeout(r, 2000));
@@ -176,14 +186,18 @@ try {
       const d = wedgeDecision({ reading, strikes: strikes - 1 });
       console.log(`  FIX: probe=${reading} strikes=${strikes} act=${d.act} after ${Date.now() - t0}ms`);
       const before = top();
+      const rssBefore = rssMb();
       const closeT0 = Date.now();
       await page.close({ runBeforeUnload: false }).catch((e) => console.log('       close threw:', e.message.split('\n')[0]));
       await new Promise((r) => setTimeout(r, 2500));
       const after = top();
+      const rssAfter = rssMb();
       // THE VERDICT REFUSES WHAT IT HAS NOT EARNED. Releasing nothing proves nothing, so a
       // run the reproduction never got going on reports that rather than a cure — the same
       // rule `rc-probe.mjs --concurrent-mint` learned by publishing a race that never raced.
       const cured = after === 0 && before >= 200;
+      console.log(`  FIX: chromium RSS ${rssBefore} -> ${rssAfter} MB `
+        + `(${rssAfter - rssBefore >= 0 ? '+' : ''}${rssAfter - rssBefore})`);
       console.log(`  FIX: mappings ${before} -> ${after} in ${Date.now() - closeT0}ms`
         + (cured ? '   <<< CURED'
           : before < 200 ? '   <<< THE QUESTION WAS NEVER REACHED (it was not leaking)'

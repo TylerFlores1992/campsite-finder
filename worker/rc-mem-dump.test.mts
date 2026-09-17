@@ -585,6 +585,10 @@ test('the leak probes parse and keep their deliberate playwright-core import', (
     // while `page.evaluate` (Runtime.evaluate, which runs JavaScript) is bound to it. Losing
     // this probe would leave that reading looking like a live objection to the page-wedge arm.
     'scripts/cdp-thread-probe.mjs',
+    // The cure's end-to-end run: the CDP signature, the mappings and the release on ONE page,
+    // with the healthy-page control arm that caught its own first version reading `wedged` off
+    // a responsive page.
+    'scripts/cure-end-to-end.mjs',
   ];
   let checked = 0;
   for (const name of probes) {
@@ -604,6 +608,32 @@ test('the leak probes parse and keep their deliberate playwright-core import', (
   // PER FILE, so a probe deleted or renamed fails here rather than shrinking the loop to zero
   // and passing — the vacuous-guard shape this file has recorded more than once.
   assert.equal(checked, probes.length, 'a probe went missing — this guard must not silently shrink');
+});
+
+test('a probe that reports a failure EXITS non-zero — a fail() that does not fail is a green', () => {
+  /*
+   * MEASURED 2026-09-17: `ramp-arm-probe.mjs` DETECTED three separate breaks of the blind-scan
+   * commit chain, printed `x …` for each, and **exited 0** — so anything gating on its status
+   * read a pass over a probe that had just found the bug.
+   *
+   * The cause was a `fail()` that only logged, with the verdict reading a separate `ok` flag
+   * each site had to remember to set: 12 call sites, 7 setting it, and `ok` declared below the
+   * scenarios that needed it. That is the `status = 'sent'` shape — a signal that reports the
+   * act rather than the outcome — inside the instrument built so the trigger path stops needing
+   * a ramp to test.
+   *
+   * Pinned on the CLASS, not the instances: `fail()` must record, and the verdict must read what
+   * it records. A scenario added later then cannot forget a flag it never has to touch.
+   */
+  const url = new URL('../scripts/auto-cart-bot/ramp-arm-probe.mjs', import.meta.url);
+  const src = readFileSync(url, 'utf8');
+  assert.match(src, /const fail = \(msg\) => \{ failed = true;/,
+    'fail() must record the failure itself — a logger cannot fail a build');
+  assert.match(src, /verdict = ok && !failed \? 0 : 1;/,
+    'the verdict must read what fail() records, or recording it changes nothing');
+  // AND IT MUST STILL BE ABLE TO PASS. A probe hard-wired to exit 1 fails just as uselessly as
+  // one hard-wired to exit 0 — it would simply be ignored instead of believed.
+  assert.match(src, /let failed = false;/, 'the flag must start clean, or the probe can never pass');
 });
 
 // ── THE STALL TRIGGER — the reading taken before the worst moment, not at it ────────────────

@@ -592,6 +592,89 @@ test('RAMP: every UNKNOWN stands down — a missing, stale or figureless reading
   assert.match(stale.why, /400s old/);
 });
 
+// ── THE BLIND PROCESS SCAN TOOK THE COMMIT ARM DOWN WITH IT (2026-09-17) ───────────────────
+//
+// `rc_mb` is the per-process scan and it goes UNKNOWN on its own — continuously from 04:15:30
+// on 09-17, an unelevated query unable to read a Chromium's command line — while
+// `commitUsedMb` is `Win32_OperatingSystem` and kept answering. The commit bar exists PRECISELY
+// because commit crosses its threshold while private bytes are still under theirs, so gating it
+// on the rc figure existing disabled the arm built for the case the rc figure cannot carry.
+// Verified against these functions rather than read off source: the whole ramp arm was inert on
+// the box for hours.
+//
+// THE COST IS NAMED RATHER THAN HIDDEN: in this state `rcMb` is not there to cross-check a
+// whole-box figure, so the 120 s stall is doing all the discriminating. Acceptable on the
+// measured numbers (133 tab-closes, longest trip 71,552 ms, none over 90,000) and on the
+// asymmetry — a false fire costs a process restart, not firing costs commit exhaustion, which
+// is the only failure this box has had that needed a human.
+
+/** The rc-blind reading: fresh and in-life, attributed to nothing. */
+const blind = (commitUsedMb: number | null, ageMs = 30_000) => ({
+  known: false, rcBlind: true, why: 'memory reading has no rc figure', at: 0, ageMs,
+  commitUsedMb, commitLimitMb: 47_870,
+});
+
+test('RAMP: a blind scan does not disable the commit bar', () => {
+  const base = { stallMs: 120_000, thresholdMb: 3000, commitThresholdMb: 9000 };
+  const d = rampBailDecision({ ...base, stalledMs: 130_000, memory: blind(40_000) });
+  assert.equal(d.fire, true, 'a stalled loop over the commit bar must fire even with nothing attributed');
+  // THE TRIGGER IS THE READING. A bail taken without attribution must not arrive looking like
+  // one that had it — `rcMb` and `both` both assert a figure that does not exist.
+  assert.equal(d.trigger, 'commitUsedMb');
+  assert.equal(d.rcMb, null, 'there is no rc figure, so it must be reported as absent and never as 0');
+  assert.equal(d.commitUsedMb, 40_000);
+});
+
+test('RAMP: a blind scan still stands down under the bar, and without a commit figure at all', () => {
+  const base = { stallMs: 120_000, thresholdMb: 3000, commitThresholdMb: 9000 };
+  const under = rampBailDecision({ ...base, stalledMs: 130_000, memory: blind(7_050) });
+  assert.equal(under.fire, false, 'the ~7,040 MB baseline must not fire — that is the box at rest');
+  // AND THE SENTENCE MUST NOT RENDER A MEASUREMENT IT DOES NOT HAVE. `Math.round(undefined)`
+  // is NaN, and `rc family NaN MB` reads as a reading rather than as its absence.
+  assert.doesNotMatch(under.why, /NaN/, 'an absent rc figure must never be rounded into the verdict');
+  assert.match(under.why, /UNATTRIBUTED/);
+  // TWO UNKNOWNS MUST REPORT AS UNKNOWN, NOT AS "UNDER THE BAR" — and `fire` alone cannot see
+  // the difference, because `byCommit` refuses a null figure anyway. Dropping the
+  // commit-present half of the gate leaves the decision identical and the SENTENCE wrong: a
+  // reading we could not take arrives as a measurement that came in low. That merge is the
+  // failure this repo has recorded more than any other.
+  const noFigure = rampBailDecision({ ...base, stalledMs: 130_000, memory: blind(null) });
+  assert.equal(noFigure.fire, false,
+    'a blind scan AND no commit figure is two unknowns — the older-box case, and it must stand down');
+  assert.match(noFigure.why, /no rc figure/,
+    'it must report the reading as UNKNOWN, never as a family measured under the bar');
+  assert.doesNotMatch(noFigure.why, /under the bar/);
+  assert.equal(rampBailDecision({ ...base, stalledMs: 30_000, memory: blind(40_000) }).fire, false,
+    'BOTH CONDITIONS, ALWAYS — in this state the stall is the only discriminator there is');
+});
+
+test('RAMP: ONLY the rc-blind branch is ungated — stale and wrong-browser readings still refuse', () => {
+  const base = { stallMs: 120_000, thresholdMb: 3000, commitThresholdMb: 9000 };
+  // A commit figure on a STALE reading describes a box we stopped watching; on a PREVIOUS
+  // browser's reading it describes one that no longer exists. Neither carries `rcBlind`, and
+  // `readLatestMemory` gives neither a commit field — both halves are asserted, because either
+  // one alone would let a wrong reading through if the other moved.
+  for (const why of ['memory reading 400s old (max 300s)', 'memory reading predates this browser by 90s — it describes the one before it']) {
+    const d = rampBailDecision({ ...base, stalledMs: 130_000, memory: { known: false, why, ageMs: 400_000, commitUsedMb: 40_000 } });
+    assert.equal(d.fire, false, `a reading refused for "${why}" must not fire on its commit figure`);
+  }
+  // THE TRIGGER MAY NEVER NAME A FIGURE THE VERDICT REPORTS AS ABSENT. A blind reading that
+  // somehow carried an rcMb — a hand-built one, or a future writer that fills it on a branch
+  // this one does not — must still not produce `rcMb` or `both` beside `rcMb: null`. A
+  // self-contradictory verdict is worse than a coarse one: it is the half somebody quotes.
+  const contradiction = rampBailDecision({
+    ...base, stalledMs: 130_000,
+    memory: { ...blind(40_000), rcMb: 5_000 },
+  });
+  assert.equal(contradiction.trigger, 'commitUsedMb',
+    'an unattributed reading must not claim an rc trigger, whatever field happens to be on the object');
+  assert.equal(contradiction.rcMb, null);
+  assert.match(rbCode, /rcBlind:\s*true/, 'the blind branch must NAME itself, or the caller has to infer it from a shape another branch could share');
+  const stale = rbCode.slice(rbCode.indexOf('if (ageMs > maxAgeMs)'), rbCode.indexOf('const rcMb ='));
+  assert.doesNotMatch(stale, /commitUsedMb/,
+    'the stale and previous-browser branches must carry no commit figure — there a number is confidently wrong rather than merely unattributed');
+});
+
 test('RAMP: the file round-trips, is written atomically, and goes UNKNOWN when stale or figureless', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ramp-bail-'));
   try {
@@ -665,11 +748,32 @@ test('RAMP: the browser-life gate reaches BOTH arms, because they share one read
   const body = timerBody();
   // The dump and the bail read one object, one arm apart. Two reads would be two chances to
   // gate one and forget the other — and the forgotten one is the arm that exits the process.
-  assert.equal((body.match(/readLatestMemory\(/g) ?? []).length, 1,
-    'ONE read in the timer, or the two arms can disagree about which browser the figure is about');
-  const read = body.indexOf('readLatestMemory(');
-  const decide = body.indexOf('rampBailDecision(');
-  const dump = body.indexOf('maybeMemoryDump(memory)');
+  //
+  // RE-ANCHORED 2026-09-17, NOT RELAXED. This counted `readLatestMemory(` across the WHOLE
+  // timer body, and `recycleWedgedPage` — the cure, defined inside that body — takes a
+  // DIAGNOSTIC reading of its own so its event can say whether the page it just closed was
+  // holding ~40 GB of commit or sitting at the ~7 GB baseline. Those want opposite responses
+  // and the event could not tell them apart. The RULE is that the two ARMS share one figure so
+  // they cannot disagree about which browser it describes; a read that feeds no decision
+  // cannot make them disagree. So the count excludes the helper — and the assertion below
+  // pins that the helper really is decision-free, which is what makes the exclusion a
+  // narrowing rather than a hole. Moving that read onto the decision path puts it back in
+  // scope and fails here.
+  const recycle = (() => {
+    const from = body.indexOf('const recycleWedgedPage = async');
+    assert.ok(from > -1, 'recycleWedgedPage moved — this guard is measuring nothing');
+    const to = body.indexOf('\n      };', from);
+    assert.ok(to > from, 'could not bound recycleWedgedPage — this guard is measuring nothing');
+    return body.slice(from, to);
+  })();
+  const decisions = body.replace(recycle, '');
+  assert.equal((decisions.match(/readLatestMemory\(/g) ?? []).length, 1,
+    'ONE read on the decision path, or the two arms can disagree about which browser the figure is about');
+  assert.doesNotMatch(recycle, /rampBailDecision\(|maybeMemoryDump\(/,
+    'the cure REPORTS, it must not decide — the moment its read drives an arm, excluding it from the count above is a hole');
+  const read = decisions.indexOf('readLatestMemory(');
+  const decide = decisions.indexOf('rampBailDecision(');
+  const dump = decisions.indexOf('maybeMemoryDump(memory)');
   assert.ok(read > -1 && decide > read && dump > decide,
     'read, then the bail, then the dump — the dump must not get its own ungated figure');
   // browserLifeSince is set where the browser life begins, so the gate cannot outlive a reopen.

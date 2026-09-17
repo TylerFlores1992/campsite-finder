@@ -100,7 +100,8 @@ import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
 import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
 import {
-  probeResidentPage, wedgeDecision, WEDGE_PROBE_EVERY_MS, WEDGE_MAX_RECYCLES,
+  probeResidentPage, wedgeDecision, decayedRecycles,
+  WEDGE_PROBE_EVERY_MS, WEDGE_PROBE_TIMEOUT_MS, WEDGE_MAX_RECYCLES,
 } from './page-wedge.mjs';
 import { createRequestCounter, describeRequestCounts } from './rc-request-count.mjs';
 import { readLatestMemory, rampBailDecision, rampBailLine, rampDumpGrace, MEM_DUMP_GRACE_MS_DEFAULT, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
@@ -2699,7 +2700,7 @@ async function warmResident() {
      * `inFlight` is not optional: once the page goes quiet EVERY probe costs its full timeout,
      * so without it they pile up one per tick — the lesson the heap trail already paid for.
      */
-    let wedge = { strikes: 0, recycles: 0, inFlight: false, lastProbe: 0 };
+    let wedge = { strikes: 0, recycles: 0, lastRecycleAt: 0, inFlight: false, lastProbe: 0, probes: 0, slowestAliveMs: 0, silent: 0 };
     // Opened at launch while the browser is healthy — see collectHeapFacts. Negotiating a new
     // CDP session at trip time is what produced `no answer in 3000ms` on the first real firing.
     let heapProbe = null;
@@ -2950,29 +2951,90 @@ async function warmResident() {
        * unload handler, so asking it to is how a close inherits the hang it is meant to end.
        *
        * IT ALSO UNSTICKS THE LOOP, WHICH IS WHY NOTHING HERE HAS TO KNOW HOW TO REBUILD A
-       * BROWSER. Whatever the loop is awaiting on this page rejects with "Target closed", it
-       * falls into its own `catch`, and the existing reopen path runs — the same one the
-       * post-Okta recycle and the size guard use. And with the page gone the renderer is gone,
+       * BROWSER — AND THE MECHANISM IS NOT THE ONE THIS COMMENT USED TO NAME. It said the
+       * loop's await rejects with "Target closed" and falls into its own catch. It does not:
+       * every page-touching await in that loop is individually `.catch()`ed, and a page close
+       * leaves the CONTEXT alone, so nothing propagates out. What reopens is the explicit
+       * `if (!ctx.pages().length || page.isClosed()) break;` at the top of the 1-second loop,
+       * written long before this arm for "somebody tidying up closed the visible window" —
+       * which makes it load-bearing for a feature it predates, and pinned in
+       * `src/lib/page-wedge.test.mts` for that reason. Reopen latency is ~1 s plus whatever
+       * await was in flight. And with the page gone the renderer is gone,
        * so `ctx.close()` in that `finally` has nothing left to wait for: a `browser.close()`
        * against a still-wedged renderer is what hung the probe this arm was measured with.
        */
-      const recycleWedgedPage = async (why) => {
+      const recycleWedgedPage = async (why, strikes, recycles, probes, slowestAliveMs, silent) => {
         log(`♻ ${why}`);
         const kept = await Promise.race([
           persistLiveToken(residentPage).catch(() => 'error'),
           new Promise((r) => setTimeout(() => r('timeout'), 2000)),
         ]);
         log(`  token on the way out: ${kept}`);
+        /**
+         * READ THE MEMORY BEFORE THE CLOSE, BECAUSE AFTER IT THERE IS NOTHING TO READ.
+         *
+         * `commitUsedMb` is the number that says WHAT THIS FIRING WAS. A page holding ~40 GB
+         * of commit is the leak; a page at the ~7 GB baseline was merely unresponsive. Without
+         * it the event cannot tell those apart, and they want opposite responses.
+         *
+         * It is a `readFileSync` of a file another process writes — no CDP and no spawn, which
+         * is what makes it safe on this path: the page will not answer CDP by definition, and
+         * spawning is what fails first at high commit. The reading is the SAME
+         * `readLatestMemory` the ramp arm uses, with the same `notBefore`, so a sample from the
+         * previous browser is UNKNOWN rather than a confident wrong number — and an unknown
+         * carries its own `why` instead of a null that reads as zero.
+         */
+        const mem = readLatestMemory(MEMORY_LATEST_PATH, {
+          maxAgeMs: RAMP_READING_MAX_AGE_MS, notBefore: browserLifeSince,
+        });
         const t0 = Date.now();
         await Promise.race([
           residentPage?.close({ runBeforeUnload: false }).catch(() => {}),
           new Promise((r) => setTimeout(r, 5000)),
         ]);
-        log(`  closed the wedged page in ${Date.now() - t0}ms — the loop reopens from here`);
-        // The counts are the only record of what that page was asking for, and the reopen
-        // resets the counter. Fire-and-forget: a diagnostic that delays the cure has
-        // inverted the priority, which is the rule the bail's own block is careful about.
-        void reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'wedge-recycle' }));
+        const closeMs = Date.now() - t0;
+        log(`  closed the wedged page in ${closeMs}ms — the loop reopens from here`);
+        /**
+         * THE EVENT IS THE DURABLE RECORD AND THE LOG IS NOT. `tail-log` returns the last
+         * 16,000 characters, which is how the 2026-08-23 ramp attributions were lost; the
+         * three facts that say what this firing DID — how long the close took, whether the
+         * token survived, and what the box was holding — would otherwise live only there.
+         * Same move as migration 066 for the alloc readings.
+         *
+         * Fire-and-forget, unchanged: a diagnostic that delays the cure has inverted the
+         * priority, which is the rule the bail's own block is careful about.
+         */
+        void reportBotEvent('request-counts', {
+          ...requestCounter.snapshot({ reason: 'wedge-recycle' }),
+          closeMs,
+          tokenKept: kept,
+          strikes,
+          recycles,
+          // The margin AT THE MOMENT IT FIRED. A firing whose slowest healthy answer was 3 ms
+          // is a page that went from instant to silent; one whose slowest was 1,800 ms is a
+          // page that had been degrading, and those are different events.
+          probes,
+          slowestAliveMs,
+          silent,
+          memKnown: mem.known === true,
+          memWhy: mem.known === true ? null : (mem.why ?? null),
+          /*
+           * COMMIT IS NOT GATED ON `known` AND `rcMb` IS, because they fail separately. The
+           * per-process scan goes blind on its own (unreadable command lines, i.e. elevation)
+           * while `Win32_OperatingSystem` keeps answering — and `readLatestMemory` refuses the
+           * WHOLE reading on a missing rc figure. Gating commit on `known` therefore nulls the
+           * one number this read exists for at exactly the moment the other half cannot supply
+           * its own, which is the state this box was in when the field was added.
+           *
+           * Safe because only the rc-blind branch carries commit at all: a stale reading and
+           * one predating this browser return none, so a number here is always fresh and
+           * in-life. `rcMb` stays gated — an unattributed scan has no rc figure to report.
+           */
+          rcMb: mem.known === true ? (mem.rcMb ?? null) : null,
+          commitUsedMb: Number.isFinite(Number(mem.commitUsedMb)) ? Number(mem.commitUsedMb) : null,
+          commitLimitMb: Number.isFinite(Number(mem.commitLimitMb)) ? Number(mem.commitLimitMb) : null,
+          memAgeMs: Number.isFinite(mem.ageMs) ? mem.ageMs : null,
+        });
       };
       /**
        * THE STALL TRIGGER, BEFORE EVERY ARM AND CONSULTING NO FILE.
@@ -3023,19 +3085,91 @@ async function warmResident() {
       if (!bailing && !wedge.inFlight && Date.now() - wedge.lastProbe >= WEDGE_PROBE_EVERY_MS) {
         wedge.inFlight = true;
         wedge.lastProbe = Date.now();
+        const probeStartedAt = Date.now();
         void probeResidentPage(residentPage)
           .then((reading) => {
+            /*
+             * MEASURE THE MARGIN, BECAUSE "ZERO FALSE POSITIVES" IS A BINARY AND THE BUDGET IS
+             * A NUMBER. ~2,400 healthy probes have evidenced the `alive` branch, and none of
+             * them said HOW CLOSE any came to `WEDGE_PROBE_TIMEOUT_MS` — so a page answering in
+             * 4 ms and one answering in 1,900 ms are the same reading, and only one of them is
+             * a detector one degraded browser away from recycling a healthy page.
+             *
+             * HEALTHY PROBES ONLY. A `wedged` reading is ~the budget BY CONSTRUCTION (the race
+             * resolves on the timer), so folding it in would report the timeout back as if it
+             * were a measurement of the page.
+             *
+             * PER BROWSER LIFE, like `strikes` and for the same reason: it describes a page
+             * that a reopen replaces.
+             */
+            if (reading === 'alive') {
+              wedge.probes += 1;
+              wedge.slowestAliveMs = Math.max(wedge.slowestAliveMs, Date.now() - probeStartedAt);
+            } else if (reading === 'wedged') {
+              /*
+               * THE NEAR MISS, AND IT IS THE ONLY THING THAT CAN MEASURE THE FALSE-POSITIVE
+               * CLAIM. Zero firings means no RUN OF THREE — it does not mean no `wedged`
+               * reading ever happened, and "~2,400 healthy probes, zero false positives" was
+               * stating the stronger of the two from evidence for the weaker.
+               *
+               * It is also the direct test of the recorded flapping prediction: one `alive`
+               * resets `strikes`, so a page that answers one probe in three can hold 32 GiB
+               * for ever and never reach the threshold. Five joined memory dumps argue the
+               * silence lasts minutes rather than flapping, which is an argument. THIS IS A
+               * COUNT: `silent` > 0 with no firing IS the flapping case, seen.
+               *
+               * `inconclusive` is deliberately NOT counted. "Target closed" and "execution
+               * context destroyed" reject INSTANTLY and mean the page is CHANGING — the
+               * healthy reopen case — so folding them in would report every ordinary
+               * recycle as a near miss and bury the reading this exists to take.
+               */
+              wedge.silent += 1;
+            }
             const d = wedgeDecision({
-              reading, strikes: wedge.strikes, recycles: wedge.recycles,
+              reading,
+              strikes: wedge.strikes,
+              // DECAYED, NEVER THE RAW FIELD. The budget is about a page that cannot stay up,
+              // which is a rate — see decayedRecycles for why a reopen is not evidence of
+              // health and why this is read here rather than only at the reset.
+              recycles: decayedRecycles(wedge),
               maxRecycles: WEDGE_MAX_RECYCLES,
             });
+            /*
+             * REPORT THE NEAR MISSES, OR THE `wedged` BRANCH IS UNFALSIFIABLE IN PRODUCTION.
+             *
+             * Every outcome of this arm but the recycle was silent, which merges two states
+             * that need telling apart: "this page has never once failed to answer" and "it
+             * failed twice, recovered, and nothing said so". ~2,400 healthy probes therefore
+             * evidenced the `alive` branch ALONE — and `wedged` is the branch the whole cure
+             * turns on, measured only in a container, on Chromium 141/Linux against a box
+             * running 149/Windows, which is the platform-transfer trap this repo has been
+             * burned by twice.
+             *
+             * TWO LINES PER EPISODE, NOT ONE PER PROBE, and the bound is the point: the entry
+             * and the recovery. `tail-log` returns the last 16,000 characters and this log
+             * already rolls in ~20 minutes on two stand-down lines a minute, so an arm that
+             * spoke on every probe would push the evidence out of the window it exists to
+             * land in. A flapping page costs at most one pair per 10s cadence.
+             *
+             * THE RECOVERY IS THE HALF WORTH HAVING. A strike that clears says the detector
+             * fired and the page came back — which is the near miss, and the only evidence of
+             * the `wedged` branch that does not require a full ramp.
+             */
+            const wasStriking = wedge.strikes > 0;
             wedge.strikes = d.strikes;
+            if (d.strikes > 0 && !wasStriking) log(`… resident page did not answer — ${d.why}`);
+            else if (wasStriking && d.strikes === 0 && d.act === 'none') {
+              log('… resident page answered again — the wedge cleared on its own');
+            }
             if (d.act === 'recycle') {
               // Count it BEFORE the await, or two overlapping recycles both read the old
               // count and the budget never binds.
               wedge.recycles += 1;
+              // Stamped with the count, or the budget has no clock to decay against and
+              // `decayedRecycles` correctly refuses to age it — which would make it permanent.
+              wedge.lastRecycleAt = Date.now();
               wedge.strikes = 0;
-              void recycleWedgedPage(d.why);
+              void recycleWedgedPage(d.why, d.strikes, wedge.recycles, wedge.probes, wedge.slowestAliveMs, wedge.silent);
             } else if (d.act === 'escalate' && !bailing) {
               reportAndBail(
                 `✗ WEDGED PAGE — still unresponsive after ${wedge.recycles} page recycle(s).`,
@@ -3240,11 +3374,29 @@ async function warmResident() {
       // context, a new page and a new renderer, so last life's baseline describes nothing.
       browserLifeSince = Date.now();
       memDump = { baseline: false, ramp: false, inFlight: false, landed: false, graceUntil: null };
-      // PER BROWSER LIFE, for the same reason memDump is: a reopen is a new page and a new
-      // renderer, so last life's strikes describe a page that no longer exists — and the
-      // recycle budget has to start over or three recycles across a long night would retire
-      // the arm permanently.
-      wedge = { strikes: 0, recycles: 0, inFlight: false, lastProbe: 0 };
+      /*
+       * STRIKES ARE PER BROWSER LIFE; THE RECYCLE BUDGET IS NOT, AND THAT ASYMMETRY IS THE FIX.
+       *
+       * Strikes reset for the same reason memDump does — a reopen is a new page and a new
+       * renderer, so last life's strikes describe a page that no longer exists.
+       *
+       * `recycles` MUST SURVIVE, because every recycle CAUSES a reopen: zeroing it here made
+       * `WEDGE_MAX_RECYCLES` structurally unable to bind and left `escalate` as dead code (see
+       * page-wedge.mjs). The concern the old comment names — three recycles across a long night
+       * retiring the arm — is answered by decayedRecycles, which hands the budget back after a
+       * stretch of healthy page rather than after a reopen the recycle itself produced.
+       */
+      wedge = {
+        strikes: 0,
+        recycles: decayedRecycles(wedge),
+        lastRecycleAt: wedge.lastRecycleAt,
+        inFlight: false,
+        lastProbe: 0,
+        // Per browser life, like strikes: a probe timing describes the page that answered it.
+        probes: 0,
+        slowestAliveMs: 0,
+        silent: 0,
+      };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
       mark('initial RC load');
@@ -3862,6 +4014,23 @@ async function warmResident() {
         log(`  ${describeRequestCounts(requestCounter, { compact: true })}`
           + (skipped ? ` (+${skipped} short reopen(s) not reported)` : ''));
         teardown.suppressedSince = skipped;
+        /*
+         * ONE LINE PER BROWSER LIFE — the only unconditional reading of the cure's margin.
+         *
+         * It goes HERE rather than behind a slowness bar because a bar that is never crossed
+         * writes the same nothing as an arm that never ran, which is the merge this instrument
+         * exists to undo. One line per life is 1-3 a day on this box against a log window that
+         * holds ~31 minutes, so it costs nothing it is measuring.
+         *
+         * ZERO PROBES IS ITS OWN READING and says so: the arm not having run is a different
+         * fact from a page that always answered instantly.
+         */
+        log(`  resident-page probe: ${wedge.probes} healthy answer(s), slowest `
+          + `${wedge.probes ? `${wedge.slowestAliveMs}ms of a ${WEDGE_PROBE_TIMEOUT_MS}ms budget` : 'n/a — the arm took no healthy reading'}`
+          + `, ${wedge.silent} silent`);
+        teardown.probes = wedge.probes;
+        teardown.slowestAliveMs = wedge.probes ? wedge.slowestAliveMs : null;
+        teardown.silent = wedge.silent;
       } else {
         suppressedTeardowns += 1;
       }

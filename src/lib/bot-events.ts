@@ -40,7 +40,7 @@
  */
 import { mutate, query } from '@/lib/db/client';
 
-export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts', 'mem-dump'] as const;
+export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts', 'mem-dump', 'cart-burst'] as const;
 export type BotEventKind = (typeof BOT_EVENT_KINDS)[number];
 const KINDS = new Set<string>(BOT_EVENT_KINDS);
 
@@ -178,6 +178,98 @@ export function requestCountReason(raw: unknown): RequestCountReason {
  * Rounding the first to the second would report every historical burst as "nothing came back",
  * which is a finding, and a false one.
  */
+/**
+ * DID THE FAST CART LANE RUN, AND WHAT DID IT LEARN?
+ *
+ * ## The gap this closes (2026-09-17)
+ *
+ * `#A124` at Carpinteria was tapped for the 08:00 PT release and never carted; RC refused
+ * every attempt with *"The unit is not available for the date(s) specified."* The owner's
+ * question was the right one and could not be answered: **did the 500 ms burst fire and lose,
+ * or did it never run?** Those need opposite fixes — the first is a competitor faster than we
+ * can be, the second is a broken lane — and nothing on the box could tell them apart.
+ *
+ * **THE BURST'S OWN RECORD WAS DESTROYED ON EVERY RELEASE, BY CONSTRUCTION, IN BOTH
+ * DIRECTIONS.** On a loss `describeBurst` rode in the `error` field — and `reportCartFailure`
+ * keeps the hold `requested` while its window is open, so the slow lane's ~110 retries over the
+ * next twenty minutes each overwrote it. On a WIN it was worse: the summary went only to
+ * `log(...)`, and `report({ ok: true })` carried no burst note at all. The log itself rolls —
+ * `tail-log` is capped at 400 lines AND 16,000 characters with no offset, and on 2026-09-17 the
+ * slow lane consumed the whole window within thirteen minutes.
+ *
+ * Searched at the time, across all history: `'fast attempt'` appeared in **zero** stored
+ * command outputs and **zero** hold notes. In the two weeks the burst had been live it had
+ * never once been observed running. That is not evidence it was broken — it is evidence the
+ * question was unanswerable, which is the same shape as `status = 'sent'` meaning only "Twilio
+ * returned 2xx", and the same remedy PR #169 applied when ramp attributions were being lost to
+ * that identical 16,000-character window: **put the reading in Postgres, where nothing rolls
+ * and no later writer overwrites it.**
+ *
+ * ## AN ABSENT ROW IS THE THIRD READING, AND IT IS THE ONE THE OWNER FEARED
+ *
+ * The runner emits exactly one of these per hold per release pass, and ONLY on the pass that
+ * waited for the release — never on the ~110 ordinary retries behind it. So for a tapped hold
+ * whose release has passed:
+ *
+ *   - a row with `attempts` in the tens  -> the lane ran and lost. We were beaten, or the lock
+ *     never lapsed. NOT a broken burst.
+ *   - a row with `attempts: 1`           -> the lane armed and stopped on RC's first answer.
+ *     `reason` names it: a session fault or a wedged page, not a race.
+ *   - NO ROW AT ALL                      -> the runner never arrived before T. The burst did
+ *     not run, and that is the fault to chase.
+ *
+ * Absence is only a reading because presence is guaranteed on the pass that matters — which is
+ * why the emit is NOT gated on the burst having retried, and why a test pins that.
+ */
+export type CartBurstKind = 'won' | 'raced' | 'stopped-early';
+
+export function cartBurstReading(
+  row: {
+    attempts?: unknown; won?: unknown; firstOffsetMs?: unknown;
+    lastOffsetMs?: unknown; reason?: unknown;
+  } | null | undefined,
+): { kind: CartBurstKind; text: string } {
+  const attempts = Number(row?.attempts);
+  const first = Number(row?.firstOffsetMs);
+  const last = Number(row?.lastOffsetMs);
+  // SIGNED, and a negative one is the finding: `T-14.0s` means we asked BEFORE RC's own
+  // predicted release, which is the only way this project can ever measure an early lapse.
+  const at = (ms: number) => (Number.isFinite(ms) ? `T${ms < 0 ? '-' : '+'}${(Math.abs(ms) / 1000).toFixed(1)}s` : 'T?');
+  // BOTH BRANCHES SAY SOMETHING. The first version dropped the window entirely when an offset
+  // was missing, so "we recorded no timing" and "the timing was not worth showing" rendered
+  // identically — and the timing is the whole reason this instrument exists. An absent reading
+  // has to report itself; silence is the failure this file records more than any other.
+  const span = Number.isFinite(first) || Number.isFinite(last)
+    ? ` from ${at(first)} to ${at(last)}`
+    : ' (no timing recorded)';
+  const n = Number.isFinite(attempts) ? attempts : 0;
+
+  if (row?.won === true) {
+    return {
+      kind: 'won',
+      text: `THE FAST LANE WON IT on attempt ${n} at ${at(last)}. This is the burst doing exactly`
+        + ' what it was built for.',
+    };
+  }
+  // ONE ATTEMPT IS NOT A RACE, and calling it one would send the next reader to RC's side of a
+  // fault that is ours. The lane was armed and something other than "the lock has not lapsed"
+  // ended it on the first answer — a dead session, a wedged page, a WAF refusal.
+  if (n <= 1) {
+    return {
+      kind: 'stopped-early',
+      text: `the lane was ARMED and stopped after one attempt at ${at(last)} — ${String(row?.reason ?? 'no reason recorded')}.`
+        + ' That is not a race we lost; it is the fast lane declining to retry, and the reason names'
+        + ' the fault. Read it before blaming a competitor.',
+    };
+  }
+  return {
+    kind: 'raced',
+    text: `the lane RAN: ${n} attempts${span}, and RC refused every one — ${String(row?.reason ?? 'no reason recorded')}.`
+      + ' So the burst is not broken. Either a competitor was faster than our ~1.5s attempt cycle,'
+      + ' or the lock never lapsed at all and there was nothing to win.',
+  };
+}
+
 export type LoopAnswerKind = 'not-reported' | 'unanswered' | 'rejected' | 'ok' | 'failed' | 'mixed';
 
 export function loopAnswerReading(

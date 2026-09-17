@@ -49,6 +49,7 @@
 import {
   recentBotEvents, requestCountReason, loopAnswerReading, dumpJoinReading, mappedSwarmReading,
   mappedNameReading, busyThreadReading, mappedSpanReading, servicePairReading, spinSiteReading,
+  cartBurstReading,
   type BotEventRow, type RequestCountReason, type BusyThreadKind,
 } from '@/lib/bot-events';
 
@@ -76,17 +77,42 @@ const arg = (name: string, dflt: string): string => {
 const hours = Math.max(1, Number(arg('hours', '72')) || 72);
 const showAll = process.argv.includes('--all');
 
-const [scans, closes, counts, dumps] = await Promise.all([
+const [scans, closes, counts, dumps, bursts] = await Promise.all([
   recentBotEvents('ramp-scan', hours, showAll ? 50 : 3),
   recentBotEvents('tab-close', hours, showAll ? 500 : 40),
   recentBotEvents('request-counts', hours, showAll ? 200 : 40),
   recentBotEvents('mem-dump', hours, showAll ? 50 : 6),
+  recentBotEvents('cart-burst', hours, showAll ? 200 : 40),
 ]);
 
 const pt = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false });
 const d = (row: BotEventRow) => (row.detail ?? {}) as Record<string, unknown>;
 
 console.log(`BOT EVENTS — last ${hours}h\n`);
+
+/**
+ * CART BURSTS FIRST. Every other section here is about a memory leak on a spare machine; this
+ * one is about whether a real person got the campsite they were promised, so it leads.
+ *
+ * AN EMPTY LIST IS NOT AN ALL-CLEAR AND SAYS SO. One row is emitted per hold per release pass
+ * that waited for the release, so for a tapped hold whose release has passed, NO ROW means the
+ * runner never arrived before T — the burst did not run. That is the whole reason this event
+ * exists, and rendering silence as "nothing to report" would destroy it.
+ */
+console.log(`CART BURSTS: ${bursts.length}${showAll ? '' : ' (newest 40; --all for more)'}`);
+if (bursts.length === 0) {
+  console.log('  none in this window. That is ordinary if no tapped hold reached its release —');
+  console.log('  but for a hold that WAS tapped and whose release has passed, an absent row is the');
+  console.log('  finding: the runner never arrived before T and the fast lane never ran. Check');
+  console.log('  rc-holds-readout.mts for a `requested`/`failed` hold in the same window before');
+  console.log('  reading this as quiet. (Boxes older than 2026-09-17 emit nothing either way.)');
+} else {
+  for (const b of bursts) {
+    const x = d(b);
+    console.log(`  ${pt(b.at)}  ${String(x.unit ?? '?')} — ${String(x.releaseAt ?? '?')} PT`);
+    printVerdict('    ', cartBurstReading(x).text);
+  }
+}
 
 console.log(`RAMP SCANS: ${scans.length}${showAll ? '' : ' (newest 3; --all for more)'}`);
 if (scans.length === 0) {

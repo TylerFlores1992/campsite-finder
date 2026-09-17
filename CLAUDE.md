@@ -949,6 +949,49 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
       That matters because the 08-23 failure it describes — a watcher that could not see its
       subject and stayed silent — was caused by using the placeholder TOKEN, not by the endpoint.
       A `Monitor` polling this unauthenticated works, and one was run to green on this very PR.
+      - **AND THE `head_sha` FILTER SILENTLY OMITS RUNS, WHICH IS HOW A WATCHDOG BUILT ON IT
+        STAYS QUIET THROUGH A FAILURE (measured 2026-09-17).** It returns **200 with
+        `total_count: 0`** for a sha whose runs demonstrably exist — three shas checked hours
+        after the fact, two of them `total 0`, while `?branch=<name>` returned every one of
+        them in the same second:
+        ```
+        ?head_sha=2824b06…  total 0   []            <- a run that FAILED at 06:27:40Z
+        ?head_sha=55d5a3e…  total 2   [cancelled, cancelled]
+        ?head_sha=0250fee…  total 0   []
+        ?branch=claude/…    total 50  (all of the above)
+        ```
+        **It cost exactly the failure this bullet says was caused by the token.** A background
+        watch pinned to `head_sha=2824b06` reported nothing for twenty minutes while that run
+        failed; the red was found by hand. **So the endpoint half of the 08-23 story is not
+        retired — it is narrower: the endpoint answers, and this FILTER is the blind one.**
+        - **NOT LAG — those runs were hours old.** And it is not the 40-character trap either
+          (full shas throughout, which is the other recorded way to get `total 0` here).
+        - **THE MECHANISM IS NOT ESTABLISHED. Do not write one in.** No clean pattern separates
+          the two that answered from the two that did not: both populations contain cancelled
+          runs, and both shas were the remote branch head when their runs were created.
+        - **BUILD IT ON `?branch=<name>` AND MATCH THE SHA IN THE RESULTS.** One request, no
+          filter that can silently under-report, and it sees the `pull_request` twin as well —
+          which is the pair that overlaps for 3-301 s on every push.
+        - **AND THE SHAPE, ONCE MORE: a filter returning `total 0` and a subject with no runs
+          are the same reading.** `total_count: 0` from a 200 is an absence, and this file's
+          most expensive recurring error is treating one as a negative.
+        - **AND "THE PUSH RUN CARRIES THE VERDICT" IS FALSE — WHICH TWIN SURVIVES VARIES,
+          MEASURED ON CONSECUTIVE SHAS OF ONE BRANCH, IN BOTH DIRECTIONS.** The concurrency
+          group's key is `github.head_ref || github.ref_name`, which resolves to the same branch
+          for both events, so the twins cancel **each other** and the winner is simply whichever
+          started second:
+          ```
+          2824b06  push          completed  FAILURE      2824b06  pull_request  cancelled
+          8e24174  push          cancelled                8e24174  pull_request  in_progress
+          ```
+          A watch that reads the `push` run reported `cancelled` as the verdict on `8e24174`
+          while the real run was still going — **a false red, from the second version of the
+          same watch.** The rule is **whichever twin is NOT cancelled**.
+        - **BOTH TWINS CANCELLED IS ITS OWN READING AND MUST NOT RENDER AS PENDING.** It means a
+          newer push superseded that sha before either run finished, so it will never get a
+          verdict — i.e. you pushed again while your own CI was running, which `docs/LANES.md`
+          already forbids and which a watch can now say out loud. Two of the four shas on this
+          branch are in that state.
     - **WRITES ARE UNTESTED AND ALMOST CERTAINLY STILL REFUSED.** Public reads are the claim.
       Anything that mutates (a merge, a comment, a dispatch) needs auth and the token is a
       placeholder, so **the MCP tools remain the only write path.** Do not widen this to
@@ -1004,7 +1047,23 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   Supabase and Mapbox all present. They are the **LIVE** keys.
 - **Chromium can't reach Mapbox either** (`ERR_CONNECTION_RESET` — same TLS reset that
   blocks browsing the live site). `NODE_USE_ENV_PROXY=1` does NOT help: it affects
-  Node's fetch, not the browser. So any full-page screenshot renders maps as a blank
+  Node's fetch, not the browser.
+  - **THE MECHANISM NAMED THERE IS WRONG FOR RC, AND THE CONCLUSION HOLDS (re-measured
+    2026-09-17).** `curl https://www.reservecalifornia.com/` answers **200**, and headless
+    Chromium in this container fails on the same URL with **`ERR_CERT_AUTHORITY_INVALID`** in
+    342 ms — a TRUST failure, not a reset. The proxy CA *is* in the system store
+    (`/etc/ssl/certs/ccr-agent-proxy.pem`, and all 154 bundle certs are in
+    `ca-certificates.crt`), so this is Chromium's built-in verifier rather than a missing
+    bundle. **Quote the error you got, not this line.**
+  - **AND CHASING IT IS NOT WORTH IT — the payoff was never TLS-shaped.** The reason to want
+    RC's real page locally is to drive the leak's actual workload instead of a synthetic wedge.
+    It could not: **`js.arcgis.com` is 000**, so the WebGL map that makes RC's SPA what it is
+    would not load; and the production wedge happens during an **Okta navigation**, which needs
+    a real sign-in on the production RC account from an address whose anti-bot posture this file
+    records at length. **The blocker is the authenticated trip, not the certificate**, so fixing
+    the trust store buys a different page rather than the experiment. `scripts/leak-repro.mjs`'s
+    synthetic wedge already drives the named code path (`blink::RejectedPromises::HandlerAdded`)
+    and is as close as a container gets. So any full-page screenshot renders maps as a blank
   grey box, and rec.gov CDN photos likewise — capture those on a real device.
 - **Live site can't be browsed** — the agent proxy resets headless-Chromium TLS. `curl`
   against camphawk.app DOES work and is the way to verify a deploy. To eyeball UI, use
@@ -5242,6 +5301,65 @@ for.) It then produced a clean sign-in for nothing:
   ramped; of the seven `okta=GONE` password trips on record, three did. Quoting either number
   as "the success rate of forcing a ramp" merges a thing we control with a thing we do not.
 
+##### A CAPTCHA STOPPED THE WARM-UP — FIRST ONE ON THIS PATH, AND A REAL HOLD WAS RIDING ON IT (2026-09-17 12:00 UTC)
+The T-3h warm-up fired **on a real user's hold** (`#A124`, rc-357, releasing 15:00 UTC) with all
+four gates read rather than predicted, and was stopped by an image challenge on Okta's email step:
+```
+11:59:39 warming up the session: the release is 180m away and Okta is GONE - signing in now
+11:59:49     -> email field: input[name="identifier"]
+11:59:50     -> ticked "Keep me signed in"
+11:59:50     -> submitting the email (attempt 1) - Enter
+12:00:00     -> Enter did not advance - clicking button[type="submit"] (visible=true enabled=true size=339x46)
+12:00:08     -> x the click FAILED: locator.click: Timeout 8000ms exceeded.
+12:00:08     -> trying a direct DOM click (bypasses actionability checks)...
+12:00:21   x warm-up did not establish an Okta session: a CAPTCHA appeared during sign-in
+```
+- **IT IS THE 2026-08-06 SIGNATURE TO THE LETTER, AND THAT IS WHAT MAKES IT A DIAGNOSIS RATHER
+  THAN A GUESS.** That entry records the control reporting `visible=true enabled=true` while every
+  click times out, *"because the challenge's overlay was swallowing pointer events"*, and concludes
+  **retrying harder can never work**. Today's line is `visible=true enabled=true size=339x46` and an
+  8,000 ms click timeout. The detection `rc-probe.mjs` grew that day is what named it.
+- **FIRST CAPTCHA EVER RECORDED ON THE WARM-UP PATH, and the trip duration says so independently.**
+  All seven warm-up/auto-login `tab-close` rows in `bot_events`:
+  ```
+  09-17 12:00  warmup      42,241 ms   <- the CAPTCHA
+  09-17 04:31  auto-login  45,230 ms   <- the npm test phantom-release fixture
+  09-10 16:59  warmup      16,306 ms   |
+  09-09 05:33  warmup      15,967 ms   |  the three clean password forms
+  09-08 04:49  warmup      15,622 ms   |
+  09-08 03:06  warmup       4,541 ms   <- found a live token and no-opped (the #296 case)
+  09-05 14:42  auto-login  17,165 ms
+  ```
+  **42 s is a new band on this path**, and it is the 8 s click timeout plus the DOM-click fallback
+  plus the detection. The four recorded "misses" were all 15.6-16.3 s CLEAN sign-ins.
+- **SO "THE SCHEDULED REPAIR WILL FIX IT" IS FALSIFIED FOR TODAY, and that sentence was in the
+  handover.** `docs/NEXT-SESSION.md` read *"`maybeAutoLogin` at 14:30 UTC is the designed repair
+  ... **Do not reach for `rc-login.bat` or `test-login`** - both cost the session again and the
+  repair is scheduled."* **`maybeAutoLogin` runs the same `attemptLogin`**, so it will meet the
+  same overlay, spend both attempts, and ring the phone. The repair is not merely late; it is
+  structurally unavailable.
+- **AND THE USUAL REASON TO REFUSE `rc-login.bat` DOES NOT APPLY IN THIS STATE.** This file warns
+  repeatedly that it **force-kills the Chromium the token lives in** - which is why printing it
+  over a healthy session is the 2026-08-16 07:33 cry-wolf. **There is no token to destroy**: the
+  heartbeat reads `no token at all - signed out` and `okta session GONE (404)`, and
+  `session_live_since` has not moved since 10:54 UTC. **A dead session plus a CAPTCHA is the one
+  configuration where the human sign-in is the correct remedy rather than the destructive one**,
+  and it is what the 08-06 design says survives: a human signs in ONCE with "Keep me signed in"
+  ticked, and the bot never lets the session lapse. `rc-login.bat` detects the challenge and waits
+  up to five minutes for a person to solve it (**headful only**).
+- **THE WARM-UP'S TURN IS SPENT AND THE AUTO-LOGIN'S BUDGET IS INTACT** - the log says both in its
+  own words (`the warm-up has already had its 1 turn for this release`; *"The auto-login still has
+  its full budget at T-30"*). So the module's accounting is correct and it is the accounting of a
+  repair that cannot succeed.
+- **IT DID NOT RAMP** (`RAM 10291 -> 10121 MB (-170) => this navigation did NOT ramp`), so it buys
+  nothing for the leak either. The three-way verdict refused to speak, correctly.
+- **WHY NOW IS NOT ESTABLISHED - do not write one in.** The 08-06 entry's own candidate is
+  *repeated fresh-profile logins*, and nothing here has changed its profile. What IS on record for
+  this box today is a network episode (`ERR_NAME_NOT_RESOLVED` at 10:00:46, losing a `tab-close`
+  row outright) and 23 hours of failing renewals - neither of which explains an anti-bot posture.
+  **One CAPTCHA is an event, not an escalation**; the reading that would matter is whether the
+  next unattended sign-in after a human one also meets it.
+
 #### THE STALL TRIGGER FIRED ON ITS FIRST RAMP AND WORKED — AND THE RAMPING RENDERER WOULD NOT ANSWER (2026-09-08 21:43 PT)
 **A natural ramp arrived fifty minutes before the ordered one, and #302's trigger caught it.
 Four consecutive missed ramps end here.** It is also still not a reading, and the reason is new
@@ -5573,10 +5691,17 @@ wedged     page.evaluate -> SILENT
   When a child does not answer inside it the coordinator gives up, returns `success: false`,
   and **emits a process dump for that child anyway — carrying ZERO allocators.** No roots, no
   `shared_memory`, nothing, while its healthy peers contribute normally in the same trace.
-- **SO THE RENDERER IS NOT MISSING FROM THE DUMP. IT IS PRESENT AND EMPTY**, and our fold
-  dropped a process with no allocator dumps, which is why it read as absent. That is the
-  absent-reading-as-a-negative shape **handed over by the tooling**, and it is why 2026-09-08
-  21:43 was written up as a coordination fault worth chasing.
+- ~~**SO THE RENDERER IS NOT MISSING FROM THE DUMP. IT IS PRESENT AND EMPTY**, and our fold
+  dropped a process with no allocator dumps, which is why it read as absent.~~ **TRUE ON
+  LINUX AND FALSE ON THE BOX — measured 2026-09-17 across all three post-fix ramp dumps:
+  `emptyPids` is `[]` and the target is not in `MDPROC` at all, so on 149/Windows the
+  coordinator omits the silent child rather than emitting an empty dump for it.** Struck
+  rather than deleted because it is the sentence that made "our fold dropped it" the fix, and
+  a reader looking for a present-but-empty process on the box will not find one. **The
+  conclusion is untouched: there is no allocator data either way.** The reasoning still names
+  the real hazard — that is the absent-reading-as-a-negative shape **handed over by the
+  tooling**, and it is why 2026-09-08 21:43 was written up as a coordination fault worth
+  chasing.
 - **BOTH OBVIOUS FIXES ARE NOW PROVABLY WORTHLESS RATHER THAN MERELY COSTED.** A longer
   timeout buys an empty dump five seconds sooner; a cheaper level buys the same empty dump.
   **There is no allocator data to be had from a renderer that never emitted any.** The 08-18
@@ -5659,6 +5784,11 @@ the known 9 GB event neither is ~0.**
   have returned `joined` — flipping every future ramp dump from VOID to a verdict that reads
   like an answer. `cause: 'target-empty'` keeps it `void`, and says the shared_memory figure is
   not small but ABSENT.
+  - **IT HAS NEVER FIRED, AND THAT IS NOT A DEFECT — KEEP IT.** Windows omits the silent child
+    entirely (measured 2026-09-17, `emptyPids` `[]` on all three post-fix ramp dumps), so the
+    production cause is always `target-silent` by absence. The branch is the guard against a
+    reading Linux genuinely produces, and deleting it on the strength of never having fired is
+    how the flip-to-`joined` regression gets reintroduced by somebody tidying up.
 
 #### AND THE 32 GiB IS A CEILING, NOT A RUNAWAY — 2^14 EXACTLY
 Eight walks, and the 2-4M population barely moves: **15,499 / 15,663 / 16,219 / 16,385 /
@@ -6035,6 +6165,37 @@ only:
   instrument and plans to read it "in a few hours" should expect that to be true about half the
   time. That is the argument for the forcing recipe existing at all — and not for using it, which
   costs a password submission from an address that has eaten a twelve-hour block.
+
+###### AND THE RANGE IS A MIXTURE OF TWO POPULATIONS WITH DIFFERENT CADENCES (2026-09-17)
+Both corrections above are about the WINDOW. This one is about the POPULATION, and it does not
+fix itself with a longer window. `bail:ramp`'s own `request-counts` splits every ramp cleanly —
+`distinct=16` is the young/cold-load BURST shape, `distinct=76-79` the old-browser one — and
+**they have completely different cadences**, computed over the whole corpus:
+```
+BURST (young, cold RC load)   18 ramps   gaps 1.4h – 37.8h    current gap 46.5h  << OUTSIDE
+OLD browser                    8 ramps   gaps 11.6h – 62.2h   current gap 27.7h  (inside)
+```
+- **SO "2.3-18.6h" IS DOMINATED BY THE BURST POPULATION, which fires 2-3x as often.** Judging a
+  single population's gap against it is comparing one thing to a mixture of two. **On 2026-09-17
+  a 27.7-hour gap read as "outside the recorded range" and as a possible regime change; split, it
+  is squarely inside the surviving population's own range and needs no explanation at all.**
+- **WHAT IS GENUINELY ABSENT IS THE BURST POPULATION — 46.5h against a max of 37.8h**, and it has
+  been noted since its last appearance on 2026-09-15 09:04. That is 69% of all ramps gone, which
+  by itself predicts a ~3x longer POOLED gap — so the pooled figure is not merely a mixture, it
+  is a mixture whose weights have moved.
+- **AND IT DISSOLVES AN APPARENT ANOMALY IN THE PER-TRIP RATE.** 52 Okta trips since the last
+  ramp with none ramping is a **1.1%** outcome at the recorded "at most 1 in 12" — which reads as
+  something having changed. **The bound pools the same two populations**, and the burst one is
+  enriched by browser REPLACEMENT rather than by trips (the 8x association, and `restart-rc` being
+  a forcing lever at all), so the per-trip rate for the surviving population is lower by roughly
+  the population split — **around 1 in 37, where 52 clean trips is a 24% outcome.** Unremarkable.
+  **Do not quote 1-in-12 as a per-trip rate for a specific population**; it is an upper bound over
+  a mixture, and the file already labels it a bound "in a known direction".
+- **THE CONSEQUENCE FOR THE CURE'S PROOF IS THE SHARP PART.** The wedge the cure needs arrives
+  with a ramp, the burst population is the commoner source, and its shape is a COLD RC page load
+  in a fresh browser — which is what `restart-rc` and a box update produce. **So while forcing is
+  held, the proof waits on the population whose gaps run 11.6-62.2 hours.** That is the honest
+  expected wait, not "a few hours".
 
 ###### AND `bot_events` GOES SILENT FOR HOURS WHEN THE SESSION IS HEALTHY (2026-09-10 21:53 UTC)
 Checked for a new ramp and found something better: **the whole event stream had stopped, and that
@@ -7035,6 +7196,39 @@ plain words while a master CI run was in flight:**
 - **IT HAS NOT RUNG, AND THAT IS TIMING RATHER THAN DESIGN.** The alarm also needs a session
   reported dead in the same moment, the feed is polled every 15 s, and the row is deleted a
   statement later. **Do not read "it has never fired" as a guard.**
+- **AND IT IS FAR RARER THAN THIS ENTRY READS — COUNTED 2026-09-17: TWO AUTO-LOGIN TRIPS IN 297
+  HOURS.** `bot_events` holds **427 `tab-close` rows labelled `renewal` and exactly 2 labelled
+  `auto-login`** over twelve and a half days, across dozens of CI runs. The entry above says "the
+  second observed instance", which is right about the count and reads as though every `npm test`
+  produces one. **It does not**, and the reason is structural: `maybeAutoLogin` still requires the
+  token to be genuinely INADEQUATE at that moment, which is a narrow window inside the fixture's
+  own five minutes.
+  - **SO A SESSION CANNOT PUMP CI TO FORCE AN OKTA TRIP, and that question is now closed with a
+    number rather than a worry.** ~0.16 auto-logins per day is not a lever. **Pushing more often
+    does not buy ramps** — which matters, because the temptation while waiting out a drought is to
+    find work that needs a push.
+  - **IT ALSO SHARPENS THE TRIP POOL: ~99.5% of Okta trips are RENEWALS.** The "at most 1 in 12"
+    bound is caveated as pooling auto-login and warm-up trips too; in practice those are a rounding
+    error, so the caveat protects against almost nothing and the bound's real looseness is the
+    POPULATION split, not the trip mix.
+  - **THE DENOMINATOR IS SLIGHTLY TOO SMALL, IN THE SAFE DIRECTION.** A trip killed by a bail runs
+    no `finally` and emits no `tab-close`, so the ~26 ramping trips are missing from those 427.
+    That makes the measured per-trip rate an OVERestimate, which is the direction that cannot
+    flatter the argument above.
+  - **AND THE REAL T-30 AUTO-LOGIN IS ITSELF A COIN FLIP — 1 OF 3 PRIOR RELEASES.** Five real
+    releases fall inside the 297-hour `bot_events` window (09-05, 09-09, 09-15 and today's pair),
+    and the only auto-login trip that pairs with one is **09-05 14:42 against a 15:00 release**,
+    i.e. T-18. **09-09 and 09-15 produced none at all**, because `maybeAutoLogin` stands down when
+    the token already covers the hold — a renewal mints ~60 minutes and the requirement is
+    `LEAD + CART_HOLD_MIN + AUTOLOGIN_MARGIN_MIN` = 60. Whether it fires turns on where the last
+    renewal happened to land.
+    - **SO "the T-30 auto-login is the day's one free ramp trigger" OVERSTATES IT**, and that
+      sentence was in this session's own handover. **A quiet arm at T-30 is the ordinary case, not
+      a fault** — check for an `auto-login` `tab-close` before concluding anything ran.
+    - **ONE CAVEAT, STATED BECAUSE IT CANNOT BE EXCLUDED:** a trip killed by a bail emits no
+      `tab-close`, and 09-15 has a `bail:ramp` sixteen minutes AFTER its release. Its browser age
+      (**6.2 h**) and the timing fit a renewal rather than a T-30 trip, which acts between T-30 and
+      T-0 — so a killed auto-login is unlikely there and is not ruled out.
 - **AND THE DASHBOARD HAS NO SUCH LUCK.** `autocart.rc_session` and the health route's hold counts
   go red for the length of a run — the 2026-08-23 finding recurring through a numeric fixture that
   **#202's `holdsAhead`/`holdsDueWithin` fix cannot see**, because that fix carries `REAL_UNIT` and
@@ -7656,7 +7850,11 @@ being fixed.** The true cure is to stop RC's SPA running unattended for hours, a
 resident page is already REFUSED for a different and still-valid reason (`checkAndReport`'s
 localStorage rule would silence `autocart.rc_session` and the phone alarm permanently).
 
-- **UNPROVEN IN PRODUCTION, and that is the honest state.** Every measurement above is a
+- ~~**UNPROVEN IN PRODUCTION, and that is the honest state.**~~ **IT FIRED ON 2026-09-17 AT
+  09:50:17 UTC — see "IT FIRED" below**, which is the reading this bullet's "HOW TO READ THE FIRST
+  FIRING" was written for, and it matched line for line. Struck rather than deleted because the
+  prediction is what makes the firing legible, and because the platform caveat below it is
+  UNCHANGED: every measurement above is still a
   container-local Chromium against a synthetic wedge. **It is BOT-SIDE, so it is inert until the
   box updates** — confirm with `bot-ask git-status`, never `autocart.bot_version`. **HOW TO READ
   THE FIRST FIRING:** a `♻` line in `logs\rc-keepwarm.log` naming the wedge, then
@@ -7696,6 +7894,34 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
        a different pid from the walk's target, holding 2-18 MB of shared memory — a healthy peer,
        not a renderer holding 16k mappings. That is the `target-silent` shape, and it is now
        countable rather than anecdotal.
+     - **AND THE LEAD PID WAS THE WEAK FORM OF THAT CLAIM. THE TARGET IS ABSENT FROM THE WHOLE
+       DUMP, AND FOUR OF THE FIVE DUMPS COVER THE REST OF THE GENERATION EXACTLY** — parsed out
+       of each event's own `MDPROC` and `CHROME` lines rather than off the lead:
+       ```
+       ramp dump          dump pids in the walk's list      walk TARGET   target in dump?
+       09-07 09:04Z       0 of 7      <- generation mismatch        9912   no
+       09-09 04:43Z       7 of 7                                    7644   no
+       09-10 19:18Z       6 of 7                                   11912   no
+       09-11 05:28Z       8 of 8                                   14676   no
+       09-15 15:16Z       8 of 8                                    5720   no
+       ```
+       So `target-silent` is measured four times rather than argued from one lead pid, and the
+       09-07 VOID is confirmed as the one genuine **generation mismatch** (zero overlap — the
+       bail had already replaced that browser). **The 6-of-7 is not a story**: one dump pid
+       outside the walk's list is a process born or reaped between two scans a minute apart.
+     - **AND THE WEDGED RENDERER IS ABSENT ON WINDOWS, NOT PRESENT-AND-EMPTY — WHICH IS A
+       PLATFORM DIVERGENCE FROM THE PROBE THAT SETTLED THIS.** `dump-wedge-probe.mjs` measured,
+       on Linux, that the coordinator gives up on a silent child and **emits a process dump for
+       it anyway, carrying ZERO allocators** — the reading that made "our fold dropped it" the
+       fix. On the box the target is simply not in `MDPROC` at all, and **`emptyPids` is `[]` on
+       every post-fix dump** (09-10, 09-11, 09-15 — the three taken after the fold was taught to
+       record empty processes). So **`cause: 'target-empty'` has never fired in production and
+       cannot be relied on**; the honest production cause is `target-silent` by absence, which is
+       what `dumpJoinReading` already returns.
+       - **THE CONCLUSION IS UNTOUCHED AND ONLY THE MECHANISM MOVES: there is no allocator data
+         either way.** Do not read this as reopening the dump — it is the same closed question
+         with a Windows-shaped answer, and it is the third time a finding validated in the dev
+         container has not transferred verbatim to 149/Windows.
      - **FOUR OF THE FIVE SPENT 15-20 SECONDS WAITING.** `no answer in 20000ms` three times and
        `Chromium refused the dump (success: false)` at 15,367 ms once — the coordinator's own
        ~15,050 ms give-up. **Those are LOWER bounds on unbroken silence, not measurements of it:
@@ -7770,17 +7996,301 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
      bail whose diagnostics are the whole point of escalating. `supervise.ps1`'s
      five-exits-in-ten-minutes rule cannot catch it either, because the process never exits.
      Reachable during an RC outage, which is a state this file records three times.
-     **RECORDED, NOT FIXED.** The honest repair is a counter that survives a reopen and
-     **DECAYS** — reset after a stretch of healthy page, not after every reopen — which
-     satisfies both the comment's concern and the budget's. That is the same shape as the
-     repair for (1) above, it is bot-side, it is on the one path between a queued hold and a
-     cart, and it was found fourteen hours before a release. Neither is a drive-by.
+     ~~**RECORDED, NOT FIXED.**~~ **FIXED THE SAME DAY**, once forcing a ramp turned out to be
+     unavailable and the wait had nothing left to spend. The repair is exactly the one named
+     here — a counter that survives a reopen and **DECAYS** — as `decayedRecycles` +
+     `WEDGE_RECYCLE_DECAY_MS` (30 m) in `page-wedge.mjs`, read at the DECISION site rather than
+     only at the reset so a long-lived healthy browser hands the budget back without needing a
+     reopen to do it. **A count with no timestamp is NOT decayed**: that is an absent reading
+     about WHEN, and a budget whose job is stopping a loop fails safe by being preserved.
+     - **THE WINDOW IS BOUNDED BY TWO MEASURED NUMBERS RATHER THAN CHOSEN.** Below, it must
+       clear one episode (`WEDGE_PROBE_EVERY_MS` x `WEDGE_STRIKES` ~ 30 s) or the budget decays
+       between the strikes that make one and can never reach three. Above, it must stay under
+       the **shortest observed gap between ramps — 2.3 h over eleven onsets across four days**
+       — or two unrelated ramps accumulate against each other and the arm retires on events
+       that had nothing to do with one another.
+     - **AND A PRE-EXISTING GUARD REQUIRED THE BUG, which is why this could not be a quiet
+       edit.** *"the strike and recycle state resets per browser life"* pinned the zeroing
+       literal by exact expression, so the fix could not be made without it going red — the
+       `held-offer-scope` shape. **Inverted with the reason written in, not relaxed**, and the
+       half it was right about is kept and asserted separately: strikes MUST still reset,
+       because they describe a page that no longer exists.
+     - Nine mutations, each asserted to APPLY and each caught — including the reset zeroing the
+       budget (the bug verbatim), the decision reading the raw field (fix-present-and-inert),
+       an undateable budget cleared, the recycle forgetting to stamp its time (the opposite
+       failure: a budget with no clock is permanent), the window pushed past 2.3 h, and strikes
+       carried across a reopen. **Guards under `src/`, in neither of `worker-deploy.yml`'s
+       `paths:` lists — read, not remembered — so it fires no worker deploy. Bot-side, so it is
+       inert until the box updates.**
   2. **THE ARM IS SILENT ON THE HEALTHY PATH, so "ran and found the page alive" and "never ran"
      write the same nothing.** That is the house shape, accepted here only because the
      discriminator is free: the arm runs unconditionally on every tick while not bailing, so
      **`bot-ask git-status` showing the new sha rules out "never ran"** without a log line. What
      it cannot separate is `alive` from `inconclusive`; that is worth one line only if a later
      firing is genuinely ambiguous.
+##### IT FIRED — 2026-09-17 09:50:17 UTC, ON A GENUINE BURST WEDGE, AND NO RAMP FOLLOWED
+**First production firing. `wedge-recycle` events, all time: 1.** Against the predictions written
+before it, the log is a line-for-line match — the `♻`, the close, the reopen, and **no `✗ RAMP`
+and no `✗ WEDGED` beneath it**:
+```
+09:39:39  the previous keep-warm's last line — the process then stopped, with no bail line
+09:41:07  [stop-all] "nothing running."  →  start-all launches a fresh generation
+09:42-48  … profile busy (rc-keepwarm) — the dead process's UNRELEASED lock, timing out
+09:49:35  RC loaded and STAYING OPEN — token source: live
+09:50:15 ♻ no answer in 3 consecutive probes — recycling the resident page
+09:50:17   token on the way out: timeout
+09:50:17   closed the wedged page in 596ms — the loop reopens from here
+09:50:18   ✗ could not open a renewal tab: Target.createTarget … the browser may be unwell
+09:50:19 ⚠ the RC window was closed — reopening it
+09:50:37 RC loaded and STAYING OPEN — token source: none
+09:50:50 ⚠ RC SESSION IS DEAD … okta session GONE (404)
+```
+- **IT WAS A GENUINE BURST WEDGE, NOT A PAGE STILL LOADING.** The `request-counts` event carries
+  **30,631 asks on `futurebookingstartsendsdates` in a browser 44.6 SECONDS OLD**, `distinct: 16`,
+  `statuses: {}` — ~687/s, inside the recorded 738-848/s band, and the answer-less branch for the
+  **fourth** time. That is the young/cold-load BURST population exactly.
+- **AND THAT POPULATION IS BACK AFTER 46.5 HOURS**, which was its longest recorded absence against
+  a prior maximum of 37.8h. The 09-17 reading that called it "outside the recorded range" needed
+  no explanation after all; it simply had not arrived yet.
+- **NO RAMP. `commit_used_mb` 6,631 → 7,924 → 6,938; `rc_mb` peaked at 220 MB**; no `ramp-scan`,
+  no `bail:ramp`, no `mem-dump` with `phase: ramp`. **DO NOT CLAIM THE CURE PREVENTED ONE.** A
+  burst at full rate costing nothing is a documented, OBSERVED outcome — 2026-09-05 09:47 ran
+  19,008 hits in 120 s on a browser 0 m old with the series flat at 208-227 MB. This event cannot
+  separate *the page was closed before the mapping completed* from *this burst was never going to
+  map anything*, and the burst/leak decoupling says both are real.
+- ~~**THE CLOSE TOOK 596 ms, WHICH IS INDEPENDENT CORROBORATION.** Against **8-16 ms across 430
+  healthy production closes** and 86-2,532 ms for the container's wedged closes, it is squarely in
+  the wedged band — so the page really was wedged, measured by something that is not the probe.~~
+  **THE CORPUS CONTAINED ITS OWN REFUTATION AND THE CITATION QUOTED AROUND IT (2026-09-17).**
+  `8-16 ms` is min/median/p95; **that same corpus's MAX is 628 ms**, written down in the entry
+  being cited. So 596 ms is not above the healthy range — it is **below its maximum**, and the
+  comparison cannot discriminate. Struck rather than deleted, because "independent corroboration"
+  is exactly the phrase a later reader quotes.
+  - **THE DISTRIBUTION IS BIMODAL WITH NOTHING IN THE MIDDLE, WHICH IS WHY IT LOOKED
+    DISCRIMINATING.** Over **435** tab-closes: min 8, p50 14, p90 15, p95 16, **p99 22** — and
+    then **four** at 602 / 608 / 625 / 628. **Nothing between 22 ms and 602 ms.** So a 596 ms
+    close IS unusual (4 in 435); what it is not is unique to a wedge.
+  - **AND THE FOUR SHARE A TRIP TYPE RATHER THAN A FAULT: every one is a renewal whose trip ran
+    11,413-11,711 ms**, i.e. the `no-signin-control` band that never reaches Okta. Split on trip
+    length: trips **>=20 s** (n=416) average **14 ms**, max **22**; trips **<20 s** (n=19)
+    average **139 ms**, max **628**. **They are not clustered in time either** — 09-08 17:34,
+    09-09 18:32, 09-17 03:13, 09-17 04:29 — so this is not the box's 09-17 network trouble.
+  - **CANDIDATE, LABELLED: `closeMs` measures how BUSY the page is, not whether it is wedged.**
+    An 11-second trip closes a tab 11 seconds old, still loading RC's SPA; a 69-second trip closes
+    one that has been through Okta and back. **The wedge-recycle's page was 40 seconds old and in
+    a 30,631-request burst**, so it fits the young-and-busy population — which is what the request
+    counter already said. That makes 596 ms **consistent with the burst**, not a second and
+    independent line of evidence.
+  - **WHAT STILL CARRIES THE WEDGE IS UNAFFECTED**, and it is the two bullets below: the browser
+    context was already CLOSED one second later (`Target.createTarget` failed), and `primeToken`
+    had answered a main-thread `page.evaluate` ~25 seconds earlier before the page went
+    permanently silent. Neither depends on `closeMs`.
+
+**THREE THINGS NOBODY PREDICTED, AND THE SECOND IS THE ONE THAT SETTLES THE FALSE-POSITIVE
+QUESTION.**
+1. **`token on the way out: timeout`** — `persistLiveToken` is bounded at 2 s and was defeated by
+   the very wedge it runs before. **A page too wedged to answer a probe is too wedged to hand over
+   its token.** The bound did its job; what is not available is the token. Do not "fix" this by
+   lengthening it — an unbounded persist inherits the hang and delays releasing the profile lock,
+   which is what loses a cart at 08:00.
+2. **THE BROWSER WAS UNWELL INDEPENDENTLY OF OUR CLOSE.** One second later `browserContext.newPage`
+   failed with `Target.createTarget`, and the loop's own check found the context **already
+   CLOSED**. Closing one page of a persistent context does not close the context, so the browser
+   was going down on its own. That is the strongest single fact against reading this as a false
+   positive on a page still rendering RC's WebGL map.
+3. **THE PAGE WAS FORTY SECONDS OLD.** Loaded 09:49:35, three strikes by 09:50:15 — so probes began
+   failing about ten seconds after load. The 3 × 10 s design is the whole reason it acted at 30 s
+   rather than instantly.
+
+**AND THE PAGE ANSWERED A MAIN-THREAD EVALUATE MOMENTS BEFORE IT WENT SILENT, WHICH IS THE
+STRONGEST FACT AGAINST THE FALSE-POSITIVE READING.** `token source: live` is `primeToken` →
+`readLiveToken` → `evaluateWithin`, i.e. `page.evaluate`, i.e. `Runtime.evaluate` — **the same
+main-thread-bound call the cure's probe makes**. `primeToken` polls for up to 15 s and returns
+what it has at the deadline, so the last known-answering moment is somewhere in
+**09:49:20-09:49:35**, and the first silent probe is ~09:49:45. **The page went from answering to
+permanently silent inside about twenty-five seconds, bounded.** A page merely busy with RC's
+initial WebGL render does not answer `Runtime.evaluate` and then stop; it has not answered yet.
+
+**AND `token source: none` ALONE WOULD NOT HAVE ESTABLISHED THAT THE SESSION WAS LOST** — that is
+exactly the reading `readLiveToken`'s own comment says collapses "no token" into "we could not
+tell". What settles it is that the REPLACEMENT browser is demonstrably healthy: a baseline memory
+dump answered **in 229 ms** at 09:53:31, and `okta session GONE (404)` is an HTTP answer rather
+than an evaluate. Two instruments that do not share the wedged page's failure mode.
+
+**AND THE CURE IS A WEDGE DETECTOR, WHICH IS A CAPABILITY NOTHING HAD BEFORE.** Until now a wedge
+was only ever INFERRED — from a ramp, or from `HUNG_MS` firing twelve minutes later. This is the
+first time one has been observed **directly, and in the absence of a ramp**. So the reading it
+buys is new: **a burst can wedge a page without producing a 32 GiB mapping.**
+- **CAUSALITY IS NOT ESTABLISHED, AND THE KNOWN MECHANISM RUNS ONE WAY.** `statuses: {}` over
+  30,631 asks is 30,631 **rejected** fetches, and `blink::RejectedPromises::HandlerAdded` is
+  driven by promise rejection — so the burst feeding the spin is the documented chain. Which came
+  first is not in this event, and *"the page wedged and the SPA's retry loop is what a wedged page
+  does"* fits it just as well. **Do not write one in.**
+- **IT ALSO MEANS THE CURE'S EVENTS ARE NOW THE ONLY CENSUS OF WEDGES.** A wedge the cure wins
+  produces no `bail:ramp`, no `ramp-scan` and no `mem-dump` — so counting `wedge-recycle` rows is
+  the only way anyone will ever know how often this happens. **A quiet `bot_events` is no longer
+  evidence that the box is quiet.**
+
+**AND IT IS THE FIRST PRODUCTION CONFIRMATION OF THE REOPEN MECHANISM, which is not the one the
+module's own header claims.** `⚠ the RC window was closed — reopening it` is the explicit
+`!ctx.pages().length || page.isClosed()` check at the top of the 1-second loop — the line recorded
+as load-bearing-by-accident, written for "somebody tidying up closed the visible window". Nothing
+propagated out of a caught await; the check is what saw it, and the loop was back on a fresh page
+in **twenty seconds**.
+
+**THE COST, STATED PLAINLY — AND THE COUNTERFACTUAL WITH IT.** The session went `src=live` →
+`src=none` and Okta went ALIVE (exp 21:29:33) → **GONE(404)**, so a real user hold releasing at
+15:00 UTC now needs `maybeAutoLogin`'s full password variant at T−30.
+- **The cure did not lose a token that was otherwise recoverable.** The token lived in page memory
+  (`src=live` is the capture hook reading RC's own outbound header, which is per-page), the page
+  was wedged, and the only alternative was `HUNG_MS` closing the same browser **eleven minutes
+  later** and losing the same token.
+- **`idx` — Okta's session cookie — IS ABSENT from the new profile's list** (`DT, [opaque], ln,
+  [opaque], luf_*, JSESSIONID`), where the 2026-08-19 census had it. **Whether it is session-scoped
+  and cannot survive a browser generation change, or simply reached its absolute cap, is NOT
+  established.** It matters: the first reading would mean every `restart-rc`/`stop-all` costs the
+  OKTA session and not merely the token — which `restart-rc.ps1` already asserts in its own output
+  (*"the RC session is GONE until maybeAutoLogin runs"*) without anyone having named the mechanism.
+  **That wording is ambiguous and is NOT evidence either way**: "the RC session" may mean the
+  token, which certainly dies with the page.
+  - **WHAT THE PROFILE DOES SAY: persistent cookies survive a generation change and `idx` did
+    not.** `DT` came back with **527,588 minutes** on it (~366 days) and `luf_*` with 42,538
+    (~29.5 days), read off the new browser — so the on-disk jar is intact and a persistent `idx`
+    would have been in it. The 2026-08-19 census listed `idx` while a session was live; today's
+    lists it nowhere while the session is dead.
+  - **THE DISCRIMINATOR COSTS NOTHING AND ARRIVES BY ITSELF — do not build an experiment for it.**
+    `maybeAutoLogin` restores Okta at T−30. **The next browser generation change after that
+    answers it**: Okta still ALIVE across a `restart-rc`, an update's `stop-all` or a cure-driven
+    reopen ⇒ `idx` is persistent and 09:50 was the absolute cap; Okta GONE again ⇒ `idx` is
+    session-scoped and **every restart costs the Okta session**, which is a materially higher
+    price than the box's own scripts currently put on one.
+
+**AND THE DENOMINATOR IS A MEASUREMENT NOW, NOT AN ESTIMATE — IT IS ONE FIRING IN EIGHTEEN
+BROWSER LIVES.** `mem-dump` with `phase: baseline` fires once per browser life about three minutes
+in, so counting them counts lives. Since the cure reached the box at 2026-09-16 21:50:59 UTC there
+are **17 baselines, every one a distinct lead pid**, plus the wedged life that died at 0.7 min and
+never reached its baseline.
+```
+09-16 21:56 … 04:05   SIXTEEN lives in 6h11m   <- the forced-restart campaign and the box update
+09-17 04:05 → 09:41   ONE life, 5h34m          <- old-population band, and it did not ramp
+09-17 09:49 → 09:50   0.7 min                  <- the wedge
+09-17 09:53 …         the current browser, pid 9740
+```
+- **`request-counts` IS A BAD CENSUS OF BROWSER LIVES AND `mem-dump baseline` IS A GOOD ONE.**
+  Only **two** `request-counts` rows exist across those eighteen lives — one `teardown` and the
+  `wedge-recycle`. So **sixteen of eighteen lives ended in a way that ran no `finally`**: a killed
+  process, not a teardown. Anyone sizing anything per-browser-life off `request-counts` will be out
+  by an order of magnitude.
+- It also tightens the false-positive claim: **seventeen lives ran three minutes or more with no
+  firing**, which is the same fact as "~2,400 probes with no run of three" counted by subject
+  instead of by tick.
+
+**TWO FREE READINGS RODE ALONG.**
+- **THE BLIND PER-PROCESS SCAN CLEARED WITH THE GENERATION CHANGE.** `rc_mb` was NULL through
+  09:38, read **`rc=0 procs=0`** from 09:41:11 (the scan RAN and found none of ours — the third
+  state the `C|` count exists to keep apart) and real figures from 09:51. So the 14-hour blindness
+  was about the browser generation, and a restart ended it. That was recorded as a free experiment
+  riding on work that was happening anyway; it answered.
+- **`[stop-all] nothing running.` WAS CORRECT HERE, NOT BLIND** — `rc=0 procs=0` at 09:41:11 and
+  no orphan-sweep line at 09:49:34 both say the old browser was already gone. **Do not file this
+  as another elevation-blindness sighting.**
+
+**WHAT KILLED THE PREVIOUS KEEP-WARM AT ~09:40 IS NOT ESTABLISHED — do not write one in.** What
+bounds it: it stopped logging at 09:39:39 with **no bail line**, its browser was gone by 09:41:11,
+`restarts.log` carries no stop entry for it, and **its profile lock was never released** (eight
+minutes of `profile busy` until `STALE_MS` expired at ~09:49:39). A clean exit releases that lock
+and the crash handlers added on 2026-08-30 release it too, so this was neither — which points at a
+hard kill or a fault that ran no handler. The box did **not** update (`git-status` reads
+`HEAD 6fc7292 on master`, unchanged) and `auto-update.log` shows the guard **correctly refusing
+every run** that night — `SKIP - a hold releases in 5.3h`.
+
+
+##### AND THE LOG CARRIES TWO MORE THINGS: THE REOPEN, AND A BLIP THAT DELETES `tab-close` ROWS
+Pulled at 10:20 with `tail-log rc-keepwarm:400`, which still reached back to 09:29 — the colon is
+what made the firing and the two hours after it readable in one call.
+
+**THE REOPEN MECHANISM FIRED IN PRODUCTION FOR THE FIRST TIME, AND IT IS THE BORROWED ONE.**
+```
+09:50:17   closed the wedged page in 596ms — the loop reopens from here
+09:50:18 renewing the session — the app holds no usable token (src=none)
+09:50:18   x could not open a renewal tab: browserContext.newPage: Protocol error
+           (Target.createTarget): Failed to open a new tab — the browser may be unwell
+09:50:18 check failed: page.evaluate: Target page, context or browser has been closed
+09:50:19 (warn) the RC window was closed — reopening it        <- the explicit isClosed() check
+09:50:21   alloc trail: resident renderer armed
+09:50:37 RC loaded and STAYING OPEN — token source: none
+```
+CLAUDE.md records that `recycleWedgedPage`'s own header describes a mechanism that **does not
+exist** (every page-touching await in the loop is individually `.catch()`ed, so nothing propagates
+out), and that what actually reopens is the `if (!ctx.pages().length || page.isClosed()) break`
+at the top of the 1-second loop — a line written months earlier for *"somebody tidying up closed
+the visible window"*. **That line is what ran, two seconds after the close, and the browser was
+back with a loaded page in twenty.** The reasoning was traced in source and is now observed.
+
+**A BOX NETWORK BLIP DELETES A `tab-close` ROW, AND IT IS INVISIBLE IN `bot_events`.**
+```
+10:00:46 renewing the session — the app holds no usable token (src=none)
+10:00:46   renew failed: page.goto: net::ERR_NAME_NOT_RESOLVED at https://www.reservecalifornia.com/
+10:00:56   okta session unknown
+10:00:56   (could not report session health: fetch failed)
+10:00:56   (could not store the tab-close event: fetch failed)
+```
+`ERR_NAME_NOT_RESOLVED` is DNS failing **on the box**, not RC refusing us — and `camphawk.app` was
+unreachable in the same second, which is what settles it: two different hosts, one instant.
+- **SO A TRIP RAN AND `bot_events` HAS NO ROW FOR IT.** The table's gap across this period is
+  **04:31:56 → 10:12:03, 340 minutes**, and at least one renewal demonstrably happened inside it.
+  **That gap is an UPPER BOUND on the stand-down, never a measurement of it.**
+- **IT IS A SECOND EXCEPTION TO A RULE THIS FILE STATES WITH ONLY ONE.** The recorded rule is that
+  no `tab-close` is positive evidence no trip ran, *"with one exception: a process KILLED mid-trip
+  runs no `finally` and emits nothing"* — and that one is separable, because a bail emits its own
+  `request-counts` and `ramp-scan`. **A network blip emits nothing in either stream**, so it is the
+  worse of the two and it was not on the list.
+- **THE DISCRIMINATOR IS FREE AND RETROSPECTIVE: THE MEMORY SERIES' CADENCE.** `bot.mjs` is a
+  different process and posts every two minutes, and it lost the same tick —
+  `09:59:18 → 10:02:59` is **221 s** against a steady 120 either side. So a blip WIDENS a gap in
+  `chromium_memory_samples` while deleting a row outright in `bot_events`. **Before reading a
+  `tab-close` gap as a stand-down, diff the sample timestamps across it.**
+- **AND IT RESCUES THE 2026-09-11 OVERNIGHT READING RATHER THAN WEAKENING IT.** That entry treats
+  ten hours of `bot_events` silence as proof the token never lapsed, corroborated by *"312 samples
+  across the same window"*. Mere presence would not have been enough — **the cadence is what rules
+  a blip out**, and at 312 samples in ten hours it is unbroken.
+
+**OKTA'S ABSOLUTE CAP LAPSED INSIDE A 21-MINUTE BRACKET: ALIVE at 09:29:33 (`exp 21:29:33`, i.e.
+the rolling +12.0000h our own probe refreshes), GONE(404) at 09:50:50.** The bracket contains both
+the ~09:40 keep-warm death and the cure, and **neither is implicated** — the recorded finding is
+that the cap runs on its own schedule and our probing cannot move it. It does not pin the cap's
+origin either, because when that session was established is not in this window. Recorded as a
+bracket, not a mechanism.
+
+
+##### A WORKING CURE SILENCES EVERY OTHER RAMP INSTRUMENT — read that as success, not regression (2026-09-17)
+Read out of the box's own `6fc7292` rather than reasoned: the watchdog timer's arms are, in
+order, the **mem-dump stall trigger** (line 2959, `stalledMs > MEM_DUMP_STALL_MS`, 90 s), **the
+cure** (2986), **`HUNG_MS`** (3022, 12 min) and **the ramp bail** (3049, 120 s stall + 3,000 MB).
+So the cure precedes both exits — which is the ordering it needs — **and it also precedes the
+only thing that fires the ramp dump.**
+- **THE CURE ACTS AT ~30 s AND EVERY OTHER RAMP INSTRUMENT NEEDS 90-120 s.** A firing closes the
+  page, the loop reopens, `lastTick` advances and `stalledMs` resets — so **no `mem-dump` with
+  `phase: ramp`, no `bail:ramp`, and no `request-counts` with `reason: 'bail:ramp'`** for an
+  event the cure wins.
+- **AND `ramp-scan` GOES TOO, THOUGH IT IS A DIFFERENT PROCESS.** `bot.mjs` triggers the region
+  walk off `RAMP_SCAN_MB` (3,000) / `RAMP_SCAN_COMMIT_MB` (9,000). The 32 GiB mapping lands in
+  ≤34 s, so the COMMIT bar may still be crossed — but `rc_mb` is private bytes, which climb over
+  ~10 minutes, so a page closed at 30 s plausibly never reaches 3,000 MB. **Expect the walk to
+  become rare or absent.**
+- **SO A WORKING CURE MAKES THE BOX GO QUIET IN EXACTLY THE WAY "NOTHING IS HAPPENING" LOOKS.**
+  The ONLY positive evidence of a firing is the `wedge-recycle` event and the log lines beneath
+  it. **Do not read the disappearance of `bail:ramp`, `mem-dump phase=ramp` or `ramp-scan` as an
+  instrument regressing** — check `wedge-recycle` first, and remember that a `bail:ramp` and a
+  `wedge-recycle` for one event are mutually exclusive by construction.
+- **THE DUMP IS NO LOSS, AND THAT IS MEASURED RATHER THAN CONSOLING.** All four stored `ramp`
+  dumps are `target-silent`: a wedged renderer contributes **zero allocator dumps** at every
+  level, settled off-box by `dump-wedge-probe.mjs`. The instrument the cure pre-empts is the one
+  that has never been able to answer.
+- **WHAT IS GENUINELY LOST IS THE REGION WALK'S CONFIRMATION**, which is twelve-for-twelve on the
+  same signature and needs no repeating. **If a walk is ever wanted again, the way to get one is
+  to raise `WEDGE_STRIKES` deliberately for a run** — not to wonder why the walks stopped.
+
 - **AND A PROBE THAT KEEPS ANSWERING THROUGH A RAMP WOULD BE A FINDING, NOT A BROKEN ARM.** It
   would mean the mapping happens while the resident page is still responsive to CDP, against the
   09-09 VMTHREAD reading (main thread `Running`, 1,203 ms of a 1,200 ms window, four for four) and
@@ -10953,7 +11463,1506 @@ box's own log, with a real user's hold queued for the next morning:
 `⚠ RC SESSION IS DEAD … okta session STILL ALIVE` — the documented ~96%-failure steady state,
 not a new fault. **Nine trials, nine misses; the cure remains unproven in production.**
 
+### THE RAMPS STOPPED BEFORE THE CURE DID, AND THE RENEWAL NEVER REACHES OKTA (2026-09-17)
+
+Asked to prove the page-wedge cure in production. **It has still never fired — `wedge-recycle`
+events, all time: ZERO** — and the reason is not that it is broken. It is that **there have been
+no ramps for 23.5 hours**, and the last one predates the cure by eighteen.
+
+```
+last sample over 1500 MB   09-16 03:51   4,692 MB   pid 336      <- 23.5h ago
+last bail:ramp             09-16 03:52:51                        <- 18h BEFORE the cure
+cure live                  09-16 21:50:59  (box took 6fc7292)
+wedge-recycle events       0, all time
+```
+
+- **THE ARM IS RUNNING — that is structural, not hopeful.** `git merge-base --is-ancestor
+  e92a5a6 6fc7292` is true, so the box's HEAD contains the cure, and the arm is unconditional in
+  the watchdog timer (`!bailing && !wedge.inFlight && now - lastProbe >= WEDGE_PROBE_EVERY_MS`).
+  So "the arm never ran" is ruled out by the sha; what is missing is an EVENT.
+- **DO NOT READ THE QUIET SERIES AS THE CURE WORKING.** A ~30 s cure can fit between two
+  two-minute samples — but it would still emit `request-counts` with `reason: 'wedge-recycle'`,
+  which is in Postgres and cannot roll out of a log window. Zero of those and zero `bail:ramp` is
+  **no event**, not a silent success.
+- **AND THE DETECTOR WAS VALIDATED BEFORE THE ZERO WAS BELIEVED**, because "my query is blind"
+  and "the cure never fired" are the same reading otherwise — the house shape. `detail->>'reason'`
+  resolves on **5 of 5** stored `request-counts` rows (`teardown`, `bail:ramp`), and the
+  keep-warm emits the literal `snapshot({ reason: 'wedge-recycle' })` that the query matches. So
+  the zero is about the subject, not the instrument. That query is the first one to run, and it is the one this
+  session should have run before spending two forcing attempts on the memory series.
+
+#### THE RENEWAL ENDS AT `no-signin-control`, SO NOTHING NAVIGATES TO OKTA
+Straight off `tail-log rc-keepwarm`:
+```
+03:12:53 renewing the session — the token has -2m left (src=live)
+03:13:04   ✗ no fresher token (none → none), got as far as: no-signin-control
+03:13:04     cleared 3 storage key(s): accessToken, okta-original-uri-storage, ssoAccessToken
+```
+**`no-signin-control` means the click stage found no sign-in anchor, so the trip never left RC.**
+The 2026-08-18 controlled comparison is exactly this cell: three token-less renewals ten minutes
+apart, and the two that reached `no-signin-control` **allocated nothing** while the one that
+clicked through to Okta cost 2,331 MB. **The Okta navigation is the ESTABLISHED trigger, and it
+is not happening.**
+- **WHY the SPA renders signed-in is the mechanism, and it is NOT established here.** `src=live`
+  means `window.__camphawkRcToken` held a token off RC's own outbound header, so the SPA looks
+  signed in and shows no "Log in" anchor — even with the stored token expired (`-2m`, then
+  `-13m`). Consistent with the 08-22 finding that the stale token comes from the SERVER, and
+  **not demonstrated to be the same thing.** Do not write one in.
+
+#### WHAT IS PROVEN TONIGHT, AND WHAT THE PROOF IS GATED ON
+Re-run against master `be77157` — `node scripts/leak-repro.mjs wedge-and-fetch 30 --fix`:
+```
+series 2s:49 … 30s:1582      pid=542 renderer 2MiB=1582 (3.09 GiB)
+                             pid=501 browser 0    pid=521 utility 0
+VERDICT: peak 2 MiB shared mappings in any renderer = 1582  <<< CLIMBING — reproduces
+FIX: probe=wedged strikes=3 act=recycle after 6004ms
+FIX: mappings 1877 -> 0 in 2532ms   <<< CURED
+```
+**Browser 0 and utility 0 against a renderer at 3.09 GiB is the production peer asymmetry**
+(14,721 handles in the target renderer against 1,224 in the browser), so the reproduction is
+still reproducing the right thing, and the cure still releases everything — 3.67 GiB in 2.5 s
+from a renderer whose main thread would not answer a single CDP call.
+- **THE PLATFORM CAVEAT IS UNCHANGED AND IS THE WHOLE REASON THIS IS NOT THE PROOF.** Chromium
+  141/Linux against a 149/Windows box, which is the pair that burned the native sampler twice.
+- **SO THE PRODUCTION PROOF IS GATED ON A PRECONDITION WE DO NOT CONTROL**, and the chain is
+  worth stating once: a wedge needs an Okta trip that struggles → an Okta trip needs the SPA to
+  render signed out → that needs `okta=GONE` → which is the ABSOLUTE cap, not the rolling window,
+  and our own probe refreshes the rolling one. **No lever shortens it.** The one origin
+  observation on record (2026-08-19) put the cap **19h37m after the sign-in**, which against the
+  22:49 rehearsal would be ~18:26 UTC on 09-17 — **arithmetic on a single observation that this
+  file explicitly records as NOT established, quoted here only as an order of magnitude.**
+- **THE RECIPE, once `okta=GONE` AND the token is dead:** `scripts/rc-test-hold.mts --in 120`,
+  which opens the T−3h..T−30 warm-up window at once with ninety minutes of margin, then delete
+  the hold as soon as the trip is under way so nothing is ever carted. **It refuses while a real
+  hold is live**, so it is blocked until `#A124` releases at 2026-09-17 08:00 PT.
+- **DO NOT SPEND `test-login` WHILE OKTA IS ALIVE.** It forces `prompt=login` by interception, so
+  it does navigate — but Okta answers it from the cookie (09-07: eleven seconds, +24 MB), which
+  is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
+  A password submission from an address that has eaten a twelve-hour block, for a few per cent.
+
+#### THE PROCESS SCAN WENT BLIND AT 04:15, AND IT DISABLES EVERY MEMORY ARM BUT NOT THE CURE
+`chromium_memory_samples.rc_mb` has read **NULL since 09-17 04:15:31** — 11 nulls in 24 hours and
+ten of them consecutive — while `commit_used_mb` keeps arriving (7,035-7,201 MB). So the
+PowerShell runs and the OS figures come back; only the per-process scan produces nothing. That is
+the 2026-08-15 fix behaving correctly: **a scan that ran while blind to some processes reverts to
+NULL rather than writing a zero it did not measure.** One sample at 04:27:32 read a genuine
+`rc_mb 0, rc_procs 0` (the `C|` count, "ran and found none of ours"), which is the third state
+that entry exists to keep apart.
+- **`bot-ask memory` SAYS `OURS 0 … CHROME 8` WHILE THE KEEP-WARM IS DEMONSTRABLY HEALTHY** — its
+  own log at 04:31:54 carries a full RC load, a 193-response network trace and a native
+  allocation sample, all of which need a live browser and a live CDP session. So our Chromium is
+  among those eight with an unreadable command line, not absent. **Do not read `OURS 0` as "the
+  browser is gone"** — read the keep-warm's log, which is what settled it here.
+- **THE CONSEQUENCE IS SHARPER THAN A MISSING DASHBOARD, AND IT WAS READ IN SOURCE RATHER THAN
+  INFERRED.** `readLatestMemory` returns `known: false` on a null rc figure, and
+  `maybeMemoryDump`'s second line is `if (!forcedPhase && !memory?.known) return;`. So:
+  ```
+  DISABLED   the ramp arm (rampBailDecision needs a known reading)
+  DISABLED   ramp-scan and its region walk (triggered off the same figure, in bot.mjs)
+  DISABLED   the BASELINE memory dump - none since 04:05:55, across three browser lives
+  DISABLED   the memory series as an onset detector (rc_mb is the column it watches)
+  ARMED      the STALL-triggered ramp dump - `forcedPhase` bypasses the memory check entirely
+  ARMED      the wedge arm (the cure) - it probes the page
+  ARMED      HUNG_MS at twelve minutes
+  ```
+  **The two arms that matter both survive, and both survive BY DESIGN rather than by luck** —
+  each was built after a ramp was lost to a reading another process writes every two minutes,
+  and `maybeMemoryDump`'s own comment says so: *"a trigger that consults no file cannot meet any
+  of them."* The missing baseline is the visible symptom that led here; **do not read it as
+  `attachHeapProbe` having failed** — the log carries `alloc trail: resident renderer armed` on
+  the current browser, so the probe is live and it is the memory gate that is refusing.
+- **THE CURE IS THE ONE ARM UNAFFECTED, AND THAT IS ITS DESIGN RATHER THAN LUCK.**
+  `page-wedge.mjs`'s own header says why it exists: *"every existing arm reads a signal that
+  cannot see this in time … this arm reads the page directly, needs no file, and is instant."*
+  Right now that difference is load-bearing. The stall trigger for the memory dump is likewise
+  safe — it reads `Date.now() - lastTick`.
+- **SO THE BOX IS, ACCIDENTALLY, THE CLEANEST POSSIBLE TEST BED.** A ramp arriving now can only
+  be acted on by the cure or by `HUNG_MS` at twelve minutes; no competing arm can claim it.
+- **COMMIT IS THE SURVIVING RAMP DETECTOR.** A ramp is a ~32 GB step in `commit_used_mb`
+  (7,000 → 38,949-47,265 on every recorded event) and those readings still arrive. Any watch
+  written against `rc_mb >= 1500` alone is blind today and must carry
+  `OR commit_used_mb >= 15000`.
+- **AND A FIRING WILL SAY SO ITSELF.** The event's memory fields come from the same reading, so
+  expect `memKnown: false` with `memWhy: "memory reading has no rc figure"` rather than a
+  confident zero — which is the instrument reporting this exact condition instead of hiding it.
+- **CAUSE NOT ESTABLISHED, AND THE OBVIOUS SUSPECT DOES NOT FIT.** The first null is 04:15:31,
+  **seventeen seconds BEFORE** the restart-campaign cycle that might be blamed for it, and six
+  earlier restarts that night produced clean samples either side. Elevation blindness is the
+  recorded mechanism for this shape; nothing here demonstrates it. **Deliberately not fixed** —
+  the repair is a `restart-rc`, which costs the browser age that is currently the whole forcing
+  strategy.
+
+#### THE ONE PRODUCTION RESULT THE DROUGHT HAS PRODUCED: ~2,400 HEALTHY PROBES, ZERO FALSE POSITIVES
+The cure went live on the box at **21:50:59 UTC on 09-16** and the arm probes every
+`WEDGE_PROBE_EVERY_MS` (10 s) whenever the loop is not bailing. Over the ~6.9 hours to 04:45 that
+is **~2,400 probes**, across ~20 browser lives, spanning every ordinary thing this box does —
+renewals in a throwaway tab, auto-login and warm-up stand-downs, keepalive checks, five forced
+`restart-rc` replacements — and **`wedge-recycle` events: zero.**
+- **THAT IS THE FALSE-POSITIVE HALF OF THE CURE, MEASURED IN PRODUCTION, ON WINDOWS/149.** The
+  cost of a false positive is an RC page load on the page an 08:00 cart depends on, and the
+  three-strike rule exists to buy exactly this. Nothing has tripped it.
+- **THE COUNT IS INFERRED FROM THE CADENCE, NOT COUNTED.** The arm is silent on the healthy path
+  by design (a line per probe would bury `tail-log`'s 16,000 characters), which is the accepted
+  gap recorded with it: *"ran and found the page alive"* and *"never ran"* write the same
+  nothing. **What rules out the second is the sha** — `bot-ask git-status` reads
+  `HEAD 6fc7292 on master`, which contains `e92a5a6`, and the arm is unconditional in the timer.
+  Quote it as "~2,400 probes at the configured cadence", never as a measurement.
+- **AND IT SAYS NOTHING ABOUT THE TRUE-POSITIVE HALF**, which is the whole proof and still waits
+  on an event. A detector that never fires is consistent with a perfect detector and with a dead
+  one; only the sha separates them today.
+- ~~**THAT IS THE FALSE-POSITIVE HALF OF THE CURE, MEASURED**~~ — **AND "ZERO FALSE POSITIVES"
+  IS THE STRONGER OF TWO FACTS, STATED FROM EVIDENCE FOR THE WEAKER (2026-09-17).** What zero
+  `wedge-recycle` events establishes is that **no THREE CONSECUTIVE probes came back `wedged`**.
+  It does not establish that none ever did: one `alive` resets `strikes`, so any number of
+  isolated `wedged` readings produce exactly this record. **The claim in the heading is about
+  runs of three; the words are about individual probes.**
+  - **AND IT IS THE SAME GAP AS THE RECORDED FLAPPING PREDICTION, WHICH IS WHY IT IS WORTH
+    CLOSING RATHER THAN RE-WORDING.** That prediction — a page answering one probe in three holds
+    its 32 GiB for ever and never reaches the threshold — was answered from **five joined memory
+    dumps arguing the silence lasts minutes**, which is an argument. `silent > 0` beside no
+    firing IS the flapping case, seen.
+  - **SO THE ARM COUNTS IT NOW** (`wedge.silent`, reported at the teardown and carried on a
+    firing). `inconclusive` is deliberately NOT counted: "Target closed" and "execution context
+    was destroyed" reject INSTANTLY and mean the page is CHANGING — the healthy reopen — so
+    folding them in would report every ordinary recycle as a near miss and bury the reading.
+  - **HOW TO READ IT:** `0 silent` over a browser life is the false-positive claim finally
+    measured rather than inferred. **Any non-zero count with no firing is a finding** and goes
+    straight to the flapping prediction — the repair there is a DECAYING strike counter, not a
+    lower threshold.
+  - **BOT-SIDE, so it reads nothing until the box updates**, and the teardown line is the only
+    copy until then: `worthReporting` gates it, so a browser life under `TEARDOWN_MIN_MS` is
+    counted forward rather than reported.
+
+###### AND "ZERO FALSE POSITIVES" IS A BINARY WHILE THE BUDGET IS A NUMBER — THE MARGIN IS MEASURED NOW (2026-09-17)
+The entry above is the strongest thing the drought has produced and it is a **count of events that
+did not happen**. `WEDGE_PROBE_TIMEOUT_MS` is **2,000 ms**, and not one of those ~2,400 healthy
+probes said how close it came: **a page answering in 4 ms and one answering in 1,900 ms are the
+same `alive` reading**, and only the second is a detector one degraded browser away from recycling
+a healthy page — which costs an RC page load on the page an 08:00 cart depends on.
+- **IT IS THE ONLY EVIDENCE ABOUT THE CURE OBTAINABLE WITHOUT A WEDGE**, which is why it was worth
+  building during a drought rather than waiting: wedges have been absent 27+ hours and the
+  true-positive half cannot be advanced at all.
+- **THE TIMER STARTS BEFORE THE PROBE IS ISSUED.** Stamped inside the `.then` every reading is
+  ~0 ms and the instrument reports a perfect margin it never measured — the same shape as the
+  renewal measuring itself against the token it meant to replace.
+- **HEALTHY READINGS ONLY.** A `wedged` reading is ~the budget **by construction** (the race
+  resolves on the timer), so folding it in reports the timeout back as if it had measured the
+  page. Guarded, because it is the tempting simplification.
+- **ONE LINE PER BROWSER LIFE, NOT A SLOWNESS BAR.** A bar that is never crossed writes the same
+  nothing as an arm that never ran, which is the merge this instrument exists to undo. One line
+  per life is 1-3 a day against a `tail-log` window holding ~31 minutes, so it costs nothing it is
+  measuring — and it sits **inside the `worthReporting` gate**, because the hold runner's
+  preemption can run that `finally` a hundred times in twenty-one minutes.
+- **ZERO PROBES REPORTS AS AN ABSENCE, NEVER AS `0ms`.** *"The arm took no healthy reading"* and
+  *"it answered instantly every time"* are opposite facts and a bare zero merges them.
+- **BOTH FIELDS RIDE THE `request-counts` EVENT** (reason `teardown`), not `tab-close` — an
+  earlier draft of this entry said `tab-close` and was wrong; they are set on the `teardown`
+  object that `reportBotEvent('request-counts', teardown)` posts. The log rolls in ~31 minutes;
+  Postgres does not — the lesson PR #169 already bought for the alloc readings and never applied
+  to this.
+  - **AND ADDING A FIELD TO ANY `bot_events` DETAIL CAN NULL THE *WHOLE* DETAIL, SILENTLY.**
+    `cleanDetail` returns `null` — not a truncation — when the serialised object exceeds
+    `MAX_DETAIL_CHARS` (**8,000**), so one field too many destroys every other field on that
+    event rather than itself. That is the `notePlatform` shape (a fact emitted into a region that
+    then discarded it) with the cliff at the other end. **MEASURED BEFORE SHIPPING, because the
+    field this would have destroyed is `ramMb`, which the attribution rule two entries up
+    depends on:**
+    ```
+    request-counts  n=147  max=1850  avg=1506   <- the big one; headroom 6,150
+    mem-dump        n= 77  max= 572
+    ramp-scan       n= 29  max= 229
+    tab-close       n=433  max= 105
+    NULL details across all 686 events: 0
+    ```
+    Two numeric fields add ~45 characters against 6,150 of headroom, so it is safe by a factor
+    of 130. **Measure it again for anything that adds a LIST** — the top-ten path array is what
+    makes `request-counts` an order of magnitude larger than its siblings, and it is the one
+    that could grow.
+- **AND A FIRING NOW CARRIES THE MARGIN AT THE MOMENT IT FIRED.** A page that went from instant to
+  silent and a page that had been degrading for an hour are different events, and the first firing
+  would otherwise have been unable to tell them apart.
+- **HOW TO READ THE FIRST TEARDOWN AFTER THE BOX UPDATES:** `resident-page probe: N healthy
+  answer(s), slowest Xms of a 2000ms budget` in `logs\rc-keepwarm.log`, and `probes` /
+  `slowestAliveMs` on the `tab-close` event. **A slowest in single-digit milliseconds is the
+  detector with three orders of magnitude of headroom; a slowest in the high hundreds is a
+  warning about the threshold**, and it is a reading nobody has ever taken.
+- `src/lib/page-wedge.test.mts`, **five mutations, each verified to APPLY and to fail** — the
+  timer moved inside the `.then`, a `wedged` reading folded in, the line hoisted out of the gate,
+  zero probes rendering as `0ms`, and both fields dropped from the event. **Guards under `src/`,
+  in neither of `worker-deploy.yml`'s `paths:` lists — read, not remembered.**
+
+###### THE CURE WATCHES ONE RENDERER OF TWO, AND THAT DECIDES HOW TO READ THE 14:30 AUTO-LOGIN (2026-09-17)
+Checked in source before the day's T−30 auto-login, because getting it wrong means reading a
+silent arm as a broken one. (**That trip is a coin flip rather than a scheduled event** — it
+fired on 1 of 3 prior real releases; see the entry above.) **`maybeAutoLogin` runs entirely in
+a throwaway tab** (`ctx.newPage()`, never `residentPage`), and **the cure probes `residentPage` alone** — so a ramp
+that lands in the trip's own renderer is INVISIBLE to it, by construction.
+- **THAT IS NOT A COVERAGE GAP, IT IS AN ATTRIBUTION RULE, and the difference is the whole
+  point.** A tab that ramps is already reclaimed by `closeTabBounded` in `maybeAutoLogin`'s
+  `finally` — whose own comment says *"the renderer dies with the tab"* — bounded at 30 s and
+  measured 430 times in production at 8-628 ms. The cure exists for the **resident** page
+  precisely because that one has no `finally` to close it.
+- **SO THE THREE OUTCOMES ARE SEPARABLE AND EACH IS A READING:**
+  - ramp in the **resident** renderer → `probeResidentPage` goes silent → 3 strikes at 10 s →
+    **`wedge-recycle`**, which is the proof.
+  - ramp in the **tab's** renderer → the cure correctly does NOT fire; the `finally` reclaims it,
+    and the evidence is a `tab-close` event with a large `ramMb`.
+  - the trip never returns at all → the `finally` never runs → the ramp arm at a 120 s stall, or
+    `HUNG_MS` at twelve minutes.
+- **WHICH ONE AN AUTO-LOGIN PRODUCES IS NOT ESTABLISHED.** The 09-04 renewal measurements put the
+  ramp in the RESIDENT renderer with the tab flat (`[renewal] −4 MB over 640s`), because the
+  trigger there was the SPA's own `prompt=none` running in the resident page. The 09-10 17:53
+  event is `Stalled in: auto-login` and this file records it as explicitly **unattributed**. Both
+  remain live; **do not write one in.**
+- **THE CONSEQUENCE FOR THE NEXT READING: "the cure did not fire" is not a verdict on the cure**
+  until the ramp has been attributed to a renderer. Read the `tab-close` event's `ramMb` and the
+  alloc trail's per-target lines first — they say which renderer grew, and only the resident one
+  is the cure's subject.
+- **AND THE HONEST PROBABILITY IS LOW, WHICH CORRECTS AN OVERSTATEMENT MADE EARLIER THE SAME
+  DAY.** The capture built for this event calls it *"the single highest-probability ramp trigger
+  on the calendar"*. **Okta will be ALIVE at 14:30** — the window read `11.9999h` (rolling) with
+  `okta_expires_at` at **18:49 UTC**, four hours past the trip — so `attemptLogin` is answered
+  from the `idx` cookie, which is the **11-second, +24 MB** cell measured on 08-21 and **has
+  never been observed to ramp.** The three ramping trips on record are all `okta=GONE` password
+  forms, and duration tracks cost seven for seven.
+  - **IT IS NOT ZERO**, which is why the capture stays armed: the browser will be ~10 hours old,
+    inside the 52-611 minute old-browser band, and **what kind of trip the 611-minute ramp was
+    making was never recorded.** So the old population is not known to be password-only.
+  - **STATE IT BEFORE THE EVENT SO IT CAN BE FALSIFIED**: expect a ~10-second cookie-answered
+    sign-in, no ramp, no `wedge-recycle`, and `tab-close` with a small `ramMb`. **A ramp here
+    would itself be the finding** — the first cookie-answered trip ever to cost anything — and it
+    would be worth more than the cure firing.
+  - **THE PREDICTION IS WHY THIS IS NOT A REASON TO FORCE.** A trigger that is unlikely to fire
+    is still free; a forced one spends a password submission from an address that has eaten a
+    twelve-hour block, and the box is holding a real user's campsite until 15:00.
+
+###### `line > gate` IS ORDERING AND READS LIKE CONTAINMENT — AND THE FIRST MUTATION FOR IT WAS A NO-OP
+Two defects in the guards above, both found by mutation-testing them twenty minutes after writing
+them, and both are shapes this file has paid for before in other costumes.
+- **THE GUARD.** It asserted the margin line's index was greater than the `if (worthReporting) {`
+  index. **That is ORDERING**, and a line moved below the `} else {` — i.e. hoisted out of the
+  gate entirely, the exact regression it exists for — satisfies it perfectly. **Verified: the
+  first version passed against that move.** It slices the gate's BODY now (`if (worthReporting) {`
+  to the `} else {` that closes it). ~30th time a guard here has anchored on the wrong thing, and
+  the first where the wrong anchor was a RELATION rather than a string.
+- **THE MUTATION.** The first attempt at that move inserted a `void 0;` beside the line instead of
+  moving it — so the file changed, the harness reported `APPLIED`, and the green proved nothing.
+  **A mutation that applies is not the same as a mutation that expresses the rule**, and the
+  harness can only check the first. Read the mutated region, not the exit status.
+
+###### AND A 300-CHARACTER WINDOW BROKE OVER A COMMENT — FOURTH TIME, AND THERE ARE ~18 SIBLINGS
+CI failed 1 of 2244 on this branch and `not ok` sat outside the log window, so it was reproduced
+locally per the recorded rule (`npm test > log 2>&1`, then `grep '^not ok'`) — which named it in
+one run. **`worker/rc-request-count.test.mts` → "the counter is attached where residentPage is
+assigned"**, and **behaviour had not moved at all**: `requestCounter.attach(page)` still follows
+the assignment, in the same block, before the navigation. It is now **1,618 characters** along
+instead of under 300, because this branch's decay fix and its comment landed between the two
+anchors.
+- **RE-ANCHORED ON THE FIRST `await`, AND THAT IS THE RULE RATHER THAN A STURDIER GUESS.** The
+  first await after the assignment is `page.goto(RC_HOME)`, so an attach placed after it **misses
+  the very page load the counter exists to count** — a real defect, where "more than 300
+  characters later" is not. A missing await now fails loudly rather than slicing to EOF.
+  Three mutations, each verified to apply: the attach deleted, the attach moved below `page.goto`,
+  and the counter hoisted out of `warmResident` so "lifetime" spans browsers.
+- **FOURTH TIME A CHARACTER WINDOW HAS BROKEN OVER UNCHANGED LAYOUT** — after
+  `rehearsal.test.mts`'s 220, `rc-login-script.test.mts`'s 500 and the US-spelling guard's
+  indentation. **A window measured in characters is a guess about layout**, and a comment is
+  exactly what this repo adds most.
+- **~18 MORE ARE IN THE TREE**, found by one grep
+  (`slice(x, x + NNN)` and `[\s\S]{0,NNN}` across `worker/**` and `src/**` test files):
+  `update-guard` (four), `okta-net-trace` (three), `keepwarm-recycle` (three),
+  `control-channel`, `held-offer-scope`, `load-env-fallback`, `native-form-submit`,
+  `rc-cart-timeout`, `claim-release-truth`, `holds-panel-layout`, `autologin-tab`.
+  **RECORDED, NOT REWRITTEN.** A sweep of them is its own change with its own mutation runs, and
+  making it while chasing a red is how a guard gets relaxed rather than re-anchored. **What it
+  buys the next reader: a red in one of those files whose diff did not touch the behaviour is
+  very likely this, and the fix is a structural bound rather than a bigger number.**
+
+##### AND THE CLOSE HALF HAS 430 PRODUCTION CLOSES ON WINDOWS/149, NONE HUNG
+`tab-close` carries `closeMs` and `hung`, and the renewal has been closing a throwaway tab on the
+box since migration 075. Over twelve days:
+```
+430 closes   hung: 0   min 8 ms   median 14 ms   p95 16 ms   max 628 ms
+```
+- **`page.close()` COMPLETES ON THE PRODUCTION PLATFORM, EVERY TIME, IN MILLISECONDS.** That is
+  the cure's lever exercised 430 times on Windows/149 — not the container — and it removes any
+  residual doubt that the Playwright close path itself works there.
+- **THE CAVEAT IS THE WHOLE CAVEAT: every one of those pages was HEALTHY.** Closing a WEDGED page
+  is measured only in the container (1,052 mappings in 86 ms, and 1,877 in 2,532 ms). What makes
+  the transfer plausible is the mechanism rather than the sample: a close is a browser-process
+  operation and asks the wedged renderer for nothing, which is the same property that makes the
+  probe's silence diagnosable in the first place.
+- **SO A FIRING'S `closeMs` HAS A BASELINE TO BE READ AGAINST.** 8-16 ms is an ordinary close;
+  the container's wedged closes ran 86-2,532 ms; anything at the 5,000 ms bound is the race
+  timing out, which is a finding rather than a success.
+- **QUOTE THE MAX, NOT THE p95 — AND THE p95 IS WHAT GOT QUOTED (2026-09-17).** The `max 628 ms`
+  on this very line is the number that decides how to read a firing, and the entry citing this
+  corpus used `8-16 ms` and concluded a 596 ms close was "squarely in the wedged band". **Four of
+  435 closes exceed 100 ms and all four exceed 600**, every one a renewal on an ~11-second
+  `no-signin-control` trip — a benign population at the same value. Correction under "IT FIRED".
+
+##### THE DETECTION HALF HAS ONE PRODUCTION-PLATFORM ARGUMENT, AND IT IS AN IMPLICATION
+The probe is `page.evaluate` = `Runtime.evaluate`, which is **main-thread-bound** — measured
+against a control in `scripts/cdp-thread-probe.mjs`, on Chromium 141/Linux, which is the pair
+that burned the native sampler twice. The Windows/149 evidence is indirect but it is an
+implication rather than an analogy:
+- `Performance.getMetrics` is serviced **OFF** the main thread (same probe, same control), so it
+  answers a renderer whose main thread is pinned.
+- On 2026-09-09 11:30 the alloc trail — which samples exactly that call every 10 s — read
+  **`EMPTY — that renderer answered no CDP call at all`** over a whole **165-second** browser
+  life, on the box.
+- **A renderer that could not answer the OFF-main-thread call certainly could not answer the
+  main-thread one.** So `page.evaluate` was silent for ≥165 s, against a 30 s threshold — five
+  and a half times the margin, from production, on the right platform.
+**STATED AT ITS LIMIT: it is one event, and it is sufficient-not-necessary** (a renderer can be
+wedged for `Runtime.evaluate` while `Performance.getMetrics` still answers, which is the 09-05
+reading that made the ramp arm's condition A inert). It is the strongest production-platform
+evidence for the detection half that exists without a firing.
+
+#### THE TWO RAMP POPULATIONS SEPARATE PERFECTLY ON THE BURST, 26 FOR 26 — AND ONE OF THEM HAS STOPPED
+`bail:ramp` carries the request counter, and reading `distinct` and the busiest path's lifetime
+count beside `ageMs` splits all 26 with **nothing on the off-diagonal**:
+```
+YOUNG  2.3-3.3 min   distinct=16   busiest path 16,583-80,244 lifetime   x18
+OLD    52-611 min    distinct=76-79  busiest path 3-24 lifetime          x8
+```
+**Every young ramp carries the RDR burst; no old ramp does.** The file already records these as
+two populations by age and records the burst/leak decoupling seven times — **both remain true,
+and neither says they are the same partition.** They are: `distinct=16` is a browser that has
+just cold-loaded RC's home page and is hammering one endpoint, and `distinct=76-79` is a browser
+that has been living a normal life for hours.
+- **THE BURST POPULATION STOPPED ON 2026-09-15 09:04 AND HAS NOT RECURRED IN 43 HOURS.** The two
+  ramps after it (09-15 15:16 at 372 min, 09-16 03:52 at 52 min) are both the OLD, burst-free
+  kind. So 69% of the ramp mechanism is currently absent.
+- **THE PER-BROWSER-LIFE RATE IS ~30%, NOT 10%, AND THE DROUGHT IS STARK AGAINST IT.** A browser
+  that ramps at 2.3 min never reaches the 3-minute baseline dump, so baselines count the lives
+  that did NOT ramp and the two sets barely overlap: 61 baselines against 26 ramps over nine
+  days, i.e. **17-43% of lives per day**. **09-16 was 8% and 09-17 is 0% across 20 lives.**
+  At 30% that is P ~ 0.0008. **Something changed; the cure is not it** (it reached the box at
+  21:50 on 09-16, eighteen hours after the last ramp).
+- **NO MECHANISM IS WRITTEN IN, and one candidate is ruled out cheaply.** RDR's
+  `futurebookingstartsendsdates` answers **HTTP 200 in 1.2 s** from here right now with a valid
+  `FutureBookingStartDate`, so "the endpoint broke" is not it. The recorded burst reading is
+  `no answer recorded` for 69,060 asks, whose labelled candidate is renderer-side queueing, and
+  **three mechanisms have been guessed on this box and each cost a session.**
+
+##### AND THE BURST IS **ONE** ENDPOINT STALLING WHILE EVERY OTHER REQUEST ON THE PAGE ANSWERS
+The `top` array on a burst bail carries per-path statuses, and reading it settles what the burst
+actually is. From 09-15 09:04, the last one on record:
+```
+16583  rdapi…/api/webaccessfacility/futurebookingstartsendsdates   statuses: {}        <- ZERO answers
+    2  rdapi…/api/webaccesscustomer/empty/shoppingcart             statuses: {401: 2}
+    2  www.reservecalifornia.com/config.json                       statuses: {200: 2}
+    1  fonts.googleapis.com/css2                                   statuses: {200: 1}
+    1  js.arcgis.com/4.30/esri/themes/light/main.css               statuses: {200: 1}
+```
+**The page loaded normally — sixteen paths, every one of them answered — and then one endpoint
+returned nothing 16,583 times.** So it is not the connection pool saturating globally, and it is
+not a dead network: everything else on that page completed.
+- **THAT SHARPENS THE RECORDED CANDIDATE RATHER THAN REPLACING IT.** Six sockets per host, each
+  held by a request that never completes, and the rest queued in the renderer — which is exactly
+  the "issued faster than the pool can drain" reading, now with the crucial qualifier that the
+  stall is **per-endpoint**.
+- **AND IT IS INDEPENDENT CONFIRMATION OF THE BURST/LEAK DECOUPLING, FROM THE MECHANISM.** A
+  2 MiB data pipe is created by `URLLoader::ContinueOnResponseStarted` — **when the RESPONSE
+  STARTS**. 16,583 requests that never got a response got no pipes. The burst therefore cannot
+  BE the mapping, which is what seven sightings already said and what this says from the
+  allocation side.
+- **THE DROUGHT'S LEADING CANDIDATE, LABELLED AS ONE: RC HAS BEEN HEALTHY.** The burst needs that
+  endpoint to stall for the box, and it answers **200 in 1.2 s** from a session right now. This
+  file records RC's app tier failing to render on 08-30, 08-31 (three attempts, ~5 minutes) and
+  09-02, so a degraded RC is a real and recurring event — and it would produce exactly this
+  shape. **Not established, and the discriminator is free:** the next `request-counts` row with
+  `distinct=16` says the burst population is back.
+
+##### SO THE RESTART CAMPAIGN WAS AIMED AT THE ABSENT POPULATION, AND WAS PREVENTING THE OTHER
+`restart-rc` produces exactly the young cold-load shape — which is why it is 2-for-2 historically
+and why this session ran it five times. **Both halves of that are now wrong for today:**
+- it targets the burst population, **absent for 43 hours**; and
+- restarting every ~11 minutes **structurally forbids** the old population, which needs a browser
+  alive for **52 to 611 minutes** (median ~190).
+**Campaign stopped at 04:40 UTC and the browser is being left alone.** A browser that lives from
+now to the hold's T−30 auto-login at 14:30 UTC is ~10 hours old — which spans the entire old
+distribution and arrives at an Okta navigation on the RESIDENT page, the 09-11 05:28 ramp's exact
+profile (610.8 min, `distinct=79`, busiest path 20 lifetime).
+- **THIS IS THE FORCING LEVER BEING CHOSEN ON EVIDENCE RATHER THAN ON A RECORDED HIT RATE.** The
+  2-for-2 figure is real and was measured when the burst population was live. **Do not quote it
+  as today's rate.**
+
+##### THE OLD POPULATION LOOKS BAIL-SEEDED AND THE BASE RATE SAYS IT IS NOT (2026-09-17)
+
+Subtracting each old ramp's `ageMs` from its timestamp gives the browser's birth, and four of the
+eight land **within 0.1-0.2 minutes of a prior young ramp's bail** — with the other four at
+370-1,033 minutes. **No off-diagonal**, which is the shape that has carried half the findings in
+this file:
+```
+09-11 05:30 age 610.8m -> born 09-10 19:19:15   bail 19:19:06   0.2m before
+09-12 15:27 age 383.0m -> born 09-12 09:03:55   bail 09:03:49   0.1m
+09-14 16:01 age 253.0m -> born 09-14 11:47:40   bail 11:47:30   0.2m
+09-15 15:16 age 372.2m -> born 09-15 09:04:12   bail 09:04:07   0.1m
+```
+It reads as a chain — young ramp, bail, replacement browser, old ramp hours later — and it would
+explain the whole drought with ONE mechanism instead of two, since no restarts means no young
+ramps means no bail-seeded browsers.
+
+**IT IS NOISE. A bail CREATES a browser, so bail-seeded lives are a large share of all lives.**
+Over the nine days the file already counts **61 baselines against 26 ramps**, and a baseline is
+one per browser life that survived three minutes — so ~87 lives, of which the 26 bails seeded
+~30%. Four of eight against a 30% base rate is **P ≈ 0.19**. Unremarkable.
+
+- **THE TIGHTNESS OF THE GAPS IS WHAT MAKES IT PERSUASIVE AND IT IS ALSO MECHANICAL.** 0.1-0.2
+  minutes is not a coincidence to be explained — it is `supervise.ps1` restarting the process
+  immediately, which is what a bail is FOR. Every bail produces that gap; the question was only
+  whether such browsers ramp more, and the answer is no.
+- **SO THE DROUGHT STILL NEEDS ITS TWO EXPLANATIONS**, and the per-browser-life rate recorded
+  above (30% historically, 0% across 20 lives on 09-17) is untouched by this — it already
+  controls for restart frequency, which is precisely why this chain could not have rescued it.
+- **THE ONE THING THE PASS DID ESTABLISH IS A COUNT: six of the eighteen young ramps are at
+  09:03-09:04 UTC**, i.e. 02:0x PT, the box's quiet-window update restarting the browser — a
+  three-fold concentration over any other hour. The file records that cluster qualitatively
+  ("the hour is the restart's, not the leak's"); the share is new, and it means **the nightly
+  update has historically been the single most productive ramp-forcing event there is.** Not
+  available tonight: the 6 h release gate covers the entire 09:00-12:00 UTC window.
+
+#### THE RELEASE IS O(1) IN THE MAPPING COUNT — 16 ms ACROSS 1,877 MAPPINGS
+The open question against the container proof was scale: the reproduction peaks near 1,500-3,200
+mappings and production reaches **16,383**. A 180-second run answered it by accident, and the
+answer is better than another run would have been.
+```
+30 s run    FIX: mappings 1877 -> 0 in 2532ms      <<< CURED
+180 s run   FIX: mappings    0 -> 0 in 2516ms      <<< THE QUESTION WAS NEVER REACHED
+```
+**Sixteen milliseconds separates releasing 1,877 mappings from releasing none.** That is
+0.0085 ms per mapping, so 16,383 of them extrapolates to **~139 ms of extra work against a ~2.5 s
+close** — and it agrees with the mechanism, which is the reason to believe it: `page.close()`
+destroys the renderer PROCESS and the OS reclaims its address space in one act. There is no
+per-mapping work to scale.
+- **THE 180 s RUN'S REFUSAL IS THE INSTRUMENT WORKING**, not a failure. The series climbed to
+  1,443, held flat for 42 seconds, then **dropped to 0 at 100 s with no renderer left in the
+  per-process list** — the container's renderer died under the retained `Response` objects, long
+  before the 32 GiB cap. The fix then probed a page that was not leaking and **refused the
+  `CURED` verdict** rather than claiming a release it had not performed. Same rule as
+  `--concurrent-mint` refusing a race verdict when no submit was accepted.
+- ~~**SO THE CONTAINER CANNOT REACH PRODUCTION SCALE AND DOES NOT NEED TO.** Its ceiling is the
+  harness's retention, not the cure's~~ — **THE CONCLUSION HOLDS AND THE CAUSE IS WRONG
+  (measured 2026-09-17).** `wedge-and-fetch` **retains nothing**: it is
+  `fetch('/body?'+(n++)).catch(()=>{})`, so the `Response` is discarded on the spot, and the only
+  arm that keeps one is `fetch-nodrain`, which is a different candidate. **Use the 30-second run**
+  still stands, for a different reason.
+- **THE REAL CEILING IS RAM RESIDENCY, AND IT IS A PLATFORM PROPERTY.** On Linux a data pipe's
+  ring buffer is a **memfd**, i.e. tmpfs, i.e. **REAL RAM**; on Windows the same section is
+  charged against **COMMIT and never touched** (`PAGEFILE allocatedMB=31,744` against
+  `peakMB=73` — 31.7 GB charged, 73 MB ever written). So the container pays ~2 MiB of RSS per
+  mapping where the box pays none, and 16 GB of RAM is the wall. Measured, `wedge-and-fetch-fast`
+  for 120 s:
+  ```
+  series … 54s:2577 56s:2694 58s:2718 60s:2724 62s:2730 64s:2730 … 118s:2732 120s:2732
+  pid=30644 type=renderer 2MiB=2732 (5.34 GiB)   RSS 12.4 GB   host: 14.4 GB used, 1.2 GB free
+  ```
+  **A PLATEAU, NOT A CRASH** — flat for sixty seconds with the renderer alive and reporting at
+  the end. So "a longer run kills the renderer first" is at best one of two outcomes, and the
+  plateau is the commoner one. **Reaching 16,383 here would need ~34 GB of RAM**, so it is not a
+  matter of running longer and never will be.
+  - **AND THE PLATEAU IS SILENT BY CONSTRUCTION.** `fetch(...).catch(()=>{})` swallows the
+    failure, so once allocation starts failing the loop spins on at full rate and the count
+    simply stops moving. **Do not read a flat tail as the leak stopping.**
+- **BUT THE SAME PLATFORM DIFFERENCE IS A GIFT FOR THE CURE'S PROOF, AND IT HAD NOT BEEN
+  COLLECTED.** Because Linux makes the mappings resident, **RSS is a second and independent
+  witness**: it separates *"the address space was unmapped"* from *"the memory came back"*, which
+  a `/proc/<pid>/maps` count alone cannot. Added to the `--fix` arm, and on its first run:
+  ```
+  FIX: probe=wedged strikes=3 act=recycle after 6004ms
+  FIX: chromium RSS 11649 -> 376 MB (-11273)
+  FIX: mappings 987 -> 0 in 2542ms   <<< CURED
+  ```
+  **11.3 GB of resident memory handed back in 2,542 ms**, corroborated by the host's own
+  `free -m` (14,437 MB used during the run, 1,772 MB after). That is the release half of the
+  cure measured in bytes rather than in map entries, for the first time.
+  - **THE RATIO IS ITSELF A FINDING AND IT DOES NOT TRANSFER.** 11,273 MB freed against
+    987 x 2 MiB = 1,974 MB of mappings is **~5.7x**, so on Linux the wedge costs far more than
+    its mappings — `deferred_messages_` and the per-response loader bookkeeping. Production is
+    the **opposite**: 2,981-4,587 MB of renderer private bytes against 32 GiB of mappings.
+    **Only the MAPPING COUNT is comparable between the two platforms; never quote a byte figure
+    across them.**
+- **WHAT IS STILL NOT CLAIMED: that a 32 GiB renderer CLOSES as readily as a 3 GiB one.** The
+  close is a browser-process operation and does not ask the wedged renderer for anything — which
+  is the same property that makes the probe's silence diagnosable — but no close of a 32 GiB
+  renderer has ever been observed on any platform. **And the ceiling above says this container
+  can never observe one**, so that gap closes on the box or not at all.
+
+#### THE RENEWAL TRIP IS NOT WHAT RAMPS — 0 OF 331, AND THE RAMPING ONES ARE CENSORED
+`tab-close` carries **`ramMb`**, the free-RAM delta across the trip — a PER-TRIP cost
+measurement, which is the instrument this file twice records as not existing (*"tab-close carries
+no stage"*). Read for the first time over 331 trips in nine days:
+```
+mean ramMb -158   median -168   WORST -413      trips shedding >400 MB: 1   >1 GB: 0
+```
+**Not one surviving renewal trip has ever cost a gigabyte**, against 26 ramps of 1.7-9 GB in the
+same window. The naive reading — *the renewal is innocent* — is wrong, and the reason is
+**CENSORING**: `tab-close` fires in a `finally`, a bail calls `process.exit`, and `process.exit`
+runs no `finally`. **The expensive trips are exactly the ones missing from the dataset.**
+- **CONFIRMED BY JOINING EVERY RAMP AGAINST ITS NEIGHBOURS, 22 for 22.** Each onset has a
+  `bail:ramp` **~70 seconds later**, and then a `tab-close` 1-3 minutes after THAT, reading
+  `trip=46.5-47.5s ram=-10..-58` on every single one. **That tab-close is the replacement
+  browser's first renewal, not the trip that ramped** — so the row nearest a ramp is the one
+  most likely to be mistaken for it, and it is the cheapest kind there is.
+- **SO `ramMb` BOUNDS THE CHEAP POPULATION AND SAYS NOTHING ABOUT THE EXPENSIVE ONE.** Quote it
+  that way. What it does buy is a real denominator for the surviving trips, and a stage proxy:
+  **~11 s ⇒ `no-signin-control` (never left RC), 46-70 s ⇒ reached Okta** — anchored on the two
+  stages read in the log at 03:13:04 and 03:24:49. Over nine days that splits **11 short : 320
+  long**, and over the last 24 hours **1 : 48**.
+- **WHICH RETIRES THE HEADING ABOVE.** *"The renewal never reaches Okta"* generalised from ONE
+  `no-signin-control` observation; it is **1 of 49** in the last day. **48 Okta trips in 24 hours
+  with no ramp puts P(zero) at 0.015** under the recorded ~1-in-12 bound, so the drought is
+  genuinely anomalous and is NOT explained by a missing trigger. **Leave the section standing and
+  read it with this correction** — the two gates it names are real, they are simply not the whole
+  story, and the arithmetic that says so came from a column nobody had opened.
+
+##### AND 69% OF RAMPS HAPPEN ON A BROWSER BETWEEN 2.3 AND 3.3 MINUTES OLD
+`bail:ramp` carries `ageMs`. Across all 26 on record, sorted:
+```
+2.3 2.3 2.4 2.6 2.6 2.6 2.6 2.6 2.8 2.8 2.8 2.9 2.9 2.9 2.9 2.9 2.9 3.3  |  52 57.5 85.4 124.6 253 372.2 383 610.8   (minutes)
+```
+**Eighteen of twenty-six fall in a ONE-MINUTE band**, and the other eight are spread over ten
+hours. That is much sharper than the recorded *"a fresh browser is 8x more likely to ramp"*,
+which was an enrichment ratio over a 6-minute window; this is a distribution, and it is bimodal
+with a spike.
+- **THE BAIL IS ~70 s AFTER THE ONSET, so the onset itself sits at ~1.2-2.1 minutes of browser
+  age** — i.e. a minute or two after the cold RC page load, which is where the ≤34-second mapping
+  burst lands. Consistent with the burst model; **not a new mechanism, and no mechanism is
+  written in.**
+- **IT VINDICATES `restart-rc` AS THE FORCING LEVER AND SIZES IT.** A restart produces exactly
+  this shape, and a cadence of ~11 minutes covers the 2.3-3.3 minute window every cycle. **It can
+  only ever reach the 69%**; the old-browser population needs hours of quiet, which is the
+  opposite of forcing.
+- **`MEM_DUMP_BASELINE_AFTER_MS` IS 3 MINUTES AND IS *NOT* IMPLICATED** — checked, because an
+  instrument firing inside the spike's own band is exactly the shape worth ruling out. The
+  baseline dump fires AFTER the onset, and 26 of 26 bails carry a completed baseline or none at
+  all rather than a dump in flight.
+
+##### A REAL HOLD IS QUEUED FOR 2026-09-17 08:00 PT, AND IT IS THE BEST FREE LEVER TODAY
+`#A124` at `rc-357`, status `requested` (with a second `offered` row for the same unit — the
+fairness line). `unit_name` is an RC site label and **not** the `TEST · <id>` prefix
+`rc-test-hold.mts` writes, so somebody real is waiting on it.
+- **`maybeAutoLogin` FIRES AT T−30 = 14:30 UTC AND NAVIGATES TO OKTA ON THE RESIDENT PAGE** —
+  which is the 09-10 17:53 ramp's own path (`Stalled in: auto-login`) and the exact renderer the
+  cure watches. It costs nothing and needs nobody. **That is the highest-value scheduled event of
+  the day for this proof.**
+- **STOP FORCING WELL BEFORE IT.** A `restart-rc` inside the T−3h warm-up window (from 12:00 UTC)
+  spends the warm-up's one turn per release, and one inside T−30 risks the cart itself: the
+  session takes ~11 minutes to recover from a restart, measured. **Forcing is safe only until
+  ~11:00 UTC**, and `dueHolds` does not serve the runner until T−90 s, so there is no profile
+  contention before then.
+
+#### TWO INDEPENDENT REASONS NOTHING NAVIGATES TO OKTA, BOTH READ LIVE OFF THE BOX
+The section above establishes that the Okta trip is the trigger and that it is not happening.
+A fresh `tail-log rc-keepwarm` at 04:15 UTC names **two** gates, and either alone is sufficient:
+```
+04:02:47  renewal stood down: the token has 22m left - waiting for it to lapse, because
+          renewing a live token is what leaks and it has never once worked
+04:02:47  RC session kept warm - token exp in 22m; renewed=no; src=live; okta=ALIVE (exp 16:02:48)
+04:14:10  RC session kept warm - token exp in 10m; renewed=no; src=live; okta=ALIVE (exp 16:14:11)
+```
+1. **`planRenewal` STANDS DOWN WHILE THE TOKEN IS ALIVE AT ALL** (the 2026-08-18 near-expiry
+   stand-down), so most polls never reach the renewal at all.
+2. **When it does act, it ends at `no-signin-control`** - the cell measured on 08-18 to allocate
+   nothing.
+**So the drought is over-determined**, and both gates are working exactly as designed. Neither is
+a fault to fix; together they are why an instrument armed for eighteen hours has had no event.
+
+##### AND THE OKTA WINDOW IS MEASURED ROLLING, TWICE, WHICH DATES THE PRECONDITION
+`exp - checked` is **+12.0000h on both readings** (04:02:47 -> 16:02:48, 04:14:10 -> 16:14:11).
+That is the discriminator this file already records: a rolling window prints exactly +12.0000h
+from the moment it was CHECKED, while the frozen absolute cap SHRINKS by the elapsed time.
+- **So `okta=GONE` is not imminent and our own probe is why.** `checkAndReport` calls
+  `oktaSessionAlive` unconditionally every 20 minutes, which refreshes the idle timer - the
+  2026-08-18 finding that this is *load-bearing by accident*, seen from the other end: it is what
+  keeps the session alive for days, and it is what makes the ramp trigger unreachable on demand.
+- **DO NOT "FIX" THE UNCONDITIONAL PROBE TO MAKE FORCING EASIER.** That entry's warning is
+  explicit - anyone who matches it to the renewal's careful guard starts the Okta session
+  expiring and forces real logins from an address that has eaten a twelve-hour block. **A
+  diagnostic convenience is not worth the household IP.**
+
+##### THE `AS t` TRAP REPRODUCED TWICE IN ONE SESSION, AND IT FAILED AS A DEAD INSTRUMENT
+`SELECT max(taken_at) AS t, count(*) ... FROM chromium_memory_samples WHERE taken_at > now() -
+interval '2 hours'` came back with `t` **undefined**, and it was read as **"the memory sampler
+has stopped"** - which under this file's own "A GAP IS THE SIGNATURE, NEVER A ZERO" rule is an
+emergency, and would have redirected the whole session into diagnosing a healthy box.
+- **The sampler was fine**: 716 samples in 24h, newest one minute old, flat at ~300 MB with
+  commit 7.1/43.8 GB. Re-running with the column aliased `ts` returned every field.
+- **IT IS THE ABSENT-READING-AS-A-NEGATIVE SHAPE HANDED OVER BY THE TOOLING**, and worse than the
+  recorded form: the entry describes the symptom as *"a row count that looks right with every
+  field `undefined`"*, which reads as obviously broken. **An aggregate has no row count to look
+  right** - one `undefined` in one field is the whole signal, and it is indistinguishable from
+  the table genuinely being empty.
+- **The rule is NOT "always `AS`"** (the entry's own heading was corrected to that effect on
+  09-17): `AS` is irrelevant in both directions, and **the alias being `t` is everything**. It
+  cost two queries here because the first correction was read as being about the keyword.
+
+#### ~~THE 22:49 REHEARSAL IS WHAT STOPPED THE RAMPS~~ — FALSIFIED WITHIN THE HOUR, BY ITS OWN DISCRIMINATOR
+`rc_login_rehearsal_log` is a HISTORY table (the 2026-08-18 entry's complaint that
+`rc_login_rehearsal` keeps only one row was fixed and nobody had read the fix), and it puts a
+successful sign-in exactly in the gap:
+```
+09-16 22:43:28   the LAST 69s renewal trip
+09-16 22:48:35   rehearsal started          <- an ON-DEMAND one: `test-login` later refused
+09-16 22:49:07   ok=true  load/shoppingcart → HTTP 200      with "ran 278 min ago", and
+09-16 22:49:07   request-counts [teardown]                   03:27 − 278m = 22:49 exactly
+09-17 00:13:07   the FIRST 47s renewal trip
+```
+- **ONE CAUSE ACCOUNTS FOR ALL THREE OBSERVATIONS.** The rehearsal signed in; RC's SPA has
+  rendered signed-in ever since; a signed-in SPA shows no "Log in" anchor; so every renewal since
+  ends at `no-signin-control` — which removes the Okta round trip (the 21 seconds), removes the
+  established trigger (the ramps), and is exactly the stage the log reports.
+- **SO A REHEARSAL SUPPRESSES THE RAMP TRIGGER, AND `test-login` IS A REHEARSAL.** The lever this
+  file recommends for forcing a ramp is plausibly the thing that PREVENTS one for hours
+  afterwards. That is worth knowing before spending the 6-hour ration on it.
+- **IT IS A CANDIDATE, FITTED AFTER THE FACT, AND THE DISCRIMINATOR DOES NOT EXIST.** `tab-close`
+  carries no stage and `reportSession` updates `rc_runner_heartbeat` IN PLACE, so there is no
+  historical series of either the renewal stage or the Okta state to check it against. **Do not
+  promote it.** What would settle it is the next transition: a renewal that reaches `authorize`
+  should take ~69 s again.
+
+**THE REFUTATION, and it is the reading the section above asked for.** That section ends *"what
+would settle it is the next transition: a renewal that reaches `authorize` should take ~69 s
+again."* The next renewal reached `authorize` and took **48.6 s**:
+```
+03:24:02 renewing the session — the token has -13m left (src=live)
+03:24:49   ✓ renewed by authorize: none → 3580s        <- the RELIABLE cell, on the box, now
+03:24:52 tab-close renewal tripMs 48.6s
+```
+- **SO A 47-SECOND TRIP REACHES OKTA.** The whole story rested on 47 s meaning
+  `no-signin-control`, and it does not. **The renewal is NOT stuck**: `no-signin-control` at
+  03:13:04 was ONE trip, and the very next one navigated and minted a full 3580 s token.
+- **WHAT DIES:** "every renewal since ends at `no-signin-control`", "the rehearsal removed the
+  Okta round trip", and with them the mechanism for "the rehearsal stopped the ramps". One
+  observation was generalised into a regime on the strength of a duration it does not explain.
+- **WHAT SURVIVES, unchanged and still measured:** the 68.6-69.6 s → 46.7-49.0 s step is real;
+  `no-signin-control` really did happen once; the SPA really does re-acquire a token after a
+  restart; and `okta=GONE` really is the recipe's precondition. **What is now honestly unknown is
+  WHY the trips got 21 s cheaper** — both bands reach `authorize`, so the difference is inside
+  the trip and nothing stored can see it.
+- **AND THE RAMP DROUGHT LOSES ITS EXPLANATION TOO.** Okta trips are happening and not ramping,
+  which is simply the recorded bound — **a renewal trip ramps at most about one in twelve** —
+  against a 23.5-hour gap that is longer than the observed 2.7-17.3 h range and is not otherwise
+  accounted for. Do not put a cause on it.
+- **THIS IS THE HOUSE FAILURE, COMMITTED BY SOMEBODY WHO HAD SPENT THE EVENING QUOTING IT.** A
+  tidy story that fitted three readings at once, written up as a candidate, pushed — and refuted
+  forty minutes later by one more line of the same log that produced it. **The `authorize` line
+  was always going to arrive; it was not waited for.** Struck rather than deleted because "the
+  rehearsal stopped the ramps" is exactly the sentence a later reader quotes.
+
+#### THE SPA RE-ACQUIRES A TOKEN AFTER A RESTART — true, and NOT why no lever works
+`readLiveToken` prefers `window.__camphawkRcToken`, the capture hook's copy off RC's own outbound
+header. A restart kills page memory — and the fresh browser reports `token source: live` one
+second later anyway, because the SPA re-acquires one. That is the 2026-08-22 finding (**the stale
+token comes from the SERVER**; localStorage, sessionStorage, IndexedDB and cookies were each
+eliminated) showing up as an operational constraint rather than a curiosity.
+- ~~**So while Okta is ALIVE the renewal will keep finding no sign-in control**~~ — **FALSE, see
+  directly above: the 03:24 renewal reached `authorize` with Okta ALIVE.** What is true is only
+  the observation itself: `restart-rc`/`kill-chrome` clear page memory, which is not where the
+  token comes from. **There is no lever that clears cookies, deliberately**: losing `DT` makes a
+  sign-in look like a fresh profile, which cost the household IP twelve hours on 2026-08-06.
+- **WHICH IS WHY THE RECORDED RECIPE NEEDS `okta=GONE`**, and why it cannot be brought forward:
+  the reported expiry is the ROLLING window our own `/api/v1/sessions/me` probe refreshes.
+  Measured here: `okta_checked_at 03:27:45`, `okta_expires_at 15:27:45` — **11.9998h**, i.e.
+  rolling. **The discriminator is one subtraction**: a window of 12.0000h is rolling and says
+  nothing about the cap; a window that SHRINKS is the frozen absolute cap, and that is the
+  precondition for a forceable ramp.
+
+#### AND THE TRIP DURATION STEPPED DOWN 21 SECONDS AT THE SAME TIME — observation, no mechanism
+`bot_events` carries `tripMs` on every `tab-close`, and nobody had plotted it:
+```
+09-16 20:17 .. 22:43   TEN trips, every one 68.6-69.6s
+09-17 00:13 .. 03:24   47s, 49s, 47s, 49s, 11s, 49s
+per day, trips over 60s:  09-15 23/26 · 09-16 51/52 · 09-17 0/6
+```
+- **Nineteen hours of 68-69 s, then nothing over 60 s.** That is a step, not variance — and
+  **duration and cost track each other seven for seven** in this file, so a 21-second-cheaper
+  trip is exactly the shape of a trip that stopped ramping.
+- **IT IS NOT THE BOX UPDATE, AND IT IS NOT THE CURE.** The box took `6fc7292` at 21:50:59 and
+  **69 s trips continued for another 52 minutes**, through 22:43:28. And #355's diff to
+  `rc-keepwarm.mjs` is **purely additive** — the arm and nothing else; it touches no line of the
+  renewal path. The transition sits in the 22:43→00:13 gap, alongside a `teardown` at 22:49 and a
+  burst of short-lived browser generations.
+- **THE OBVIOUS JOIN IS UNAVAILABLE: `tab-close` carries no STAGE.** `tripMs`, `closeMs`, `hung`
+  and `ramMb`, no verdict — this file already records that. So "the 69 s trips reached Okta and
+  the 47 s ones stop at `no-signin-control`" fits both readings and **cannot be checked against
+  the stored events.** One observation of `no-signin-control` is not a regime.
+- **RAM DELTAS DID NOT MOVE WITH IT**, which is the caveat against the tidy story: before the cut
+  `ramMb` averaged −159 (min −270), after it −131 (min −254). If the long trips were the ones
+  loading Okta, a bigger difference would be expected there.
+- **IT REVERTED, WITH NOTHING CHANGING ON THE BOX (2026-09-17 10:12).** After a 340-minute hole
+  the next two renewals read **69,731 ms and 69,218 ms** — back in the 68-69 s band, on
+  `HEAD 6fc7292` throughout. So the 46-49 s window was a **~4-hour episode, not a step**, and
+  *"that is a step, not variance"* is too strong as written. Nothing was deployed and nothing was
+  updated; **the box's own sha is the control.**
+- **AND THE WINDOW COINCIDES WITH THE BOX'S NETWORK TROUBLE — A CANDIDATE, NOT A MECHANISM.**
+  Inside 00:13→04:29 the gaps alternate 11-12 m (minGap) with **62, 65, 90 and 96 m**, and none of
+  those four is a `planRenewal` band (floor 5, minGap 10, backoff 30, alive ~60). The 10:00:46
+  renewal is separately on record dying with `ERR_NAME_NOT_RESOLVED` and **losing its `tab-close`
+  row outright**, so lost rows would produce exactly those gaps — and a trip that fails early on
+  DNS would be exactly the shorter kind. **Do not write it in**: nothing pairs a specific trip
+  with a specific resolution failure, and the 21 s is unexplained either way.
+- **SO THE OPEN QUESTION NARROWS FROM "what CHANGED?" to "what OSCILLATES?"**, which rules out a
+  code, config or deploy cause — none of those comes back on its own.
+
+#### `restart-rc` IS 2-FOR-4 NOW, AND BOTH MISSES WERE MINE
+Fired 03:02:24 and 03:12:48 UTC with the box quiet at ~300 MB and the release twelve hours out.
+Both replaced the browser (pid 14496 → 10076 → 7480) and **neither ramped** — peaks 316 MB and
+355 MB against the 2,297 MB the 09-09 21:26 attempt reached in ninety seconds.
+- **The pooled base rate was always ~10%**, so two misses are unremarkable on their own. What
+  makes them worth recording is the `no-signin-control` reading: a cold browser whose SPA renders
+  signed-in produces a renewal that never navigates, and a lever that cannot reach Okta cannot
+  force the trigger. **Quote 2-for-4, not 2-for-2.**
+- **`test-login` IS THE LEVER THAT DOES NOT DEPEND ON THAT**, because `withForcedLoginPrompt`
+  intercepts RC's own `/oauth2/v1/authorize` and adds `prompt=login` — so the navigation happens
+  whatever the SPA thinks, **and it happens on the RESIDENT renderer**, which is the renderer
+  2026-09-04 measured as the one that ramps (the renewal's throwaway tab read −4 MB).
+  It has **deliberately no `sessionLive` gate** (`rehearsal.mjs`, "unlike the nightly"), so a live
+  session does not block it. It is rationed to **one per 6 h on the box's own clock** and refuses
+  with the age, which is how that ration was read rather than guessed.
+
+#### THE PER-PROCESS SCAN WENT BLIND AT 04:15:30, AND IT TAKES THE COMMIT TRIGGER WITH IT (2026-09-17)
+The sampler names its own cause on every tick, in the `bot` log, and nobody had read it:
+```
+[04:15:30]   (memory sample: 8 Chromium had an unreadable command line - this process may not
+             be elevated; the families are recorded as UNKNOWN, not zero)
+```
+- **IT IS ONE CONTIGUOUS RUN AFTER 398 CLEAN SAMPLES, NOT SCATTERED NOISE.** Over fourteen
+  hours: `ok 09-16 14:53:53 → 09-17 04:13:31 (398)`, `BLIND 04:15:31 → 04:25:32 (6)`,
+  `ok 04:27:32 (1)`, `BLIND 04:29:32 → ongoing`. So it began at an instant and has a single
+  one-sample recovery — a degradation, not a scan losing an occasional race.
+- **`rc_mb` IS NULL AND `commit_used_mb` IS PERFECT THROUGHOUT** (7,027-7,239 MB of 43,774).
+  The two come from different halves of the sampler: the per-process scan reports UNKNOWN
+  when a command line is unreadable, while `Win32_OperatingSystem` keeps answering. **That
+  is the 2026-08-15 elevation blindness, and the "UNKNOWN, not zero" rule is working exactly
+  as designed** — the reading is honest and it is absent.
+- **THE CONSEQUENCE IS SHARPER THAN "the ramp arm is degraded": `readLatestMemory` refuses
+  the WHOLE reading on a missing rc figure** (`if (rcMb == null …) return { known: false }`),
+  and both arms gate on `known`. So while the scan is blind:
+  - `rampBailDecision` cannot fire — **including its COMMIT bar**, which exists precisely
+    because commit crosses its threshold while private bytes are still under theirs. **The
+    arm built for the case the rc figure cannot carry is gated on the rc figure existing.**
+    Verified against the real functions, not read off the source: a fresh rc-blind reading
+    with `commitUsedMb: 7201` returns `known: false` and `rampBailDecision().fire === false`.
+  - the threshold and baseline memory dumps are disabled for the same reason.
+  - **THE CURE AND THE STALL DUMP BOTH SURVIVE BY DESIGN.** `wedgeDecision` reads the probe
+    and not memory; `maybeMemoryDump(null, 'ramp')` passes a `forcedPhase`, which is checked
+    above the `!memory?.known` return. And `HUNG_MS` reads the loop clock. So the box's
+    protection order is cure → HUNG_MS → (ramp arm, dead) → RAM arm, and the first and last
+    are unaffected.
+- ~~**RECORDED, DELIBERATELY NOT FIXED.**~~ **FIXED THE SAME DAY (`0250fee`), once forcing a
+  ramp turned out to be denied and the alternative was an idle wait.** The reasoning for
+  holding off was about SHIPPING, not about writing: it is bot-side, so it is inert until the
+  box updates, and the update still waits for the 15:00 UTC hold. **Nothing about the box
+  changed today.**
+  - **`rcBlind: true` NAMES THE STATE, and the caller does not infer it.** `known` still means
+    "the memory is ATTRIBUTED", which it is not — inferring the state from *"known false but
+    `commitUsedMb` present"* would also match a future branch that carries commit for some
+    other reason. The age and browser-life checks both run ABOVE it, so a commit figure
+    reaching the decision is fresh and describes this browser; **the stale and
+    previous-browser branches carry no `rcBlind` and no commit, and still refuse.** Both
+    halves are guarded, because either alone would let a wrong reading through if the other
+    moved.
+  - **WHAT IS GIVEN UP IS WRITTEN INTO THE CODE RATHER THAN GLOSSED.** The arm's own comment
+    argues a whole-box commit figure is safe to act on *because `rcMb` cross-checks it* — and
+    in this state there is no cross-check, so the **120-second stall is doing all of the
+    discriminating.** Acceptable on the measured numbers (133 tab-closes, longest trip
+    **71,552 ms**, not one over 90,000, so a 120 s stall has never occurred outside a ramp)
+    and on the asymmetry: **a false fire costs a process restart (~11 min of session
+    recovery); not firing costs commit exhaustion, the only failure this box has ever had that
+    needed a human.**
+  - **AND IT WAS RENDERING `rc family NaN MB`.** `Math.round(undefined)` on the blind branch,
+    in the sentence a reader quotes — a measurement that is not one. It names the absence now.
+  - **NINE MUTATIONS, EACH VERIFIED TO APPLY. TWO SURVIVED THE FIRST ROUND AND NEITHER WAS
+    EQUIVALENT**, which is the part worth keeping:
+    - Dropping the commit-present half of the gate left `fire` **identical**, because
+      `byCommit` refuses a null figure anyway — so a `fire`-only guard could never see it.
+      What it changed was the SENTENCE: a reading we could not take arrived as *"a family
+      measured under the bar"*. **That merge of "unknown" and "low" is this file's
+      most-repeated failure**, and it survived a guard written by somebody quoting it.
+    - Dropping `memory.known === true` from `byRc` is equivalent on every shape
+      `readLatestMemory` produces (`undefined > n` is false). It is **not** equivalent on a
+      reading carrying both, where it yields **`trigger: 'both'` beside `rcMb: null`** — a
+      self-contradictory verdict, and the half somebody quotes. Pinned as an invariant: **the
+      trigger may never name a figure the verdict reports as absent.**
+- **WHAT THE CURE'S OWN DIAGNOSTIC DOES INSTEAD, because that half IS mine.** The wedge
+  event reports `commitUsedMb` whenever it is a finite number rather than gating it on
+  `known` — otherwise the one figure that separates *this page was holding the leak* from
+  *this page was merely unresponsive* is null in exactly the state the box is in today.
+  `readLatestMemory` carries commit **on the rc-blind branch only**: the age check and the
+  browser-life check both run above it, so a figure reported there is fresh and in-life,
+  while the stale and previous-browser branches return none — there a number would be
+  confidently wrong rather than merely unattributed.
+- **A RESTART IS A CANDIDATE CAUSE AND IS NOT ESTABLISHED — do not write one in.** Blindness
+  resumed **five seconds** after `restart-rc (#428)` at 04:29:26, which is tight; but the
+  first run began 13 minutes after the 04:02:38 restart and cleared on its own at 04:27:32,
+  which is not. `bot.mjs` has run unchanged since 01:50:59, so the SAMPLER's own elevation
+  did not move — what changed is the browser generation it is looking at. **So another
+  `restart-rc` is as likely to cause this as to clear it**, and the recorded plan to "clear
+  the blind scan with one restart" should not be followed on that reasoning.
+
+##### A SECOND TOOL LOST THE SAME ABILITY IN THE SAME WINDOW — SO IT IS NOT THE SAMPLER'S QUERY (2026-09-17)
+The entry above concludes *"what changed is the browser generation"* from the sampler alone.
+`restarts.log` corroborates it from a completely different process, and adds a consequence
+nobody had drawn. **Twelve `stop-rc` runs are on file; `stop-rc.ps1` kills Chromium by matching
+`--user-data-dir`, which needs the command line, and it PRINTS each pid it stops:**
+```
+15:30 PT  9 chrome.exe      20:12 PT  9 chrome.exe      21:02:39 PT  10 chrome.exe   <- last sighted
+15:41 PT 10 chrome.exe      20:27 PT  9 chrome.exe      21:14:02 PT   0
+15:52 PT  9 chrome.exe      20:40 PT 10 chrome.exe      21:29:02 PT   0
+16:17 PT  9 + 18            20:51 PT  9 chrome.exe
+```
+- **THE DISCRIMINATING RUN IS 21:26:44 PT**, not the two zeroes. Those two each follow a watchdog
+  line saying both payloads were DOWN, and a payload that exits normally closes its browser in
+  `ctx.close()` — so zero is legitimately ambiguous there. **21:26:44 is not**: it enumerated six
+  of our processes **including two `node.exe`** (so the keep-warm was UP, and a running keep-warm
+  holds a resident browser by construction) and **zero chrome.exe**.
+- **THE TWO ONSETS BRACKET EACH OTHER.** `stop-rc` last saw Chromium at **21:02:39 PT = 04:02:39
+  UTC**; the sampler went blind at **04:15:31 UTC**. Two tools, two processes, one ~13-minute
+  window. **That retires "the sampler's WMI query" as the unit of explanation** — and with it the
+  sampler's own message, which names elevation while `list-processes`, run BY `bot.mjs` in the
+  same second, returns **14 readable command lines** (node, cmd, powershell, cloudflared).
+- **THE CONSEQUENCE, AND IT IS THE HALF WORTH ACTING ON: `stop-all`, `stop-rc` AND
+  `orphan-sweep.mjs` ALL KILL BY `--user-data-dir`. WHILE BLIND, NONE OF THEM CAN KILL AN
+  ORPHAN.** That is exactly the 2026-08-18 25 GB runaway — a Chromium nobody owns, fully visible
+  to the measurement and invisible to the remedy — with the remedy now invisible too. The 08-18
+  entry says *"a blind scan under-kills and can never over-kill… safe by construction"*, which is
+  true and is about SAFETY; **what it does not say is that in this state the sweep protects
+  nothing.**
+- **THE CONSTANT IS THE OTHER TELL: exactly 8, on 100 consecutive `bot` log lines across 3h20m.**
+  Not a flapping partial and not a race — one browser generation, wholly unreadable, for hours.
+- **STILL NOT ESTABLISHED, AND DO NOT WRITE ONE IN.** Candidates nobody has separated: something
+  about the generation the 04:14:05 UTC `restart-rc` launched, a Windows-side change in that
+  window, or a Chromium sandbox/token difference between launches. **What would settle it costs
+  nothing extra**: the box update already scheduled after the 15:00 hold either clears it or does
+  not, and that is a free experiment riding on work that was happening anyway.
+
+###### AND `restarts.log` IS IN PACIFIC WHILE EVERY OTHER READING HERE IS UTC (2026-09-17)
+Its lines read `[2026-09-16 21:29:25]`, which is **2026-09-17 04:29:25 UTC** — seven hours later
+and a different DAY. Read as UTC at 08:10 UTC it says the log has been silent for **ten hours
+and forty minutes**; it had been silent for **three hours and forty**. The first reading is the
+2026-08-17 incident's exact signature (`supervise.ps1` and the watchdog both silent while the box
+looks healthy), so it is the one that sends somebody hunting a dead supervisor.
+- **IT WAS WRONG IN THE ALARMING DIRECTION AND IT WAS WRITTEN DOWN BEFORE IT WAS CHECKED.**
+  What caught it was `bot_task_heartbeat`: `watchdog` beat **3.7 minutes** ago and `auto-update`
+  **1.7** — migration 060 doing precisely the job it was built for, which is telling a silent
+  watchdog from one that never ran.
+- **THE SAME SEVEN HOURS ALSO MOVES EVERY EVENT IN THAT FILE ONTO THE OTHER SIDE OF THE BLIND
+  ONSET.** Read as UTC, the last `restart-rc` is "yesterday evening" and unrelated; read as
+  Pacific it is **04:29 UTC**, i.e. the same minute the blind window resumed — which is what made
+  the corroboration above visible at all.
+- **`release_at` IS ZONE-LESS PACIFIC TEXT TOO** and this file already records that; the rule is
+  the same one arriving through a log instead of a column. **Convert before comparing, and do not
+  compare a rendered timestamp with a clock read somewhere else.**
+
+##### AND SINCE 04:31 THERE HAVE BEEN NO OKTA TRIPS AT ALL — THE TRIGGER IS OFF, NOT UNLUCKY (2026-09-17)
+The entries above read the drought as a ramp that has not arrived. **It is narrower than that and
+the distinction decides what "waiting" means.** At 08:25 UTC the newest `tab-close` is
+**04:31:56 — 222 minutes** — and `bail:%` events in the last six hours: **zero**.
+- **THE ZERO BAILS ARE WHAT MAKE IT A READING.** A trip killed by a bail runs no `finally` and
+  emits no `tab-close`, so silence alone cannot tell *no trip ran* from *every trip was killed*.
+  With no bail either, the silence is unambiguous: **no Okta trip STARTED for nearly four hours.**
+- **THE ESTABLISHED TRIGGER IS THE OKTA NAVIGATION** (08-18's controlled comparison: three
+  token-less renewals ten minutes apart, only the one that clicked through cost anything). No
+  navigation, no ramp — so the drought is not bad luck around a live trigger, it is an absent one.
+- **AND THE CAUSE IS THE HEALTHY REGIME, WHICH IS THE IRONY WORTH WRITING DOWN.** `planRenewal`
+  stands down while the token is alive at all, and RC's SPA has been silently re-minting since
+  ~04:32 — observed directly in the keep-warm's own keepalives, `renewed=no; src=live` with the
+  token going **1m → 41m → 21m → 1m → 40m** across 06:29-07:49, two re-mints and zero renewals of
+  ours. **The self-sustaining regime removes our Okta trips, and our Okta trips are the trigger.**
+- **SO "WAIT FOR A RAMP" IS REALLY "WAIT FOR THE SELF-RENEWAL TO LAPSE".** What ends it is Okta's
+  ABSOLUTE cap: once Okta is GONE the SPA cannot re-mint, the token dies, and our renewal resumes.
+  The reported window is **rolling** (`okta_expires_at − okta_checked_at` = 12.0000h, refreshed by
+  our own unconditional 20-minute probe), so the cap is invisible until the window stops rolling —
+  which is exactly the signal the capture watch already fires on.
+- **AND TODAY'S ONE SCHEDULED TRIP CANNOT HELP THE CURE EVEN IF IT RAMPS.** `maybeAutoLogin` at
+  T−30 runs in a **throwaway tab** and the cure probes **`residentPage` only**, so a ramp there is
+  invisible to it by construction and correctly so — `closeTabBounded`'s `finally` already reclaims
+  that renderer. **The honest prediction for the day is therefore that the cure does not fire**,
+  and that is a statement about the trigger rather than about the cure.
+- **DO NOT READ THE QUIET AS THE CURE WORKING.** It has never fired; `wedge-recycle` events remain
+  zero, all time. A cure that silences every other ramp instrument and a trigger that is switched
+  off produce the same empty tables, which is why the discriminator is `bot_events` for a
+  `tab-close` — **present and quiet is the SPA carrying the session; absent is nothing happening.**
+
+#### AND THIRTEEN OKTA NAVIGATIONS SINCE THE BOX TOOK THE CURE HAVE PRODUCED ZERO RAMPS
+Every `tab-close` since 2026-09-16 21:50:59 UTC, when the box took `e92a5a6`:
+```
+15 closes, 0 hung, 9-628 ms.  13 with a trip over 20s, i.e. a real Okta round trip:
+  7 x renewal    68.6-69.6s   (09-16 21:52 → 22:43)
+  5 x renewal    46.7-49.0s   (09-17 00:13 → 03:24)
+  1 x auto-login 45.2s        (09-17 04:31)
+```
+- **COMMIT IS FLAT ACROSS THE 45.2-SECOND AUTO-LOGIN** — 7,064 → 7,201 → 7,046 MB either
+  side of it. A ramp charges ~32 GiB in ≤34 s, so commit alone answers the question the
+  blind `rc_mb` cannot: **that trip did not ramp.** Same for the twelve before it.
+- **SO THE DROUGHT NOW SPANS ~25 HOURS AND AT LEAST 13 OKTA TRIPS**, on top of the 18 hours
+  that preceded the cure reaching the box. **None of it is creditable to the cure** — the
+  last ramp was 03:51:47 UTC on 09-16, eighteen hours before the box had the code.
+- **`commit_used_mb` IS THE INSTRUMENT THAT STILL WORKS WHILE THE SCAN IS BLIND**, and it is
+  what makes these thirteen readable at all. Read it, not `rc_mb`, on a blind day.
+
+#### THE 04:31 AUTO-LOGIN WAS MY OWN `npm test`, AND IT IS THE SECOND OBSERVED INSTANCE
+`maybeAutoLogin` acts only inside `AUTOLOGIN_LEAD_MIN` (30) of a real release, and the only
+release on the books is **15:00 UTC** — ten and a half hours later. A live `npm test` run was
+in flight at 04:31:56. That is the documented numeric-fixture trap:
+`worker/health-hold-counts.test.mts:148` inserts `cartedHold(REAL, 5)` where `REAL = '0'`, a
+`carted` row releasing five minutes out, and `'0'` satisfies `REAL_UNIT`'s `^[0-9]+$`.
+- **IT DID NOT SPEND THE REAL HOLD'S LOGIN BUDGET, which is the alarming reading and is
+  false.** `autologin-budget.mjs` is keyed on the RELEASE, and the fixture's release is a
+  different one, so the two attempts protecting the 15:00 cart are untouched.
+- **What it did spend is an unattended Okta password trip from the household address**, which
+  is the reason the budget exists at all. Second sighting after 2026-09-10 17:53.
+
+#### THE CURE'S THREE LEGS ARE MEASURED ON ONE PAGE NOW, WITH THE CONTROL THAT MATTERS (2026-09-17)
+The cure's production case has never occurred, so **the transfer argument is what carries it** —
+and its legs were measured on three different pages: `leak-repro.mjs` (a wedged page maps 2 MiB
+shared regions and gives them back on close), `cdp-thread-probe.mjs` (a wedged page answers
+`Performance.getMetrics` and NOT `Runtime.evaluate`), and ~2,400 healthy production probes.
+The first two share a wedge construction and the joint claim followed **"by construction"**,
+which is the reasoning this file has been burned by. `scripts/cure-end-to-end.mjs` measures all
+three on ONE page in ONE run, through the SHIPPED exports:
+```
+healthy  : evaluate answered, probe alive/alive/alive, strikes 0, 0 mappings
+wedged   : evaluate SILENT >2000ms, getMetrics answered   <- production's own signature
+the cure : 3 strikes -> recycle, 243 -> 0 mappings in 520ms
+```
+- **THE SIGNATURE IS THE LOAD-BEARING HALF.** `Runtime.evaluate` silent while
+  `Performance.getMetrics` answers is what production shows on Windows/149 — `alloc trail
+  [resident]: EMPTY — that renderer answered no CDP call at all` over a whole 165-second browser
+  life, taken by the heap trail, which samples `Performance.getMetrics`. So the page the cure
+  was measured releasing mappings from is in the state the box's ramping renderer is in.
+- **THE CONTROL ARM CAUGHT A REAL DEFECT IN THE SCRIPT'S OWN FIRST VERSION.**
+  `probeResidentPage` takes a **NUMBER**; the first version passed `{ timeoutMs: 2000 }`, which
+  coerces to ~0 — so every probe timed out instantly and read `wedged`, **on the healthy page
+  too**. That run printed a confident pass and proved nothing whatever about the detector. **A
+  healthy page must accrue NO strike**, and it is the FIRST refusal checked: a cure that fires
+  on a responsive page costs an RC page load every thirty seconds and reads in the event stream
+  exactly like the cure working.
+- **THE REFUSAL WAS FIRED, NOT ASSUMED.** `CURE_PROBE_MS=1` reproduces that defect and exits 1
+  quoting the healthy page's own readings. Four arms: a non-discriminating probe, a page never
+  wedged, a decision that never reached `recycle`, and a count that never climbed.
+- **AND READING THE EXIT CODE THROUGH A PIPE REPORTED 0 OVER A REFUSAL** — `… | tail -6; echo $?`
+  is `tail`'s status. The recorded rule, paid for again in the same hour it was being applied.
+  Redirect to a file.
+- **PLATFORM, STATED IN THE HEADER: 141/Linux, memfd-backed, against 149/Windows,
+  pagefile-backed.** What transfers is the MECHANISM — `kTotalMappedSizeLimit` and
+  `kLargerDataPipeAllocationSize` are cross-platform, and **which PROCESS services a CDP domain
+  is architectural**: `page.close` is `Target.closeTarget` to the BROWSER process, which is why
+  it answers in 520 ms against a renderer that will not run a line of JavaScript, and why
+  `page.reload()` on the same page hung past its own timeout. **Do not quote a byte count from
+  here as a production figure.**
+- **`cdp-thread-probe.mjs` WAS NEVER IN THE PROBE-ROT GUARD** — measured and written up the same
+  day, and the guard's list stopped at five. Both it and the new script are in it now, with both
+  mutations (a probe removed, the import "fixed" to bare `playwright`) verified caught.
+
+**SO WHAT IS AND IS NOT PROVEN, STATED PLAINLY.** The mechanism is proven with controls both
+ways. The detector is proven live on the box (~2,400 probes, **no run of three** — see the
+correction under that entry: individual `wedged` readings were never counted and are now) and its
+wedge-silence half is corroborated by production's own alloc trail. The release half rests on
+the browser-process/renderer split, which is architectural, plus 430 healthy Windows closes
+showing that call path is sound there. **What remains unproven is a single end-to-end firing in
+production — and that needs a wedge, and wedges have been absent for 25+ hours across at least
+13 Okta navigations.** The cure cannot be credited with that absence: the last ramp was eighteen
+hours before the box had the code.
+
+#### THE OLD-BROWSER POPULATION IS STILL RUNNING, AND ITS AGE BAND IS 52-611 MINUTES (2026-09-17)
+The burst population's disappearance is recorded; the other one's cadence never was, and it is
+what decides whether waiting is worth anything. Every `bail:ramp` on record, split on `ageMs`:
+```
+OLD browser (distinct 76-79, busiest path 3-24 lifetime requests)   8 ramps
+  09-06 03:29  124.6 min     09-11 05:30  610.8 min     09-15 15:16  372.2 min
+  09-08 03:42   85.4 min     09-12 15:26  383.0 min     09-16 03:52   52.0 min
+  09-10 17:53   57.5 min     09-14 16:00  253.0 min
+BURST (distinct 16, busiest path 16,583-80,244)                    18 ramps
+  ... 09-13 06:44, 09-14 09:04, 09-14 11:47, 09-15 09:04  <- and then nothing
+```
+- **THE OLD POPULATION FIRES ABOUT ONCE EVERY 1-2 DAYS AND THE LAST WAS 09-16 03:52** — which
+  is also **the last ramp of any kind**, 25 hours ago. So one is due, and the thing that has
+  actually stopped is the burst half.
+- **THE AGE BAND IS 52 TO 611 MINUTES, median ~190.** A browser younger than that has never
+  produced one; a browser is inside it for about ten hours.
+- **SO EVERY `restart-rc` RESETS THE ONLY CLOCK THAT CAN STILL FIRE.** The recorded reasoning
+  for stopping the campaign was that it targeted the absent population; the numbers say it did
+  something worse — the restart puts the browser back to age zero, which is the one age at which
+  the surviving population never fires. **Five forced restarts is five times the clock was
+  reset.** Leaving the box alone is not passive here; it is the experiment.
+- **THE CURRENT BROWSER STARTED AT OR AFTER 04:29:26** (`restart-rc (#428)` — a kill leaves no
+  teardown, so there is no `ageMs` to read and the start time comes from the command log). It
+  enters the band at **~05:21 UTC** and is inside it through the hold's **14:30 UTC** T−30
+  auto-login, which is itself an Okta navigation on a ~10-hour-old browser — the 09-11 611-minute
+  ramp's exact profile.
+- **READ `commit_used_mb`, NOT `rc_mb`, WHILE THE SCAN IS BLIND.** Baseline is ~7,040 MB of
+  43,774; a ramp charges ~32 GiB in ≤34 s and takes it to 35-47 GB. `rc_mb` has been NULL since
+  04:15:30 and cannot see one.
+
+#### THE CURE'S REOPEN DOES NOT WORK THE WAY ITS OWN HEADER SAYS, AND THE REAL MECHANISM IS BORROWED (2026-09-17)
+`recycleWedgedPage` closes the page "precisely so that whatever the loop awaits rejects with
+`Target closed` and the existing reopen path runs". **Read against the loop, that mechanism does
+not exist** — and the reopen is guaranteed by something better, written months earlier for an
+unrelated reason.
+- **EVERY PAGE-TOUCHING AWAIT IN THE RESIDENT LOOP IS INDIVIDUALLY `.catch()`ED** —
+  `readLiveToken`, `maybeAutoLogin`, `maybeWarmupLogin`, `maybeRehearse`, `oktaSessionAlive` and
+  `checkAndReport` all swallow and continue — and **a page close leaves the CONTEXT untouched**,
+  so nothing propagates out of the loop at all.
+- **WHAT REOPENS IS AN EXPLICIT CHECK AT THE TOP OF A 1-SECOND LOOP:**
+  ```js
+  if (!ctx.pages().length || page.isClosed()) { log('⚠ the RC window was closed — reopening it'); break; }
+  ```
+  `break` → the `finally` (`ctx.close()`, `clearInterval(renew)`) → `warmResident`'s OUTER
+  `for (;;)` relaunches. **Reopen latency is ~1 second plus whatever await was in flight**, and
+  it is bounded on every path: an in-flight `renewSession` on a throwaway tab is 45-70 s, and an
+  unbounded await on the wedged page rejects at the close and lands in the outer `catch`, which
+  reaches the same `finally`. Every route ends in a relaunch.
+- **AND WITHOUT THAT CHECK THE CURE WOULD BE A ZOMBIE-MAKER, WHICH IS THE PART TO KEEP.**
+  `probeResidentPage` returns `inconclusive` on a closed page (`page.isClosed()`), so **no strike
+  accrues and the cure cannot re-fire**; the loop keeps advancing, so **`HUNG_MS` cannot fire
+  either**. The keep-warm would spin for ever against a dead page with no session — strictly
+  worse than the wedge it replaced, and nothing anywhere would say so.
+- **SO A LINE WRITTEN FOR "somebody tidying up closed the visible window" IS NOW LOAD-BEARING
+  FOR A FEATURE IT PREDATES.** That is the shape this file records more than any other, and it
+  is pinned now rather than left to be re-derived: `src/lib/page-wedge.test.mts` asserts the
+  check exists, that it BREAKS rather than continues (a `continue` is the zombie with an extra
+  keyword), and that it sits AHEAD of the caught awaits — below them it still works, but
+  `readLiveToken` would fail a full iteration first and `checkAndReport` reports that as a dead
+  SESSION. A second guard pins the premise — that those awaits DO swallow — so the two cannot
+  drift apart and quietly make the reasoning wrong.
+- Three mutations, each verified to apply and to fail: the `isClosed()` test deleted, `break`
+  turned into `continue`, and `checkAndReport` made to propagate.
+- **I NEARLY FILED THE OPPOSITE FINDING.** Reading the caught awaits first, the obvious
+  conclusion is that the cure strands the keep-warm — which would have been reported as a
+  release-critical defect in the thing under test. The explicit check is forty lines below where
+  the reading stopped. **Trace to the loop's own top before concluding a close cannot be seen.**
+
+#### "THE OLD POPULATION HAS NO BURST" IS A CLAIM ABOUT THE RESIDENT PAGE, NOT THE RENDERER (2026-09-17)
+The `bail:ramp` counters were read for `distinct` and `ageMs` and never for `recentTotal`, which
+is the field that changes what the other two mean. All eight old-browser ramps:
+```
+09-16 03:52  age 52.0m   distinct=76  recent=4  lifetime=95
+09-15 15:16  age 372.2m  distinct=79  recent=0  lifetime=168
+09-14 16:00  age 253.0m  distinct=79  recent=0  lifetime=170
+09-12 15:26  age 383.0m  distinct=79  recent=0  lifetime=175
+09-11 05:30  age 610.8m  distinct=79  recent=0  lifetime=196
+09-10 17:53  age  57.5m  distinct=78  recent=0  lifetime=185
+09-08 03:42  age  85.4m  distinct=78  recent=0  lifetime=110
+09-06 03:29  age 124.6m  distinct=79  recent=0  lifetime=109
+```
+- **SEVEN OF EIGHT MADE ZERO REQUESTS IN THE 120 SECONDS BEFORE THE BAIL**, and 95-196 across a
+  browser life of 52-611 minutes — about one request every two to six minutes. **The resident
+  page is IDLE when this population ramps.**
+- **BUT THE COUNTER IS ATTACHED TO THE RESIDENT PAGE ONLY** (`requestCounter.attach(page)`), and
+  every Okta trip runs in a **throwaway tab** — which, because `signin.reservecalifornia.com`
+  and `www.reservecalifornia.com` share an eTLD+1, is **the same renderer process**. So the
+  traffic that could drive a promise-rejection storm in the renderer that ramps is **exactly the
+  traffic this counter cannot see.**
+- **SO THE DECOUPLING'S OLD-POPULATION LEG IS WEAKER THAN RECORDED.** "A busiest path of 3-24
+  lifetime requests" is not "this ramp had no burst" — it is "no burst **on the resident
+  page**", and the renderer's own traffic is unmeasured. The decoupling's other leg is
+  untouched: young ramps carry 16k-80k requests on one path and produce the same 32 GiB as
+  events whose counters are flat, which is a statement about the same instrument on both sides.
+  **Do not quote the old-population leg as independent evidence.**
+- **AND `distinct` IS NOT AN INDEPENDENT AXIS — it is a proxy for age.** A cold load touches 16
+  paths; a browser that has been up for hours of keepalive checks has touched 76-79. The two
+  populations were described as separating on `ageMs` AND `distinct` with nothing off-diagonal;
+  those are one axis read twice. **The BURST is the discriminating fact.**
+- **IT ALSO SHARPENS WHY 14:30 IS THE SHOT.** The old population ramps on an idle resident page
+  in a browser 52-611 minutes old — which is a renderer doing nothing until a tab navigates
+  through Okta in it. The hold's T−30 auto-login is exactly that, on a browser that will be
+  ~10 hours old.
+- **CLOSING THE BLIND SPOT IS `context.on('request')` RATHER THAN `page.on('request')`** — a
+  context event covers every page in it, which is the recorded one-line fix for the same gap in
+  the leak's own accounting. **NOT DONE**: it is bot-side, so it needs a box update, and an
+  update resets the browser age that is currently the experiment.
+
+#### THE REGION WALK IS THE MOST EXPENSIVE INSTRUMENT HERE AND ITS OUTPUT IS STORED NOWHERE (2026-09-17)
+Reading all eight old-browser ramps' stacks was one query away and returned nothing, and the
+reason is not that the walk did not run. **`bot_events`' `ramp-scan` detail stores
+`vmwalk: true` — a four-character BOOLEAN saying the walk completed** — beside `rcMb`, `maxPid`,
+`maxType`, `trigger`, `complete`, `ramFreeMb` and the three thresholds. **There is no text
+field, on any of the 29 stored scans, and no sibling table**: `bot_events` has exactly four
+kinds (`tab-close` 433, `request-counts` 147, `mem-dump` 77, `ramp-scan` 29).
+- **SO EVERY WALK FINDING IN THIS FILE CAME FROM A LIVE `tail-log`** — the 16,385 regions, the
+  allocation-base count, the protection histogram, the anonymous name census with its
+  file-backed control, `VMTHREAD`'s spinning main thread, `VMSTACK`'s `chrome.dll+0x18096c6`,
+  `VMSPAN`. Each was read by somebody who happened to be looking within the window before
+  `tail-log`'s 16,000 characters rolled.
+- **AND THE ONES NOBODY WATCHED ARE GONE FOR EVER.** Eight old-browser ramps happened; **two**
+  have a recorded stack, and they disagree (JIT-dominant at 57.5 min, `HandlerAdded`-dominant at
+  611 min). That is precisely why the age split is labelled a LABEL rather than an established
+  variable — **and the other six readings existed and were not kept.** The question cannot be
+  settled from stored data at any point in the future.
+- **IT IS EXACTLY THE FAILURE PR #169 FIXED FOR THE ALLOC READINGS AND NEVER FOR THE WALK.**
+  That change moved attributions into Postgres because *"the 2026-08-23 ramp attributions were
+  lost to a 16,000-character `tail-log` window"*. The walk spawns PowerShell, compiles C# and
+  sweeps a whole address space — the costliest thing this investigation does — and it reports
+  into the one place that cannot keep it.
+- **THE FIX IS THE SHAPE ALREADY IN THE FILE**: store the walk's text on the `ramp-scan` event,
+  capped and NUL-stripped like every other `bot_events` detail. **NOT DONE** — it is bot-side, so
+  it needs a box update, and an update resets the browser age that is currently the experiment.
+  **Do it in the same update as `context.on('request')`**, which closes the counter's own blind
+  spot and has the identical cost.
+- **UNTIL THEN, READ `tail-log rc-keepwarm` WITHIN MINUTES OF A `ramp-scan` EVENT.** A
+  `ramp-scan` row in `bot_events` is a receipt that a reading existed, not the reading.
+
+### THE 08:00 FAST LANE HAS NEVER ONCE BEEN OBSERVED RUNNING (2026-09-17)
+
+A real user's hold was lost at the 15:00 UTC release and the owner asked the only question that
+matters: *"I need to know if the burst fired, because that will prove one of two things. We still
+got beat even with a 500ms search, or our burst broke somehow and that needs to be fixed."*
+
+**NEITHER COULD BE ANSWERED, AND THE REASON IS THAT THE BURST HAS NO DURABLE RECORD.** It has been
+live since 2026-09-03 and across all of history there is not one stored trace of it:
+```
+bot_commands  output ilike '%fast attempt%'      0 rows
+bot_commands  output ilike '%until 15s before%'  0 rows
+rc_hold_requests  a burst summary in a note      0 rows
+```
+
+- **ON A LOSS THE SUMMARY RIDES IN `error`, AND THE SLOW LANE OVERWRITES IT.**
+  `reportCartFailure` deliberately keeps a hold `requested` while the feed's 20-minute grace is
+  open — which is correct, and is what let #76 cart at T+7:14 once a seat freed on 08-13 — so the
+  runner retries every 15 s and **~110 later failures each overwrite the one note that carried the
+  burst.** The instrument is destroyed by a feature working as designed.
+- **ON A WIN IT IS NOT REPORTED AT ALL.** `describeBurst` goes to `log(...)` and
+  `report({ ok: true, cartKey, cartEntryKey })` carries no burst field. So the 09-04 `#L034` cart
+  at **T+1.44 s** — the fastest at any real 08:00 release, and the best evidence the lane has ever
+  produced — is a log line nobody kept.
+- **AND THE LOG IS NOT A RECORD.** `tail-log` returns 80 lines by default, `Math.min(400, …)` at
+  most, then a 16,000-character cap, **with no offset and no rotation**. On the day itself the
+  runner log reached back only to 15:13 and the keep-warm only to 15:15 — minutes after the event.
+
+**SO A CART THAT FAILED AND A LANE THAT NEVER ARMED PRODUCED THE IDENTICAL EVIDENCE: NONE.** That
+is the shape this file records more than any other, and it was sitting on the one path where the
+product either gets somebody a campsite or does not.
+
+#### THE LOGIC IS INTACT, AND INTACT LOGIC IS NOT EVIDENCE THAT IT RAN
+Everything checkable from a session checks out, and none of it answers the question:
+- `worker/cart-burst.test.mts` **21/21**.
+- `isNotAvailable("The unit is not available for the date(s) specified.")` -> **true**, so RC's
+  own refusal is retryable and not mistaken for a cap.
+- Replayed against the day's real inputs, `shouldRetryBurst` gives **31 attempts from T-14.0 s to
+  T+31.0 s**, stopping on the WINDOW and not the budget (40).
+- `cart-burst.mjs` is present and imported at the box's own commit `6fc7292`, the feed's 90 s lead
+  and the runner's 15 s poll both demonstrably fired that morning.
+**None of that says the runner arrived before T on this release**, which is the whole question.
+
+#### THE TWO-WAY SPLIT OMITS THE READING THAT MATTERS, AND IT IS THE ONE TO FEAR
+The owner's framing was "beaten, or broken". There is a third, and it is the quiet one:
+
+| what the row says | what happened | where the fault is |
+|---|---|---|
+| many attempts | RACED and lost | nowhere — the burst works |
+| **exactly one attempt** | the lane ARMED and declined to retry | **ours** — a session, a wedge, a WAF refusal; the reason names it |
+| **NO ROW AT ALL** | the runner never arrived before T | **ours** — the burst did not run |
+
+**ONE ATTEMPT IS NOT A RACE**, and reporting it as one sends the next reader to RC's side of a
+fault that is ours. **NO ROW is the owner's feared case**, and it is the only one that cannot be
+distinguished by adding detail to an existing record — it has to be a row that is guaranteed to
+exist whenever the lane armed.
+
+#### WHAT SHIPPED: ONE `cart-burst` EVENT PER HOLD PER RELEASE PASS
+`bot_events` (migration 075) is already in Postgres, already read by a readout, and already
+survives a rolling log — the exact problem PR #169 solved for the alloc readings and nobody had
+applied here. `cart-burst` joins `BOT_EVENT_KINDS` and the runner emits on **both** paths.
+- **GATED ON `waitedForRelease`, NOT ON ATTEMPTS.** Ungated, the ~110 ordinary retries each emit a
+  row and an absent row then means nothing at all. Gated on the burst having RETRIED, the
+  one-attempt reading is discarded — which is the second row of that table, and it is the one that
+  says the fault is ours. Both mutations are guarded.
+- **`firstOffsetMs` IS MEASURED (`laneOpenedAt - releaseMoment`), NEVER `-BURST_LEAD_MS`.** The
+  constant is arithmetic about where we MEANT to wake; only the measurement can show the sleep
+  overshooting, which is the failure mode that would cost a site while every constant read right.
+- **THE OFFSETS ARE SIGNED.** `T-14.0s` is the only way this project can ever record an early
+  lapse, and the 09-04 and 09-10 release-window readings say RC does let go before its own
+  predicted release.
+- **FIRE-AND-FORGET, NEVER AWAITED.** A diagnostic that can delay the thing it observes is not
+  worth having at 08:00:00 — the rule `recordClientReports` already follows.
+- **THE DETAIL CARRIES RC'S OWN UNIT LABEL AND NOTHING ELSE.** No cart key, no entry key, no
+  token: do not collect a field you then have to filter. An OAuth code and a password have each
+  reached a report in this repo by exactly that route.
+- **THE READOUT PRINTS IT FIRST**, above every memory section, because those are about a spare
+  machine and this is about whether a real person got the campsite they were promised — and its
+  **empty branch says an absent row is the finding**, not an all-clear.
+
+#### FOUR OF THE TWELVE GUARDS SURVIVED THEIR FIRST MUTATION, AND TWO MUTATIONS WERE THE WRONG RULE
+Fourteen mutations, each asserted to APPLY before its red was trusted.
+- **`void 0 && noteBurst(...)` PASSED BOTH EMIT GUARDS**, and `void 0 && cartBurstReading(x)`
+  passed the readout guard — the call present and dead, which is how a dead `maybeMemoryDump`
+  once passed 33 tests. All three are anchored at the START OF A LINE now, so neither `void 0 &&`
+  nor `if (false)` matches.
+- **TWO OF MY OWN MUTATIONS APPLIED AND EXPRESSED THE WRONG RULE.** One replaced the FIRST
+  occurrence of `cartBurstReading(` — which is the **import line**, not the call site. The other
+  replaced one line of the readout's empty branch and left the sentence the guard anchors on
+  intact. **A mutation that applies is not the same as a mutation that expresses the rule**, and
+  the harness can only check the first: read the mutated region, not the exit status.
+- **AND THE ABSENT-READING FAILURE WAS INSIDE THE INSTRUMENT ITSELF.** `cartBurstReading` dropped
+  the timing window entirely when an offset was missing, so *"we recorded no timing"* and *"the
+  timing was not worth showing"* rendered identically. Its own guard caught it; both spellings are
+  named now (`T?` on the single-offset branches, `(no timing recorded)` on the window).
+
+#### TWO NEIGHBOUR GUARDS BROKE, AND ONLY ONE OF THEM WAS WRONG
+- `worker/bot-events.test.mts` pins `BOT_EVENT_KINDS` **by value**, on purpose, so adding a kind
+  is a DECISION rather than a drift. Taken, with the reason written in. That guard did its job.
+- `worker/runner-wedge.test.mts` bounded its pre-release-hold slice at **"under 20 lines"**.
+  Twenty lines of burst instrumentation landing legitimately inside that region took it to 29, so
+  it failed over behaviour that had not moved. **Fourth time a window measured in lines or
+  characters has broken a guard here**, after `rehearsal.test.mts`'s 220, `rc-login-script`'s 500
+  and the US-spelling guard's indentation. Re-anchored on what it was really protecting —
+  **exactly one ticking sleep in the region, inside the `waitedForRelease` gate** — and
+  re-verified against both regressions it exists for.
+
+#### WHAT THIS DOES NOT DO
+**It does not make the burst faster and it does not prove it works.** It makes the next contested
+release answerable, and until one happens the row count is zero — which is the expected state and
+not a fault. **BOT-SIDE**, so it is inert until the box updates; confirm with
+`npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`.
+
+#### AND THE POLLER'S 15 SECONDS IS NOT THE CART'S CADENCE — I QUOTED IT AS IF IT WERE
+Asked whether the site was carted, I answered with `rc-hold-outcome.ts`'s verdict — *"the poller
+never saw this unit open at any 15-second sample"* — and the owner corrected it: *"Why was it only
+checking every 15 seconds? I thought we changed to a burst."* **They were right.** Those are two
+independent loops on two different machines: the **Fly poller** samples availability every 15 s,
+and the **mini-PC hold runner** carts at 500 ms across a 45-second window. The sentence is about
+detection and says nothing about the cart.
+- **AND I THEN READ THE POLLER'S SILENCE AS EVIDENCE THE SITE NEVER OPENED.** The owner rejected
+  that too — *"these are very sought-after sites that will be picked up in less than 15 seconds"* —
+  and the arithmetic is on their side: `claimNotification` is stamped on every cycle a site is
+  open, so an empty `watch_site_alerts` means zero **sampled** open cycles, which at a 15-second
+  cadence is exactly what a sub-15-second flip looks like. **An instrument that cannot resolve the
+  event is not evidence about the event.** Both corrections came from the owner, and both are the
+  reason this instrument exists.
+
 ## Open / next session
+
+#### 2026-09-17 — THE CART BURST RECORDS ITSELF NOW, AND IT NEEDS ONE CONTESTED RELEASE
+
+**Read "THE 08:00 FAST LANE HAS NEVER ONCE BEEN OBSERVED RUNNING" above before anything else.**
+A real user's Carpinteria hold (`#A124`, rc-357) was lost at the 15:00 UTC release — RC answered
+*"The unit is not available for the date(s) specified."*, the row went `failed` at 15:20:01Z and
+`notifyHoldMissed` told the user on all three channels — and **nothing could say whether the
+500 ms lane fired.** It does now.
+
+- **THE ROW COUNT IS ZERO AND THAT IS THE EXPECTED STATE.** One `cart-burst` event is emitted per
+  hold per release pass that waited for the release, so the first one arrives on the next
+  **tapped** hold. Untapped offers produce nothing and that is not a fault.
+- **HOW TO READ THE FIRST ONE.**
+  `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` — **CART BURSTS prints first.**
+  Many attempts = raced and lost, the burst works. **Exactly one attempt = the lane armed and
+  declined to retry, and the fault is OURS** — the `reason` names it. **No row at all, for a hold
+  that was tapped and whose release has passed = the runner never arrived before T.** Cross-check
+  against `scripts/rc-holds-readout.mts` before reading silence as quiet.
+- **DO NOT read a `failed` hold as the burst being broken, or as a race lost, without that row.**
+  That is the whole reason it exists.
+
+**BOT-SIDE — IT IS INERT UNTIL THE BOX UPDATES.** Confirm with
+`npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`** (it COALESCEs and can
+show a stale sha beside a live heartbeat).
+
+#### THE CAPTCHA BLOCK IS OVER — DO NOT ACT ON IT
+The 12:00 UTC warm-up was stopped by an image challenge on Okta's email step and the handover
+said a human sign-in was needed before 14:30. **It was not, and both predictions were falsified by
+the box itself:** the session repaired unattended, `maybeAutoLogin` ran four trips at 14:34-14:37,
+and `session_live_since` is **14:37:05**. The 15:00 release had a live session; the site was lost
+to RC, not to the sign-in. **One CAPTCHA is an event, not an escalation** — the reading that would
+matter is whether the next unattended sign-in after a human one also meets one, and nobody has
+that.
+
+#### STATE, READ RATHER THAN REMEMBERED (2026-09-17 17:00 UTC)
+```
+master          78f5fdf   (#358 merged)
+box             6fc7292   heartbeat 6s, session ok, token 55m, okta ALIVE to 09-18 04:40
+live holds      0         -> a box update costs the session and nothing else
+bot_events 48h  mem-dump 27 · tab-close 87 · request-counts 6 · ramp-scan 2 · cart-burst 0
+```
+
+#### AND I BROKE THE LANES RULE WHILE ENFORCING IT — AGAIN
+Merged #358 at 16:41 and started a local `npm run verify` while master's CI was running it; four
+`claim.test.mts` tests failed and **passed 14/14 alone in a clean window minutes later.** The
+three conditions held (the diff cannot reach `worker/claim.ts`, it passes alone, and master's push
+run is timestamped 16:41:40-16:50:28Z over the local one), so the re-run was honest — but the
+breach was mine, and it is the *named* one: **a merge IS a test run.** Third recorded time, and
+the second by somebody quoting the rule in the same session.
+
+#### STILL OPEN, UNCHANGED
+- **#22** `hold-fixture-invisibility` borrows `SELECT id FROM users LIMIT 1` — a REAL account with
+  a phone — and asserts `holdAtRisk` returns its numeric fixture. Give it its own inserted,
+  phoneless user. Real-DB and in `worker/**`, so verifying it restarts all three pollers.
+- **#26** the request counter is attached with `page.on('request')` on the RESIDENT page only, so
+  workers and every throwaway tab are invisible. `context.on('request')` closes two thirds of it.
+  Bot-side; land it with something else bot-side.
+- **The leak is diagnosed, contained and NOT fixed.** `base::SharedMemorySecurityPolicy`'s 32 GiB
+  cap is the ceiling; the cure (recycle the wedged page) has fired **exactly once** in production
+  and one firing is not a rate.
+
+#### THE BOX'S `wedge-recycle` EVENT IS NEARLY EMPTY, AND THE LOG THAT CARRIES THE PROOF ROLLS IN 20 MINUTES (2026-09-17)
+
+The arm's reachability is now traced rather than argued from the sha. In the box's own
+`6fc7292` source the probe sits at code line 2240 of the watchdog timer, **between the 90 s
+stall trigger and `HUNG_MS`**, gated on nothing but
+`!bailing && !wedge.inFlight && now - lastProbe >= WEDGE_PROBE_EVERY_MS` — no `return` at the
+timer's statement level precedes it, and it is **above** the `let memory` block at 2293, which
+is the second confirmation that the blind scan cannot reach it. The import is at line 104, so
+the module loads or `rc-keepwarm.mjs` does not start at all, and the process is beating. **The
+fix-present-and-inert check passes**, by three independent routes.
+
+**WHAT THE TRACE ALSO FOUND IS THAT THE FIRING WILL BARELY SPEAK FOR ITSELF.** The box emits:
+
+```js
+void reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'wedge-recycle' }));
+```
+
+**The request counts and the reason. Nothing else.** `closeMs`, `tokenKept`, `strikes` and the
+three memory fields are in the version this session wrote and are NOT on the box — deliberately,
+because a box update resets the browser's clock to zero and the surviving ramp population's band
+starts at 52 minutes. So the durable record of the first firing is a bare counter snapshot, and
+**everything that says the cure WORKED — the `♻` line, `token on the way out`, `closed the wedged
+page in Nms`, and the absence of a `✗ RAMP`/`✗ WEDGED` beneath it — exists only in
+`logs\rc-keepwarm.log`.**
+
+- **AND THAT LOG ROLLS IN ABOUT TWENTY MINUTES, MEASURED.** `tail-log` returns the last 16,000
+  characters, and the keep-warm prints **two stand-down lines every 60 seconds**
+  (`auto-login stood down: the release is Nm away…` and `warm-up stood down: …`), which is
+  ~150 chars/minute of pure repetition. A 60-line read at 05:25 reached back to **04:57** — 28
+  minutes, and that window is mostly the two repeating lines. **PR #358's skip dedupe is the fix
+  and it is bot-side**, so it buys nothing until the box updates, which is the thing being
+  deliberately avoided.
+
+###### AND THE WINDOW WAS NEVER 16,000 CHARACTERS — IT IS EIGHTY LINES, AND `:400` IS FREE (2026-09-17)
+Eight places in this file say `tail-log` "rolls at 16,000 characters", including the entry
+directly above. **Read in `bot-commands.mjs` rather than remembered: the handler slices
+`DEFAULT_TAIL = 80` LINES first, and `MAX_OUTPUT = 16_000` is a SECOND cap applied after.** The
+binding constraint on every log reading this repo has ever taken is the line count, and the
+argument accepts an override — `tail-log <name>:<n>`, `Math.min(400, …)` — that **nothing has
+ever passed.**
+- **MEASURED THE SAME MINUTE, BOTH WAYS.** `tail-log rc-keepwarm` returned 07:19:07 → 07:57:32
+  (**38 minutes**); `tail-log rc-keepwarm:400` returned 06:29:30 → 07:58:32 (**89 minutes**, 188
+  lines, truncated by `MAX_OUTPUT`). **One colon is 2.4x the evidence**, and it needs no box
+  update — the parsing has been on the box since the command was written.
+- **THE SIGNAL-TO-NOISE IS 5 IN 188.** Across those 89 minutes exactly five lines carry
+  information, all of them the 20-minute keepalive; the other 183 are the two stand-down lines.
+  **So the ceiling with `:400` is ~89 minutes of wall clock and ~5 useful lines** — which is why
+  #358's dedupe is still the real fix rather than a tidy-up: it does not widen the window, it
+  raises what the window CONTAINS, and at this ratio that is the difference between 89 minutes
+  and days.
+- **THE ENTRY ABOVE CONTAINS ITS OWN REFUTATION AND IT WAS READ PAST.** *"A 60-line read at 05:25
+  reached back to 04:57"* — somebody passed a LINE COUNT, watched it decide the window, and wrote
+  the constraint up as characters in the same sentence. Same shape as unit 45719 and the
+  duplicate-facility story, in a paragraph six lines long.
+- **WHAT IT COST: one wrong conclusion, immediately.** A default read at 07:56 showed the log
+  starting at 07:19 and was about to be written up as *the keep-warm restarted at 07:19 and
+  truncated its log* — a `Tee-Object` theory with a plausible mechanism, a plausible consequence
+  (the current browser is 38 minutes old, not 3.5 hours, so it is OUTSIDE the old-browser band)
+  and no truth in it whatever. **Reading the handler is what stopped it.**
+- **THE CAPTURE WATCH ASKS FOR `:400` NOW.** Nothing else in the repo calls `tail-log`
+  programmatically, so that is the whole blast radius.
+- **SO THE CAPTURE MONITOR IS LOAD-BEARING, NOT A CONVENIENCE.** It polls `bot_events` every
+  90 s and pulls `tail-log rc-keepwarm` the moment a `wedge-recycle` or a ramp appears. 90 s of
+  detection plus a bot-ask round trip is ~2.5 minutes against a 20-minute window — comfortable,
+  and it is the only thing standing between a firing and a firing nobody can read.
+- **THE TRADE WAS TAKEN DELIBERATELY AND IS WORTH RESTATING.** Updating the box would put all
+  six fields into Postgres where nothing can roll them — and would cost the RC session plus the
+  52 minutes the browser has already aged into the band. At one ramp every 6-26 hours the update
+  is cheap in expectation and the reading is better; what decides it the other way is that the
+  monitor already closes the gap, and the session is release-critical with a real user hold at
+  15:00 UTC. **If the monitor ever dies, that calculus inverts** — re-arm it or update the box.
+
+**AND THE DROUGHT IS AT THE LONG END OF ITS OWN DISTRIBUTION.** Commit ramps over 15 GB:
+09-15 09:03, 09-15 15:16 (+6.2 h), 09-16 03:51 (+12.6 h), then nothing for **25.6 hours**. The
+observed gap range is 6-26 h, so this is the tail rather than a new regime — **do not write the
+drought up as the cure working; the cure has never fired.**
+
+
+#### THE DROUGHT IS THE SILENT SELF-SUSTAINING REGIME, AND FORCING IS NOT AVAILABLE TO ME (2026-09-17)
+
+The cure has still never fired, and the reason is now read off three instruments rather than
+guessed. **26.1 hours since the last ramp, against an observed gap range of 2.3-18.6 h** — so
+the drought is past the recorded maximum and wanted an explanation. (That range is the
+four-day recount at the 1,500 MB onset bar; the entry above quotes 6-26 h at the 15 GB commit
+bar over a shorter window. **They are different bars, not a contradiction** — quote the bar.)
+
+**THE FIRST CANDIDATE — "no Okta trip, therefore no trigger" — IS HALF RIGHT AND THE HALF THAT
+IS WRONG IS THE ONE I NEARLY PUBLISHED.** `bot_events` carries **33 `tab-close` events in 30
+hours**, so trips have been firing constantly. What it also carries is where they stop:
+```
+09-16 17:39 -> 22:43   ELEVEN trips, every one 68.3-69.6s
+09-17 00:13 -> 04:31   EIGHT trips, 11.4 / 11.5 / 45.2 / 46.7 / 46.9 / 48.6 / 48.6 / 49s
+09-17 04:31 -> now     NOTHING, 1.5 hours
+```
+- **THE 21-SECOND STEP-DOWN IS NOW WELL SAMPLED** — eleven trips at ~69 s, a clean break, then
+  eight at <=49 s. That entry was one observation and is now nineteen. **Duration and cost track
+  each other seven for seven**, so a regime of 47-49 s trips is a regime of cheap trips.
+- **AND EVEN THE 69 s BAND DID NOT RAMP.** It ran 17:39-22:43 on 09-16 with nothing. The last
+  ramp predates all nineteen.
+- **THE SILENCE SINCE 04:31 IS THE SELF-SUSTAINING REGIME, READ IN THE KEEP-WARM'S OWN LOG:**
+  `token exp in 2m` at 05:29:26 and `token exp in 41m` at 05:49:26 with **`renewed=no`** —
+  the SPA re-minted it, unaided. `planRenewal` stands down while a token is alive, so there is
+  no Okta trip to be the trigger. **That regime has been measured to run TEN HOURS.**
+
+**SO WAITING IS WAITING FOR A REGIME TO END, AND THE OLD-BAND EXPERIMENT HAS ALREADY BEEN RUN
+AND LOST — TWICE, OVERNIGHT.** `request-counts` carries `ageMs` at every graceful teardown:
+```
+09-16 03:00:46  teardown    browser lived 704.2 min   <- no ramp
+09-16 22:49:07  teardown    browser lived   7.1 min
+```
+**704 minutes is the longest browser life on record and it produced nothing**, and hourly peak
+commit has been **7,200-7,800 MB for 26 straight hours** with one 45,175 spike at 09-16 03:00.
+So "let a browser age into the 52-611 minute band" is not an experiment waiting to run; it is
+an experiment that ran to the top of the band and failed.
+
+**AND THE ONE LEVER LEFT IS NOT AVAILABLE IN THIS SESSION.** `restart-rc` — 2-for-4, cheap, no
+campsite, no password, and the recipe whose cold RC home-page load IS the young-population shape
+— is refused by the harness as *Interfere With Workloads*. It is a permission denial, not a
+technical failure, and it is not to be worked around. **So a session with no human present
+cannot force a ramp at all**, and the honest state is that the cure's production proof waits on
+an event nobody here can produce.
+- **`test-login` IS NOT A SUBSTITUTE, and it is the tempting one.** It navigates on the RESIDENT
+  renderer, which is the right renderer — and with Okta ALIVE it is answered from the cookie in
+  **eleven seconds**, which is the cheap cell and has never ramped. `window_h` read **11.9997**
+  all session, i.e. the ROLLING window our own probe refreshes, so the expensive cell is not
+  reachable either.
+
+**THE BLIND SCAN MAKES THIS THE CLEANEST TEST BED THE BOX WILL EVER BE, WHICH IS AN ARGUMENT
+FOR SPENDING AN EVENT RATHER THAN SAVING ONE.** `rc_mb` has been NULL since 04:15:31, so
+`readLatestMemory` returns `known: false` and **the ramp arm and both memory dumps are
+disabled** — the cure is first in the timer and uncontested, with only `HUNG_MS` behind it at
+twelve minutes. That state is not durable (it cleared for one sample already), so a ramp
+arriving while it holds is worth more than one arriving later.
+- **IT CLEARED AT 09:41:11 UTC AND THE WINDOW IS SHUT (2026-09-17).** So the ramp arm,
+  `ramp-scan`, the region walk and the baseline memory dump are all **re-enabled** — the 11:39:47
+  `mem-dump (baseline) in 314ms` is that working. **Do not plan around the clean test bed**; it
+  lasted about five hours and nobody established what ended it, exactly as nobody established
+  what started it.
+  - **AND I FIRST DATED IT 10:33, WHICH IS THE THREE-STATE TRAP THIS FILE RECORDS, COMMITTED BY
+    SOMEBODY READING THE ENTRY THAT RECORDS IT.** 09:41:11 is the first sample with a real
+    reading; it reads **`rc_mb=0 procs=0`**, which is the `C|` count saying *"the scan RAN and
+    found none of ours"* — true, because the old browser was already gone. 10:33 is merely the
+    first sample with a browser to count. **`NULL` = we could not look; `0` = we looked and there
+    was nothing; a number = we looked and here it is.** Reading the recovery off the first
+    non-zero row dates it three quarters of an hour late and silently discards the one sample
+    that proves the instrument came back before the subject did.
+  - The run was not unbroken either: one lone `rc_mb=0 procs=0` at **04:27:32** sits between two
+    NULL stretches (04:15:31 and 04:29:32). **A blind scan that recovers for one tick and goes
+    blind again is not the same as a steady outage**, and nothing explains either edge.
+
+#### AND A `Monitor` CANNOT CARRY A LOAD-BEARING WATCH — IT EXPIRES AT 30 MINUTES BY CONSTRUCTION
+This file recorded, hours earlier and in my own words, that *"the capture monitor is
+load-bearing, not a convenience"* and that *"if the monitor ever dies, that calculus inverts"*.
+**The monitor then died on schedule** — `Monitor expired after 30m with no events delivered` —
+because **`timeout_ms` is capped at 1,800,000 ms**. So a watch built that way is guaranteed to
+lapse repeatedly, and every re-arm leaves a gap in which a firing can land and its log can roll.
+- **THE RIGHT SHAPE IS A BACKGROUND BASH TASK WITH A TERMINATING CONDITION**, which has no cap
+  and exits exactly once when it has something to say. The watch script already exits on each of
+  its terminal signals, so it was a `Monitor` only by habit.
+  - **VINDICATED THE SAME DAY: a background bash task caught the 12:00 CAPTCHA.** It slept to two
+    fixed wall-clock times, pulled `tail-log rc-keepwarm:400` and the surrounding `bot_events`
+    rows, and completed — so the day's most consequential reading survived a session restart that
+    had already killed one `Monitor`. **The evidence path held because the watch had no timeout to
+    expire.**
+- **THE COST OF GETTING THIS WRONG IS THE WHOLE EVIDENCE PATH**, because the box's
+  `wedge-recycle` event carries only the request counts and the log rolls in ~31 minutes
+  (measured again today: a 70-line read at 06:00 reached back to 05:29, and all but four lines
+  of it were the two stand-down lines PR #358 exists to dedupe).
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
 
@@ -11078,6 +13087,42 @@ file, one condition, one log line.
 - **EXERCISED OFF-BOX, WITH NO RAMP.** `ramp-arm-probe.mjs` replays the real 09-10 04:25:09
   reading (rc 2,366 under the bar, commit 38,596 over it) against a real Chromium and asserts the
   trigger, plus the older-box case. Nine mutations, each verified to APPLY and to fail.
+
+##### AND THE PROBE'S `fail()` DID NOT FAIL — three real breaks reported as exit 0 (2026-09-17)
+The commit-bar ungating (`readLatestMemory` carrying commit on the rc-blind branch) had one
+untested link: the **real writer into the real reader into the real decision, on the blind
+shape**. Scenario 1c drives it, and three mutations that genuinely break that chain were each
+**detected, printed with the correct diagnosis, and reported as `exit 0`**.
+```
+let verdict = 1;
+const fail = (msg) => { console.log(`x ${msg}`); };   <- logs; records NOTHING
+...
+verdict = ok ? 0 : 1;                                  <- reads a flag `fail` never sets
+```
+- **HALF THE ARMS SET `ok = false` BESIDE THEIR `fail()` AND HALF DID NOT**, so the file's
+  correctness depended on every future arm remembering a second statement. Scenario 1b — the
+  commit bar's own guards — was one of the halves that did not. **Fixed as a CLASS**: `fail()`
+  sets its own flag and the verdict reads it. Fixing the instances would have left the next arm
+  exposed, which is exactly how this one got in.
+- **IT IS THE HOUSE SHAPE INSIDE THE INSTRUMENT BUILT TO ESCAPE IT.** `ramp-arm-probe.mjs`
+  exists because the trigger path was only ever tested by waiting for a ramp; a probe that
+  cannot fail a build is the same defect one level up — it runs, it reports, and a green proves
+  nothing. **Same family as `status = 'sent'` meaning only "Twilio returned 2xx".**
+- **THE TELL IS AVAILABLE AND CHEAP: read the EXIT CODE, not the output.** Every one of those
+  three runs printed `x the blind chain did not fire ...` followed by `x THE TRIGGER PATH DOES
+  NOT HOLD` — the diagnosis was perfect and the status code said pass. **A mutation harness that
+  greps for a failure STRING would have caught it and one that reads `$?` would not**, which is
+  the opposite of the usual advice and is why the guard pins the pairing rather than the output.
+- `worker/rc-mem-dump.test.mts` pins `fail()` recording, the verdict reading what it records,
+  and the flag starting clean — three mutations, each verified to APPLY and to fail. It is
+  structural because **the defect is invisible from a passing run**: a probe with a broken
+  `fail()` and a probe with nothing to report write the identical output.
+- **AND THE HARNESS DESTROYED THE FIX MID-RUN, FOR THE SEVENTH RECORDED TIME.** `git checkout --`
+  after the first mutation reverted the still-uncommitted `fail()` repair, so the next two
+  reported `!! ANCHOR NOT FOUND` against a file that no longer contained the code under test.
+  **Commit before mutating** — written down five times in this file, read this session, and
+  broken by the person reading it.
+
 - **`tsconfig.worker.json` CAUGHT WHAT THE SUITE COULD NOT.** The JSDoc `@returns` on
   `readLatestMemory`/`rampBailDecision` is what TypeScript reads, so the new fields were invisible
   to the type checker until it was updated — eight errors the tests were perfectly happy with.

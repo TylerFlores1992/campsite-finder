@@ -9,9 +9,90 @@ only copy of anything — the ten items that were, got folded into `CLAUDE.md` b
 stale, delete it rather than striking it through.** Strikethrough belongs in `CLAUDE.md`, where the
 correction is itself the record; here it is just weight.
 
+
+## 0. FIRST: THE CART BURST NOW RECORDS ITSELF — READ THE FIRST ROW CAREFULLY
+
+**Read `CLAUDE.md` → "THE 08:00 FAST LANE HAS NEVER ONCE BEEN OBSERVED RUNNING".**
+
+On 2026-09-17 a real user's hold (`#A124`, rc-357, Carpinteria SB — Anacapa) was lost at the
+15:00 UTC release — RC answered *"The unit is not available for the date(s) specified."*, the row
+went `failed` at 15:20:01Z, and the user was told automatically on all three channels. The owner
+asked the only question that matters: **did the 500 ms burst fire?** Nothing could say.
+
+The burst has been live since 2026-09-03 and **has never once left a durable trace**: on a loss
+its summary rides in `error`, which ~110 slow-lane retries then overwrite while the hold stays
+`requested` for its 20-minute grace; on a win it goes only to the log; and `tail-log` rolls at
+80-400 lines / 16,000 characters with no offset and no rotation. Across all history,
+`output ilike '%fast attempt%'` returns **0 rows**.
+
+**IT EMITS A `cart-burst` BOT EVENT NOW**, one per hold per release pass that waited for the
+release — in Postgres, where nothing can overwrite or roll it away.
+
+- **THE ROW COUNT IS ZERO TODAY AND THAT IS CORRECT.** The first arrives on the next **tapped**
+  hold. Untapped offers produce nothing.
+- **`NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` — CART BURSTS PRINTS FIRST.**
+
+| the row says | what happened | where the fault is |
+|---|---|---|
+| many attempts | raced and lost | nowhere — the burst works |
+| **exactly one attempt** | the lane armed and declined to retry | **ours** — the `reason` names it |
+| **no row at all** | the runner never arrived before T | **ours** — the burst did not run |
+
+- **ONE ATTEMPT IS NOT A RACE.** Reporting it as one sends you to RC's side of a fault that is
+  ours. **NO ROW is the case the owner feared**, and it is why the event is gated on
+  `waitedForRelease` and *not* on the burst having retried.
+- **CROSS-CHECK AN ABSENCE** against `scripts/rc-holds-readout.mts` before reading silence as
+  quiet: no row is only a finding for a hold that was tapped and whose release has passed.
+
+**BOT-SIDE — INERT UNTIL THE BOX UPDATES.** `npx tsx scripts/bot-ask.mts git-status`, never
+`autocart.bot_version`.
+
+**AND THE POLLER'S 15 SECONDS IS NOT THE CART'S CADENCE.** `rc-hold-outcome.ts` says *"the poller
+never saw this unit open at any 15-second sample"* — that is the **Fly poller**, a different loop
+on a different machine from the **mini-PC hold runner**, which carts at 500 ms across T-15s..T+30s.
+Do not quote one in answer to a question about the other, and **do not read the poller's silence
+as the site never opening**: `claimNotification` stamps every *sampled* open cycle, so at 15
+seconds a sub-15-second flip is invisible by construction.
+
+
+## 0a. THE MERGE IS DONE — #358 IS IN, #360 IS THIS BRANCH
+
+**#358 merged 2026-09-17 16:41 UTC as `78f5fdf`.** Its worker deploy ran and master's CI went
+green. **#360 (`claude/cure-forcing-readings`) now also carries the `cart-burst` instrument** and
+has master merged into it (both conflicts resolved keep-both, exactly as staged):
+
+- **`worker/rc-mem-dump.test.mts`** — kept #358's comment on `scripts/cdp-thread-probe.mjs` (it
+  explains WHICH CDP domains survive a wedged main thread) **and** #360's
+  `scripts/cure-end-to-end.mjs` entry. The path is listed once; losing either leaves a probe that
+  can rot silently.
+- **`CLAUDE.md`** — both appends kept, master's 09-16 block first so the dates stay in order.
+
+**`rc-keepwarm.mjs` auto-merged**, as the dry run predicted — the risky file needed nothing.
+
+**THEN UPDATE THE BOX.** It carries three bot-side things now: `wedge.silent` (the probe-margin
+instrument), the decaying recycle budget, and **the `cart-burst` event**. The update is itself a
+forcing lever — it restarts the browser cold on RC's home page, which is the BURST population's
+shape.
+
+> **The per-process scan is HEALTHY — it cleared at 09:41:11 UTC**, so `stop-all`, `stop-rc` and
+> `orphan-sweep.mjs` can match `--user-data-dir` and an update costs the ordinary ~11 minutes.
+> **Confirm from one row of `chromium_memory_samples` rather than this line** — and read the three
+> states apart: `NULL` = could not look, `0` = looked and found none of ours, a number = looked and
+> here it is.
+>
+> **AFTER THE UPDATE:** `bot-ask list-processes` should show ONE `rc-keepwarm.mjs` node and one
+> `rc-hold-runner.mjs`. Repeated `starting: node rc-keepwarm.mjs` in `restarts.log` (**Pacific!**)
+> inside ten minutes is the crash-loop, and the remedy is a human at the box.
+
+**A MERGE IS A TEST RUN — AND THIS SESSION BROKE THAT RULE AGAIN.** #358 was merged at 16:41 and a
+local `npm run verify` started while master's CI ran the same suite against the same production
+database; four `claim.test.mts` tests failed and passed **14/14 alone** minutes later. The three
+conditions for an honest re-run all held, but the breach was the named one. **Do not merge and then
+verify locally.**
+
 ---
 
-## 0. Ground yourself — four commands, in this order
+## 0b. Ground yourself — four commands, in this order
 
 ```bash
 curl -sS "$HTTPS_PROXY/__agentproxy/status"                        # blocked hosts, if any
@@ -33,56 +114,311 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 0.5 DO THIS FIRST — the cure is merged and has never run in production
+## 0c. THE CURE HAS FIRED ONCE — read the box with these queries, not with the memory series
 
-**There is genuine bot-side code in the gap for the first time in a fortnight** (the page-wedge
-arm, #355), so the standing *"never press Update now"* advice does not apply to this one. The
-ordered task, and **§2.6 is the full account of what it is and how to read it**:
+**One firing (09-17 09:50:17 UTC) is not a rate.** §0 and `CLAUDE.md` → "IT FIRED" are the
+account; this section is how to read the box for the NEXT one.
 
-1. **Update the box**, then confirm with `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts
-   git-status` — **never `autocart.bot_version`**. Check `autocart.rc_runner` says **no holds
-   due** first: an update inside 6h of a release is refused, and it ends the RC session either
-   way (~11 min to repair itself unattended).
-2. **Force a ramp.** `restart-rc` is the cheap lever and is **2-for-2** against a 10% pooled base
-   rate — no campsite, no password submission, no Okta precondition. **Pace it at ~15 minutes**:
-   `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves the RC pair dead.
-3. **Read the first firing** — §2.6 states the three outcomes and what each one means, with the
-   predicted readings written down *before* the run so they can be falsified.
+```sql
+SELECT at, detail->>'reason' FROM bot_events
+ WHERE detail->>'reason' = 'wedge-recycle' ORDER BY at DESC;   -- 1 row as of 09-17 10:20 UTC
+```
 
-**If it does not fire, that is a reading and not a dead end** — §2.6 names what each silence
-would mean and which instrument answers it.
+**A ~30 s cure fits entirely between two two-minute memory samples, so the SERIES IS THE WRONG
+INSTRUMENT** — and a wedge the cure wins produces **no** `bail:ramp`, **no** `ramp-scan` and
+**no** `mem-dump phase=ramp`. **So `bot_events` is now the only census of wedges there is, and a
+quiet one is not evidence that the box is quiet.** The event is in Postgres and cannot roll out of
+a log window; **the log lines that say the cure WORKED can and do** — pull
+`tail-log rc-keepwarm:400` within ~20 minutes of a firing.
+
+**IF THE COUNT IS STILL 1, THE SECOND QUERY SAYS WHETHER THE TRIGGER IS EVEN LIVE:**
+
+```sql
+SELECT max(at) FROM bot_events WHERE kind = 'tab-close';   -- the last Okta trip
+SELECT count(*) FROM bot_events WHERE detail->>'reason' LIKE 'bail:%'
+   AND at > now() - interval '6 hours';                    -- 0 means no trip was KILLED
+```
+
+Every Okta trip leaves a `tab-close` (the close is in a `finally`); a trip killed by a bail leaves
+none. **`tab-close` recent = the trigger is live and the cure is genuinely waiting; `tab-close`
+hours old with zero bails = the trigger is OFF and the cure cannot fire at all** — which is what
+the healthy self-sustaining regime looks like, because `planRenewal` stands down while the token
+is alive and the ESTABLISHED trigger is the Okta navigation.
+
+- **THE FALSE-POSITIVE HALF IS STILL THE MEASURED ONE.** ~2,400 probes across ~20 browser lives
+  since 21:50:59 UTC on 09-16 — through renewals, stand-downs, keepalive checks and five forced
+  restarts — **with no run of three**, and one genuine firing. Individual `wedged` readings were
+  never counted; `silent` counts them, and it is **bot-side, so it is inert until the box
+  updates.**
+- The detector itself is validated: `detail->>'reason'` resolves on every stored `request-counts`
+  row, and the keep-warm emits exactly `snapshot({ reason: 'wedge-recycle' })`.
+
+
+### FORCING A RAMP IS **DENIED** TO AN UNATTENDED SESSION — no longer the blocker, still true
+
+`restart-rc` is refused by the harness classifier as **"Interfere With Workloads"**. That is a
+permission denial, not a technical failure, and it is not to be worked around. `test-login` is
+not a substitute (below). **A session with no human present still cannot produce a ramp on
+demand** — what changed on 09-17 is that one arrived by itself, so this bounds how fast a SECOND
+reading can be obtained rather than whether any can.
+
+- **A HUMAN CAN DO IT IN ONE COMMAND**, and this is the single highest-value thing to ask for:
+  `npx tsx scripts/bot-ask.mts restart-rc`, which makes a COLD browser loading RC's home page —
+  the young-population shape, **2-for-4** as a deliberate lever. **Pace at ~15 minutes**:
+  `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves the RC pair dead. Never
+  inside the T−3h warm-up window of a real release.
+- **Do not quote the 2-for-4 as today's rate.** The two hits were 09-09 and 09-10, while the
+  young/burst population was live. **That population is BACK** — 09-17 09:50 carried 30,631
+  answer-less asks on `futurebookingstartsendsdates` in a 44.6 s browser — after 46.5 hours away,
+  which was its longest recorded absence. So a forced restart is likelier to land now than it was
+  yesterday, and a natural one may arrive without asking.
+
+### THE 14:30 AUTO-LOGIN RAN AND THE CAPTCHA PREDICTION WAS FALSIFIED
+
+**The 09-17 block is settled. Four `auto-login` trips landed 14:34-14:37, `session_live_since`
+moved to 14:37:05, and the 15:00 release had a live session.** So the handover's
+*"`maybeAutoLogin` meets the same overlay, spends both attempts and rings the phone"* did not
+happen. The site was lost to RC, not to the sign-in. **Keep the reasoning below; it is about every
+future release.**
+
+**THE T−30 AUTO-LOGIN IS A COIN FLIP, 1 OF 3.** Five real releases fall inside the 297-hour
+`bot_events` window and exactly ONE pairs with an `auto-login` tab-close (**09-05 14:42 against a
+15:00 release**, T−18). **09-09 and 09-15 produced none at all**, because `maybeAutoLogin` stands
+down when the token already covers the hold — a renewal mints ~60 minutes and the requirement is
+`LEAD + CART_HOLD_MIN + AUTOLOGIN_MARGIN_MIN` = 60. **So whether it fires turns on where the last
+renewal happened to land, and a quiet arm at T−30 is the ORDINARY case rather than a fault.**
+Check `bot_events` for an `auto-login` `tab-close` before concluding anything ran. (One caveat: a
+trip killed by a bail emits no `tab-close`, and 09-15 has a `bail:ramp` sixteen minutes AFTER its
+release — its browser age of 6.2 h fits a renewal, so a killed auto-login is unlikely there and is
+not excluded.)
+
+**AND THE ATTRIBUTION RULE APPLIES WHENEVER IT DOES FIRE** (`CLAUDE.md` → "THE CURE WATCHES ONE
+RENDERER OF TWO"). `maybeAutoLogin` runs in a **throwaway tab** and the cure probes
+**`residentPage` only**, so a ramp in the trip's own renderer is invisible to it — and correctly
+so, because `closeTabBounded` in the `finally` already reclaims that one. **"The cure did not
+fire" is not a verdict on the cure until the ramp is attributed to a renderer.**
+
+**ARM A CAPTURE AS A BACKGROUND BASH TASK, NEVER A `Monitor`.** `timeout_ms` caps at 30 minutes,
+so a `Monitor` is guaranteed to lapse; the bash task is what caught the 12:00 CAPTCHA after a
+session restart had already killed one.
+
+**THE BOX IS NO LONGER HELD.** Zero live holds, so `restart-rc`, `kill-chrome` and a box update
+all cost the RC session and nothing more. **A box update is owed** — §0a.
+
+### TWO WAYS TO MISREAD CI, BOTH MEASURED TODAY
+
+Both produced a wrong answer here, and both are one query away from producing another.
+
+- **`?head_sha=` SILENTLY OMITS RUNS.** It returns **200 with `total_count: 0`** for shas whose
+  runs exist — two of three checked hours later, while `?branch=` returned all of them in the
+  same second. A watch pinned to it reported nothing for twenty minutes **while that run
+  FAILED**. Not lag, not the short-sha trap. **Build on `?branch=<name>` and match the sha in
+  the results.**
+- **"THE PUSH RUN CARRIES THE VERDICT" IS FALSE.** One push starts a `push` run and a
+  `pull_request` run on the same sha; the concurrency group keys on `head_ref || ref_name`,
+  identical for both, so they cancel **each other** and the survivor is whichever started
+  second — measured in **both directions** on consecutive shas of one branch. **The verdict is
+  whichever twin is NOT cancelled**, and **both cancelled is its own reading**: a newer push
+  superseded that sha, so it will never get one.
+
+### THE DROUGHT IS THE SELF-SUSTAINING REGIME — waiting is waiting for it to end
+
+**33 hours with no ramp** as of 12:51 UTC on 09-17 (last one 09-16 03:51) against a 2.3-18.6 h
+gap range, and hourly peak commit flat at **7,000-7,200 MB** throughout. Four more clean Okta
+trips landed on 09-17 (three renewals at 68.6-69.6 s and the 42 s CAPTCHA warm-up) and **not one
+ramped** — each printed `this navigation did NOT ramp` with its own RAM delta. The explanation is
+read off three instruments:
+
+- **TRIPS FIRED CONSTANTLY, STOPPED FOR SIX HOURS, AND CAME BACK IN THE OLD BAND.** Eleven at
+  68.3-69.6 s (09-16 17:39 to 22:43), eight at <=49 s (09-17 00:13 to 04:31), a **340-minute
+  hole**, then 10:12, 10:43, 11:15, 11:38, 11:49 and 12:01 at **68.6-69.7 s**. **So the 21-second
+  step-down REVERTED with nothing changing on the box** (`HEAD 6fc7292` throughout) — it was a
+  ~4-hour episode, not a step, and the open question is "what OSCILLATES?" rather than "what
+  changed?", which rules out any code, config or deploy cause. **Even the 69 s band did not
+  ramp.**
+- **THE SILENCE IS THE SPA RE-MINTING, IN THE KEEP-WARM'S OWN LOG.** `token exp in 2m` at
+  05:29:26 then `token exp in 41m` at 05:49:26 with **`renewed=no`**. `planRenewal` stands down
+  while a token is alive, so there is no Okta trip to be the trigger. **That regime has been
+  measured to run TEN HOURS.**
+- **AND THE OLD-BAND WAIT HAS ALREADY BEEN RUN AND LOST.** `request-counts` carries `ageMs` at
+  every graceful teardown: **a browser lived 704.2 minutes on 09-16 and produced nothing** — the
+  longest life on record, the top of the 52-611 min band. So "let a browser age" is not an
+  experiment waiting to run.
+
+### THE SCAN WENT BLIND AND CLEARED — read the three states apart
+
+`chromium_memory_samples.rc_mb` was **NULL from 09-17 04:15:31 and cleared at 09:41:11**, the
+sampler naming its own cause on every tick in the `bot` log: *"8 Chromium had an unreadable
+command line — this process may not be elevated"*. **The window is SHUT**, so the ramp arm,
+`ramp-scan`, the region walk and the baseline dump are all live again (the 11:39:47
+`mem-dump (baseline) in 314ms` is that working). Everything below is how to read the next one.
+
+- **`NULL` = we could not look. `0` = we looked and found none of ours. A number = we looked and
+  here it is.** The recovery sample reads `rc_mb=0 procs=0` — a REAL reading, because the old
+  browser was already gone — so dating the recovery off the first NON-ZERO row puts it three
+  quarters of an hour late. That mistake was made here on 09-17 and corrected.
+- `commit_used_mb` is `Win32_OperatingSystem` and answered perfectly throughout (**~7,065 MB of
+  48,894** at baseline; a ramp charges ~32 GiB in <=34 s and takes it to 35-47 GB).
+
+- **So a ramp check keyed on `rc_mb` cannot see one.** Use `rc_mb >= 1500 OR commit_used_mb >= 15000`.
+- **WHILE BLIND IT DISABLES THE WHOLE RAMP ARM, INCLUDING ITS COMMIT BAR.** `readLatestMemory` refuses
+  the entire reading on a missing rc figure and both arms gate on `known`. **The cure, `HUNG_MS`
+  and the RAM arm are unaffected**, so the protection order is cure, `HUNG_MS`, (ramp arm, dead),
+  RAM arm. That made the box briefly the cleanest test bed it will ever be, and **it lasted about
+  five hours** — so do not plan around it. Recorded and deliberately NOT fixed: it is the arm that
+  exits the process and it needs a box update. (The 09-17 hold that blocked that update has
+  since resolved, so the update itself is no longer held — see the box-update block above.)
+- **A RESTART IS A CANDIDATE CAUSE, NOT ESTABLISHED.** Blindness resumed five seconds after
+  `restart-rc (#428)`; the first run began 13 minutes after the 04:02 restart and cleared on its
+  own. **So do not run one to "clear" it** — it is as likely to cause it.
+
+### WHAT IS PROVEN, AND THE ONE THING THAT IS NOT
+
+`node scripts/cure-end-to-end.mjs` measures the three legs on **one page in one run**, through
+the shipped exports, with the control arm that matters:
+
+```
+healthy  : evaluate answered, probe alive/alive/alive, strikes 0, 0 mappings
+wedged   : evaluate SILENT >2000ms, getMetrics answered   <- production's own signature
+the cure : 3 strikes -> recycle, 243 -> 0 mappings in 520ms
+```
+
+- It **refuses** four ways and the refusal was fired (`CURE_PROBE_MS=1` exits 1) — the healthy
+  page must accrue NO strike, which is the defect its own first version had.
+- **~2,400 production probes since 09-16 21:50:59, across ~20 browser lives, zero false
+  positives.** That is the half that costs an RC page load if it is wrong, measured on
+  Windows/149. It says nothing about the true-positive half.
+- **Unproven: a single end-to-end firing in production.** Everything else — the mechanism, the
+  detector on the production platform, the release path (430 healthy closes, 8-628 ms, none
+  hung) — is measured.
+
+### THE BOX UPDATE IS OWED NOW — THE HOLD RESOLVED AND NOTHING IS QUEUED
+
+This block previously said **do not update before the 15:00 UTC hold**. That hold is resolved
+(`failed` at 15:20:01Z) and **zero holds are live**, so the reasons to wait are gone. Four things
+reach the box only on an update: the near-miss logging, the six wedge event fields, the
+recycle-budget decay, and **the `cart-burst` event**.
+
+- **An update runs `stop-all`**, which ends the RC session (~11 minutes to repair itself) and
+  resets the browser to age 0. That is the whole cost now.
+- **AND IT IS ALSO A FORCING LEVER.** A cold browser on RC's home page is the BURST population's
+  shape, and that population has been absent since 09-15 09:04 — so the update is worth doing for
+  the leak as well as for the instruments.
+- **If the cure fires before the next update it still reports honestly** — `memKnown: false`,
+  `memWhy: "memory reading has no rc figure"`, `commitUsedMb: null`. The discriminator is carried
+  independently by `chromium_memory_samples.commit_used_mb` at a two-minute cadence.
+- **THE T−30 AUTO-LOGIN IS THE CHEAP VARIANT AND NOT A LIKELY TRIGGER.** Okta's window reads the
+  ROLLING `+12.0000h` signature, so T−30 is answered from the `idx` cookie in ~11 seconds. The
+  expensive variant has ramped 3 times in 7; **the cheap one never has.**
+
+### HOW TO READ THE FIRST FIRING
+
+**Ask this ONE query before anything else. It is the whole state of the proof:**
+
+```sql
+SELECT count(*) FROM bot_events WHERE detail->>'reason' = 'wedge-recycle';   -- 0 as of 09-17 06:00
+```
+
+A ~30 s cure can fit entirely between two two-minute memory samples, so **the SERIES IS THE WRONG
+INSTRUMENT** — that event is in Postgres and cannot roll out of a log window. The detector is
+validated (`detail->>'reason'` resolves on 5 of 5 stored `request-counts` rows), so a zero is
+about the subject, not the query.
+
+> **PULL `bot-ask tail-log rc-keepwarm:400` FIRST, BEFORE ANYTHING ELSE — AND NOTE THE `:400`.**
+> The box emits `requestCounter.snapshot({ reason: 'wedge-recycle' })` and **nothing else** — the
+> request counts and the reason. Everything that says what the firing DID is in the log.
+>
+> **THE WINDOW IS A LINE COUNT, NOT A CHARACTER COUNT, AND THE DEFAULT IS 80.** `tail-log`
+> slices `DEFAULT_TAIL = 80` lines and only then applies `MAX_OUTPUT = 16_000`; the argument
+> takes `<name>:<n>` up to 400. Measured the same minute: the default returned **38 minutes**,
+> `:400` returned **89 minutes** (188 lines). **One colon is 2.4x the evidence and needs no box
+> update.** Every "the log rolled at 16,000 characters" line in `CLAUDE.md` has the mechanism
+> wrong; the correction is the entry headed *"AND THE WINDOW WAS NEVER 16,000 CHARACTERS"*.
+>
+> Even at `:400` the signal-to-noise is **5 informative lines in 188** — the rest is the two
+> stand-down lines #358 dedupes — so widen the window AND land #358. The capture watcher that
+> pulls it within ~90 s **dies with the session that armed it**, and it asks for `:400` now.
+>
+> **AND A `Monitor` CANNOT CARRY THAT WATCH** — `timeout_ms` caps at 1,800,000 ms, so it lapses
+> every 30 minutes by construction and each re-arm leaves a gap. Use a background Bash task with
+> a terminating condition; it has no cap and exits once when it has something to say.
+
+In `logs\rc-keepwarm.log`: a recycling line naming the wedge, then `closed the wedged page in
+Nms`, then the loop reopening — with **no** `✗ RAMP` and no `✗ WEDGED` beneath it.
+
+**Expect the close to take ~2.5 s regardless of how much it releases.** Measured: 1,877 mappings
+in 2,532 ms against 0 mappings in 2,516 ms — **16 ms apart**, so the release is O(1) in the count
+and `page.close()` destroying the renderer process is why.
+
+Once the box HAS updated, the event carries these (absent today = the box being old, never the
+cure failing):
+
+| field | reads | means |
+|---|---|---|
+| `closeMs` | 9-628 ms across 430 healthy production closes | a close in minutes, or `hung`, is the close inheriting the hang |
+| `tokenKept` | `written` / `already-stored` / `no-token` / `already-stored-stale` / `timeout` | the live token lives in PAGE memory and dies with the close |
+| `strikes` | 3 | fewer means `WEDGE_STRIKES` moved |
+| `memKnown` / `memWhy` | `false` / `memory reading has no rc figure` while the scan is blind | honest, not a fault |
+| `commitUsedMb` | ~7,040 baseline vs 35,000-47,000 for the leak | **the leak-versus-baseline discriminator** |
+
+**THE RECYCLE-LOOP DEFECT IS FIXED ON THE BRANCH (`1720e8b`) AND IS STILL LIVE ON THE BOX.**
+`WEDGE_MAX_RECYCLES` could never bind — `wedge` was reset on every reopen and every recycle
+*produces* a reopen — so `escalate` was dead code and a page that wedges within 30 s of each
+fresh load would recycle, reopen and wedge for ever, invisible to `supervise.ps1` because the
+process never exits. The fix is `decayedRecycles` (30 m). **Until the box updates: a second
+`wedge-recycle` within minutes is that loop**, and `restart-rc` breaks it.
+
+### If a reading IS wanted at a known moment, in order of cost
+
+1. **`rc-test-hold.mts --in 120`** — the only recipe with a recorded hit rate (**3 in 7**). It
+   needs **`okta=GONE` AND a dead token**, opens the T−3h..T−30 warm-up window at once with
+   ninety minutes of margin, and the hold is deleted the moment the trip is under way so nothing
+   is carted. **It refuses while a real hold is live.**
+2. **`restart-rc`** — cheapest by far (no campsite, no password, no Okta precondition), **and
+   DENIED to an unattended session.** Ask a human.
+3. **`test-login` — do NOT spend it while Okta is ALIVE.** It forces `prompt=login` by
+   interception so it does navigate, but Okta answers from the cookie (09-07: eleven seconds,
+   +24 MB) — the cheap cell. Rationed one per 6 h, and it costs a password submission from an
+   address that has eaten a twelve-hour block.
+
+**`okta=GONE` cannot be brought forward.** The reported expiry is the ROLLING window our own
+`/api/v1/sessions/me` probe refreshes. **The discriminator is one subtraction:**
+`okta_expires_at - okta_checked_at`. 12.0000h is rolling and says nothing about the cap; a window
+that SHRINKS is the frozen absolute cap, which is the precondition. **Do not "fix" the
+unconditional probe to make forcing easier** — it is load-bearing by accident, and the cost is
+real logins from a blocked address.
 
 ---
 
-## 1. State — re-verified 2026-09-16, 09:20 PT
+## 1. State — re-verified 2026-09-17, 17:15 UTC
 
 | | |
 |---|---|
-| master | `1b877df`. **No open PRs. One open issue, #243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). **Verify against `origin/master`, this line ages.** |
-| mini-PC | **`7bce397`; web is `1b877df`.** `autocart.bot_version` warns, and as of #355 it reads **"MISSING bot-side changes"** rather than "no bot-side code in the gap" — because for the first time in a fortnight there genuinely IS some: `page-wedge.mjs` and the arm in `rc-keepwarm.mjs`. **So this is the one warn that IS worth acting on, and §0.5 is the ordered task.** It still costs the RC session (~11 min to repair itself unattended) and is still refused inside 6h of a release, so check `autocart.rc_runner` says *no holds due* first. The box also takes it by itself in the 02:00-05:00 PT quiet window — which is how the last bot-side change arrived — so waiting is free if nothing needs testing; **the cure needs testing.** Confirm with `bot-ask git-status`, never this column (it COALESCEs and can show a stale sha beside a live heartbeat). |
-| health | **16 of 19 ok.** Overall reads `degraded`, which is simply what three warns render as. **Two of the three are the documented-benign set; `bot_version` is not, as of #355** — see below. |
-| fleet | worker heartbeat **6s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**; watchdog **both tasks firing**. |
-| holds | **none live, and none at all in the last 24h** — the readout prints `0 row(s)`, which is the ordinary quiet state and not a broken query. So the **02:00–05:00 PT update window is open**. |
-| login rehearsal | **PASSING four nights running** — ✓ 09-13, 09-14, 09-15 and **09-16 03:00**. The bot can still sign itself in; this is the standing evidence for it. |
-| the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* IS CURED — still NOT eliminated.** §2. The page-wedge arm (2026-09-16) closes a wedged page and releases its mappings in seconds; A is built, B is answered and off, **C is now built**. |
-| migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left in it** — the main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
+| master | `78f5fdf` (#358 merged 16:41 UTC). **Verify against `origin/master`; this line ages.** One open issue, **#243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). |
+| open PRs | **#360** (`claude/cure-forcing-readings`) — master merged in, CI green, carries the `cart-burst` instrument. #358 is done. |
+| mini-PC | **`6fc7292`**; web `78f5fdf`. **The gap is REAL bot-side code now** — `cart-burst`, `wedge.silent` and the decaying recycle budget. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
+| health | **18 of 19 ok**, overall `degraded` — which is what one warn renders as. |
+| fleet | worker heartbeat **4s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**. |
+| holds | **ZERO live.** `#A124` went `failed` at 15:20:01Z; its fairness-line sibling `expired`. **So the 02:00-05:00 PT update window is OPEN and a box update costs only the session.** |
+| RC session | **HEALTHY** — token 55m, `okta=ALIVE` to 09-18 04:40, `session_live_since` **16:47 UTC**. It repaired itself after the CAPTCHA; see below. |
+| the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* CURED — still NOT eliminated.** §2. The cure has fired **exactly once** (09-17 09:50:17 UTC). A is built, B is answered and off, C is built. |
+| the burst | **has never been observed firing.** `cart-burst` fixes that and has **0 rows** — correct until the next tapped hold. §0. |
+| migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left** — the next main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 
-**TWO OF THE THREE WARNS ARE ORDINARY AND EACH HAS A DESTRUCTIVE-LOOKING REMEDY — do not act on
-those two. The third changed on 2026-09-16 and is now real.**
+**THE ONE WARN IS GENUINE THIS TIME, AND THAT IS THE CHANGE.**
+`autocart.bot_version` reads *"mini-PC is on 6fc7292; web is on 78f5fdf — and it is MISSING
+bot-side changes. Nothing is queued."* For a fortnight that warn was the documented
+not-worth-acting-on case (a docs-only gap, or a bot-side gap that was only a comment). **#358 and
+#360 are real bot-side code, so the honest response is a box update** — and with zero live holds
+it costs the RC session and nothing else.
 
-- **`autocart.rc_session` — dead 3h00m, `okta session GONE (404)`.** This is the ordinary
-  between-releases state with nothing queued: the RC token lives ~1h, and `maybeAutoLogin` gets a
-  new one at T−30 of a real hold. **The hold readout prints "only a human sign-in restores it" and
-  that line must not be acted on** — `rc-login.bat` force-kills the Chromium the token lives in,
-  and that reading has sent people to the box twice over sessions that repaired themselves.
-- **`autocart.rc_login` — "no rehearsal has PASSED in 12h25m".** A 03:53 run **skipped** because the
-  browser had just been killed (*"a rehearsal now would test the restart, not the login"*), so the
-  last PASS is 03:00 the same morning. A stand-down is not a failure.
-- **`autocart.bot_version` — box `7bce397`, web `1b877df`. THIS ONE IS NO LONGER BENIGN, and it is
-  the only one of the three that changed.** Its detail read *"No bot-side code in the gap"* while
-  the gap was three docs PRs; #355 put real bot-side code in it, so it now reads **"MISSING
-  bot-side changes"** and means what it says. **Act on it — §0.5.** The other two bullets above
-  stand unchanged, and their remedies are still the destructive ones not to reach for.
+**THE CAPTCHA IS OVER AND BOTH PREDICTIONS WERE FALSIFIED BY THE BOX.** The 12:00 UTC warm-up was
+stopped by an image challenge; the handover said `maybeAutoLogin` would meet the same overlay and
+that a human sign-in was needed before 14:30. **Neither happened.** The session repaired
+unattended, four `auto-login` trips ran 14:34-14:37, and `session_live_since` is 14:37:05 — then
+16:47 after the ordinary renewal. **One CAPTCHA is an event, not an escalation**; the reading that
+would matter is whether the next unattended sign-in after a human one also meets one, and nobody
+has that.
 
 **AND DO NOT READ A RED `autocart.rc_session` WITHIN A FEW MINUTES OF A MERGE AS A REAL DEAD
 SESSION.** A numeric `carted` test fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT`, so
@@ -239,8 +575,9 @@ what would settle it.
 - **Forcing a ramp *through the warm-up*.** That route is **3-in-7**, spends the warm-up's one
   turn per Okta lifetime, and costs a password submission from an address that has eaten a
   twelve-hour block. **`restart-rc` is a different lever with different costs and is NOT covered
-  by this line** — it is 2-for-2, needs no Okta precondition and locks no campsite, and §0.5 is
-  the one thing outstanding that needs a ramp.
+  by this line** — it is **2-for-4** (the two hits were 09-09 and 09-10, when the young/burst
+  population was live; **it is back as of 09-17**), needs no Okta precondition and locks no
+  campsite, and §0c is the one thing outstanding that needs a ramp.
 - **Lowering `LOW_RAM_MB`, lowering `MEM_DUMP_STALL_MS`, parking the resident page, building
   Track B.** Each is refused for a recorded reason in `CLAUDE.md`.
 - **Enlarging the pagefile. The precondition was settled on 2026-09-11 and the answer is
@@ -335,10 +672,11 @@ its page exists, and a close needs nothing from the thread that is wedged.
 #### How to force the first firing, and what each outcome means
 
 **The lever is `restart-rc`, not a test hold.** A forced restart makes a COLD browser loading
-RC's home page, which is the shape the 02:0x cluster turned out to be, and it is **2-for-2**
+RC's home page, which is the shape the 02:0x cluster turned out to be, and it is **2-for-4**
 against a 10% pooled base rate — no campsite, no password submission, no Okta precondition.
 **Pace it at ~15 minutes**: `supervise.ps1` stops LOUDLY after 5 exits in 10 minutes and leaves
-the RC pair dead. n=2, so it is a working lever and not a rate.
+the RC pair dead. n=4, so it is a working lever and not a rate — and the two misses were on
+09-17, when the burst population had been absent for 46 hours.
 
 **The predictions are written down BEFORE the run, per the house rule, so they can be falsified:**
 
@@ -605,6 +943,10 @@ that restarts the box, `sms-link-test.mts --send`.
 - **`git checkout -- <file>` reverts to HEAD**, so during mutation testing it deletes the
   uncommitted fix under test. Commit before mutating.
 - **`git rebase --onto origin/master <old-tip>`** for a branch cut from a squash-merged branch.
+- **A column aliased `t` makes `query()` return scalars, not row objects** — it collides with
+  `exec_select`'s own wrapper subquery alias, so `json_agg(t)` resolves to that COLUMN. Every
+  field reads `undefined` with a plausible row count. **`AS` is irrelevant in both directions;
+  the alias being `t` is everything.** Hit again on 09-17, the day it was recorded.
 - **`sqlit` interpolates, it does not bind**, and throws on a plain object — stringify jsonb.
 - **No non-ASCII in `.ps1`**, no `\"` inside a `powershell -Command` string in a `.bat`, no
   backticks in a SQL comment inside a template literal.

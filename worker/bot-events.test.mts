@@ -28,7 +28,13 @@ test('the kind is allow-listed — anything else stores as NULL, never as what t
   assert.equal(eventKind('<script>'), null);
   assert.equal(eventKind(42), null);
   assert.equal(eventKind('request-counts'), 'request-counts');
-  assert.deepEqual([...BOT_EVENT_KINDS].sort(), ['mem-dump', 'ramp-scan', 'request-counts', 'tab-close']);
+  assert.equal(eventKind('cart-burst'), 'cart-burst');
+  // BY VALUE ON PURPOSE, so adding a kind is a DECISION rather than a drift. `cart-burst`
+  // was taken deliberately on 2026-09-17: the 08:00 fast lane had never once been observed
+  // running, because its summary lived in a field the slow lane overwrote and in a log that
+  // rolls in thirteen minutes. src/lib/cart-burst-record.test.mts carries that account.
+  assert.deepEqual([...BOT_EVENT_KINDS].sort(),
+    ['cart-burst', 'mem-dump', 'ramp-scan', 'request-counts', 'tab-close']);
 });
 
 test('text loses every control character except newline and tab, and is capped', () => {
