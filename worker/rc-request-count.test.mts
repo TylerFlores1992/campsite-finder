@@ -202,9 +202,25 @@ test('the module reads nothing but the URL — no headers, no response body, no 
 test('the counter is attached where residentPage is assigned, so every reopen re-attaches it', () => {
   const at = KW.indexOf('residentPage = page;');
   assert.ok(at > -1, 'the assignment must exist');
-  const after = KW.slice(at, at + 300);
+  /*
+   * BOUNDED ON THE FIRST `await`, NOT ON A CHARACTER COUNT (re-anchored 2026-09-17).
+   *
+   * This read `KW.slice(at, at + 300)` and broke over a decay fix plus its comment landing
+   * between the two anchors — 1,618 characters apart now, with the attach still in the same
+   * block, still before the navigation, behaviour entirely unchanged. A window measured in
+   * characters is a guess about layout, which this repo has now paid for four times
+   * (rehearsal.test.mts's 220, rc-login-script.test.mts's 500, us-spelling's indentation).
+   *
+   * The await bound is not merely sturdier, it is the RULE: the first await after the
+   * assignment is `page.goto(RC_HOME)`, so an attach placed after it misses the very page load
+   * it exists to count — which is a real defect, where "more than 300 characters later" is not.
+   */
+  const firstAwait = KW.indexOf('await ', at);
+  assert.ok(firstAwait > at, 'no await follows the assignment — this guard is measuring nothing');
+  const after = KW.slice(at, firstAwait);
   assert.match(after, /requestCounter\.attach\(page\)/,
-    'attach must follow the assignment — a counter created and never attached counts nothing and reads as a quiet page');
+    'attach must follow the assignment and PRECEDE the first await — a counter attached after '
+    + 'page.goto misses the load, and one never attached counts nothing and reads as a quiet page');
   const created = KW.indexOf('const requestCounter = createRequestCounter(');
   assert.ok(created > -1 && created > KW.indexOf('async function warmResident'),
     'created inside warmResident, so "lifetime" means the life of THIS browser');
