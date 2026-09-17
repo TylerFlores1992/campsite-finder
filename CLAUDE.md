@@ -10801,7 +10801,12 @@ wedge-recycle events       0, all time
 - **DO NOT READ THE QUIET SERIES AS THE CURE WORKING.** A ~30 s cure can fit between two
   two-minute samples — but it would still emit `request-counts` with `reason: 'wedge-recycle'`,
   which is in Postgres and cannot roll out of a log window. Zero of those and zero `bail:ramp` is
-  **no event**, not a silent success. That query is the first one to run, and it is the one this
+  **no event**, not a silent success.
+- **AND THE DETECTOR WAS VALIDATED BEFORE THE ZERO WAS BELIEVED**, because "my query is blind"
+  and "the cure never fired" are the same reading otherwise — the house shape. `detail->>'reason'`
+  resolves on **5 of 5** stored `request-counts` rows (`teardown`, `bail:ramp`), and the
+  keep-warm emits the literal `snapshot({ reason: 'wedge-recycle' })` that the query matches. So
+  the zero is about the subject, not the instrument. That query is the first one to run, and it is the one this
   session should have run before spending two forcing attempts on the memory series.
 
 #### THE RENEWAL ENDS AT `no-signin-control`, SO NOTHING NAVIGATES TO OKTA
