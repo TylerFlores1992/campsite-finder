@@ -87,11 +87,19 @@ test('the offset is MEASURED, not derived from the lead constant', () => {
 
 test('the readout renders it, and an empty list is not an all-clear', () => {
   at(readout, "recentBotEvents('cart-burst'", 'the fetch');
-  at(readout, 'cartBurstReading(x)', 'the render');
+  // LINE-ANCHORED: the function can be perfect and never called, and a substring match is
+  // satisfied by `void 0 && cartBurstReading(x)`. That mutation survived the first round.
+  assert.match(readout, /\n\s*printVerdict\([^\n]*cartBurstReading\(x\)/,
+    'the reading is computed and never printed — the fix-present-and-inert shape');
   const head = at(readout, 'CART BURSTS:', 'the section');
   const empty = readout.slice(head, head + 1200);
+  // The empty branch must state the THIRD reading — no row at all means the lane never ran —
+  // and must not offer an all-clear, which is the one sentence that would retire the finding.
   assert.match(empty, /absent row is the/,
     'silence must be reported as the finding it is, not as nothing to report');
+  assert.match(empty, /never ran/, 'the empty branch must name what an absent row means');
+  assert.doesNotMatch(empty, /all[ -]clear|nothing to report|no problems/i,
+    'an empty list is not an all-clear, and saying so is the whole point of this branch');
 });
 
 test('a win reads as a win', () => {
