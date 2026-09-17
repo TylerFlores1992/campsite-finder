@@ -10858,6 +10858,44 @@ from a renderer whose main thread would not answer a single CDP call.
   is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
   A password submission from an address that has eaten a twelve-hour block, for a few per cent.
 
+#### THE PROCESS SCAN WENT BLIND AT 04:15, AND IT DISABLES EVERY MEMORY ARM BUT NOT THE CURE
+`chromium_memory_samples.rc_mb` has read **NULL since 09-17 04:15:31** — 11 nulls in 24 hours and
+ten of them consecutive — while `commit_used_mb` keeps arriving (7,035-7,201 MB). So the
+PowerShell runs and the OS figures come back; only the per-process scan produces nothing. That is
+the 2026-08-15 fix behaving correctly: **a scan that ran while blind to some processes reverts to
+NULL rather than writing a zero it did not measure.** One sample at 04:27:32 read a genuine
+`rc_mb 0, rc_procs 0` (the `C|` count, "ran and found none of ours"), which is the third state
+that entry exists to keep apart.
+- **`bot-ask memory` SAYS `OURS 0 … CHROME 8` WHILE THE KEEP-WARM IS DEMONSTRABLY HEALTHY** — its
+  own log at 04:31:54 carries a full RC load, a 193-response network trace and a native
+  allocation sample, all of which need a live browser and a live CDP session. So our Chromium is
+  among those eight with an unreadable command line, not absent. **Do not read `OURS 0` as "the
+  browser is gone"** — read the keep-warm's log, which is what settled it here.
+- **THE CONSEQUENCE IS SHARPER THAN A MISSING DASHBOARD: EVERY MEMORY-FED ARM IS DISABLED.**
+  `readLatestMemory` returns `known: false` on a null rc figure, so **the ramp arm cannot fire**;
+  `ramp-scan` triggers on the same figure, so **no walk would be taken**; and the memory series
+  cannot see an onset at all.
+- **THE CURE IS THE ONE ARM UNAFFECTED, AND THAT IS ITS DESIGN RATHER THAN LUCK.**
+  `page-wedge.mjs`'s own header says why it exists: *"every existing arm reads a signal that
+  cannot see this in time … this arm reads the page directly, needs no file, and is instant."*
+  Right now that difference is load-bearing. The stall trigger for the memory dump is likewise
+  safe — it reads `Date.now() - lastTick`.
+- **SO THE BOX IS, ACCIDENTALLY, THE CLEANEST POSSIBLE TEST BED.** A ramp arriving now can only
+  be acted on by the cure or by `HUNG_MS` at twelve minutes; no competing arm can claim it.
+- **COMMIT IS THE SURVIVING RAMP DETECTOR.** A ramp is a ~32 GB step in `commit_used_mb`
+  (7,000 → 38,949-47,265 on every recorded event) and those readings still arrive. Any watch
+  written against `rc_mb >= 1500` alone is blind today and must carry
+  `OR commit_used_mb >= 15000`.
+- **AND A FIRING WILL SAY SO ITSELF.** The event's memory fields come from the same reading, so
+  expect `memKnown: false` with `memWhy: "memory reading has no rc figure"` rather than a
+  confident zero — which is the instrument reporting this exact condition instead of hiding it.
+- **CAUSE NOT ESTABLISHED, AND THE OBVIOUS SUSPECT DOES NOT FIT.** The first null is 04:15:31,
+  **seventeen seconds BEFORE** the restart-campaign cycle that might be blamed for it, and six
+  earlier restarts that night produced clean samples either side. Elevation blindness is the
+  recorded mechanism for this shape; nothing here demonstrates it. **Deliberately not fixed** —
+  the repair is a `restart-rc`, which costs the browser age that is currently the whole forcing
+  strategy.
+
 #### THE ONE PRODUCTION RESULT THE DROUGHT HAS PRODUCED: ~2,400 HEALTHY PROBES, ZERO FALSE POSITIVES
 The cure went live on the box at **21:50:59 UTC on 09-16** and the arm probes every
 `WEDGE_PROBE_EVERY_MS` (10 s) whenever the loop is not bailing. Over the ~6.9 hours to 04:45 that
