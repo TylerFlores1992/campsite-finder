@@ -33,9 +33,13 @@ test('BOTH the win and the loss path emit — a win used to report no burst note
   const win = at(runner, 'ok: true, cartKey, cartEntryKey', 'the win report');
   const loss = at(runner, 'could not hold ${h.unitName ?? h.unitId}', 'the loss log line');
   // Scoped windows, not a whole-file count: a single emit would otherwise satisfy both.
-  assert.match(runner.slice(win - 400, win), /noteBurst\(h, \{[^}]*won: true/,
+  // ANCHORED AT THE START OF A LINE, so the call has to be REACHABLE. A substring match is
+  // satisfied by `void 0 && noteBurst(...)` and by `if (false) noteBurst(...)` — the
+  // fix-present-and-inert shape, which is how a dead `maybeMemoryDump` once passed 33 tests.
+  // Both of these mutations survived the first round of this very suite.
+  assert.match(runner.slice(win - 400, win), /\n\s*noteBurst\(h, \{[^}]*won: true/,
     'the WIN path does not record the burst — the case that used to report nothing at all');
-  assert.match(runner.slice(loss, loss + 400), /noteBurst\(h, \{[^}]*won: false/,
+  assert.match(runner.slice(loss, loss + 400), /\n\s*noteBurst\(h, \{[^}]*won: false/,
     'the LOSS path does not record the burst');
 });
 
