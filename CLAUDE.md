@@ -11281,6 +11281,84 @@ Both replaced the browser (pid 14496 → 10076 → 7480) and **neither ramped** 
   session does not block it. It is rationed to **one per 6 h on the box's own clock** and refuses
   with the age, which is how that ration was read rather than guessed.
 
+#### THE PER-PROCESS SCAN WENT BLIND AT 04:15:30, AND IT TAKES THE COMMIT TRIGGER WITH IT (2026-09-17)
+The sampler names its own cause on every tick, in the `bot` log, and nobody had read it:
+```
+[04:15:30]   (memory sample: 8 Chromium had an unreadable command line - this process may not
+             be elevated; the families are recorded as UNKNOWN, not zero)
+```
+- **IT IS ONE CONTIGUOUS RUN AFTER 398 CLEAN SAMPLES, NOT SCATTERED NOISE.** Over fourteen
+  hours: `ok 09-16 14:53:53 → 09-17 04:13:31 (398)`, `BLIND 04:15:31 → 04:25:32 (6)`,
+  `ok 04:27:32 (1)`, `BLIND 04:29:32 → ongoing`. So it began at an instant and has a single
+  one-sample recovery — a degradation, not a scan losing an occasional race.
+- **`rc_mb` IS NULL AND `commit_used_mb` IS PERFECT THROUGHOUT** (7,027-7,239 MB of 43,774).
+  The two come from different halves of the sampler: the per-process scan reports UNKNOWN
+  when a command line is unreadable, while `Win32_OperatingSystem` keeps answering. **That
+  is the 2026-08-15 elevation blindness, and the "UNKNOWN, not zero" rule is working exactly
+  as designed** — the reading is honest and it is absent.
+- **THE CONSEQUENCE IS SHARPER THAN "the ramp arm is degraded": `readLatestMemory` refuses
+  the WHOLE reading on a missing rc figure** (`if (rcMb == null …) return { known: false }`),
+  and both arms gate on `known`. So while the scan is blind:
+  - `rampBailDecision` cannot fire — **including its COMMIT bar**, which exists precisely
+    because commit crosses its threshold while private bytes are still under theirs. **The
+    arm built for the case the rc figure cannot carry is gated on the rc figure existing.**
+    Verified against the real functions, not read off the source: a fresh rc-blind reading
+    with `commitUsedMb: 7201` returns `known: false` and `rampBailDecision().fire === false`.
+  - the threshold and baseline memory dumps are disabled for the same reason.
+  - **THE CURE AND THE STALL DUMP BOTH SURVIVE BY DESIGN.** `wedgeDecision` reads the probe
+    and not memory; `maybeMemoryDump(null, 'ramp')` passes a `forcedPhase`, which is checked
+    above the `!memory?.known` return. And `HUNG_MS` reads the loop clock. So the box's
+    protection order is cure → HUNG_MS → (ramp arm, dead) → RAM arm, and the first and last
+    are unaffected.
+- **RECORDED, DELIBERATELY NOT FIXED.** Making the commit bar survive a blind scan is a
+  change to the arm that exits the process, on a day with a real user hold releasing at
+  15:00 UTC, and it needs a box update — which ends the RC session. The cure is first in the
+  timer and is the containment under test. **Do not take this as a drive-by.**
+- **WHAT THE CURE'S OWN DIAGNOSTIC DOES INSTEAD, because that half IS mine.** The wedge
+  event reports `commitUsedMb` whenever it is a finite number rather than gating it on
+  `known` — otherwise the one figure that separates *this page was holding the leak* from
+  *this page was merely unresponsive* is null in exactly the state the box is in today.
+  `readLatestMemory` carries commit **on the rc-blind branch only**: the age check and the
+  browser-life check both run above it, so a figure reported there is fresh and in-life,
+  while the stale and previous-browser branches return none — there a number would be
+  confidently wrong rather than merely unattributed.
+- **A RESTART IS A CANDIDATE CAUSE AND IS NOT ESTABLISHED — do not write one in.** Blindness
+  resumed **five seconds** after `restart-rc (#428)` at 04:29:26, which is tight; but the
+  first run began 13 minutes after the 04:02:38 restart and cleared on its own at 04:27:32,
+  which is not. `bot.mjs` has run unchanged since 01:50:59, so the SAMPLER's own elevation
+  did not move — what changed is the browser generation it is looking at. **So another
+  `restart-rc` is as likely to cause this as to clear it**, and the recorded plan to "clear
+  the blind scan with one restart" should not be followed on that reasoning.
+
+#### AND THIRTEEN OKTA NAVIGATIONS SINCE THE BOX TOOK THE CURE HAVE PRODUCED ZERO RAMPS
+Every `tab-close` since 2026-09-16 21:50:59 UTC, when the box took `e92a5a6`:
+```
+15 closes, 0 hung, 9-628 ms.  13 with a trip over 20s, i.e. a real Okta round trip:
+  7 x renewal    68.6-69.6s   (09-16 21:52 → 22:43)
+  5 x renewal    46.7-49.0s   (09-17 00:13 → 03:24)
+  1 x auto-login 45.2s        (09-17 04:31)
+```
+- **COMMIT IS FLAT ACROSS THE 45.2-SECOND AUTO-LOGIN** — 7,064 → 7,201 → 7,046 MB either
+  side of it. A ramp charges ~32 GiB in ≤34 s, so commit alone answers the question the
+  blind `rc_mb` cannot: **that trip did not ramp.** Same for the twelve before it.
+- **SO THE DROUGHT NOW SPANS ~25 HOURS AND AT LEAST 13 OKTA TRIPS**, on top of the 18 hours
+  that preceded the cure reaching the box. **None of it is creditable to the cure** — the
+  last ramp was 03:51:47 UTC on 09-16, eighteen hours before the box had the code.
+- **`commit_used_mb` IS THE INSTRUMENT THAT STILL WORKS WHILE THE SCAN IS BLIND**, and it is
+  what makes these thirteen readable at all. Read it, not `rc_mb`, on a blind day.
+
+#### THE 04:31 AUTO-LOGIN WAS MY OWN `npm test`, AND IT IS THE SECOND OBSERVED INSTANCE
+`maybeAutoLogin` acts only inside `AUTOLOGIN_LEAD_MIN` (30) of a real release, and the only
+release on the books is **15:00 UTC** — ten and a half hours later. A live `npm test` run was
+in flight at 04:31:56. That is the documented numeric-fixture trap:
+`worker/health-hold-counts.test.mts:148` inserts `cartedHold(REAL, 5)` where `REAL = '0'`, a
+`carted` row releasing five minutes out, and `'0'` satisfies `REAL_UNIT`'s `^[0-9]+$`.
+- **IT DID NOT SPEND THE REAL HOLD'S LOGIN BUDGET, which is the alarming reading and is
+  false.** `autologin-budget.mjs` is keyed on the RELEASE, and the fixture's release is a
+  different one, so the two attempts protecting the 15:00 cart are untouched.
+- **What it did spend is an unattended Okta password trip from the household address**, which
+  is the reason the budget exists at all. Second sighting after 2026-09-10 17:53.
+
 ## Open / next session
 
 ### THE CANCELLATION BADGE MISSES THE ONLY CANCELLING SUBSCRIBER (2026-09-16) — one-line gate, three copies
