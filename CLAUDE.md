@@ -7999,9 +7999,33 @@ and no `✗ WEDGED` beneath it**:
   19,008 hits in 120 s on a browser 0 m old with the series flat at 208-227 MB. This event cannot
   separate *the page was closed before the mapping completed* from *this burst was never going to
   map anything*, and the burst/leak decoupling says both are real.
-- **THE CLOSE TOOK 596 ms, WHICH IS INDEPENDENT CORROBORATION.** Against **8-16 ms across 430
+- ~~**THE CLOSE TOOK 596 ms, WHICH IS INDEPENDENT CORROBORATION.** Against **8-16 ms across 430
   healthy production closes** and 86-2,532 ms for the container's wedged closes, it is squarely in
-  the wedged band — so the page really was wedged, measured by something that is not the probe.
+  the wedged band — so the page really was wedged, measured by something that is not the probe.~~
+  **THE CORPUS CONTAINED ITS OWN REFUTATION AND THE CITATION QUOTED AROUND IT (2026-09-17).**
+  `8-16 ms` is min/median/p95; **that same corpus's MAX is 628 ms**, written down in the entry
+  being cited. So 596 ms is not above the healthy range — it is **below its maximum**, and the
+  comparison cannot discriminate. Struck rather than deleted, because "independent corroboration"
+  is exactly the phrase a later reader quotes.
+  - **THE DISTRIBUTION IS BIMODAL WITH NOTHING IN THE MIDDLE, WHICH IS WHY IT LOOKED
+    DISCRIMINATING.** Over **435** tab-closes: min 8, p50 14, p90 15, p95 16, **p99 22** — and
+    then **four** at 602 / 608 / 625 / 628. **Nothing between 22 ms and 602 ms.** So a 596 ms
+    close IS unusual (4 in 435); what it is not is unique to a wedge.
+  - **AND THE FOUR SHARE A TRIP TYPE RATHER THAN A FAULT: every one is a renewal whose trip ran
+    11,413-11,711 ms**, i.e. the `no-signin-control` band that never reaches Okta. Split on trip
+    length: trips **>=20 s** (n=416) average **14 ms**, max **22**; trips **<20 s** (n=19)
+    average **139 ms**, max **628**. **They are not clustered in time either** — 09-08 17:34,
+    09-09 18:32, 09-17 03:13, 09-17 04:29 — so this is not the box's 09-17 network trouble.
+  - **CANDIDATE, LABELLED: `closeMs` measures how BUSY the page is, not whether it is wedged.**
+    An 11-second trip closes a tab 11 seconds old, still loading RC's SPA; a 69-second trip closes
+    one that has been through Okta and back. **The wedge-recycle's page was 40 seconds old and in
+    a 30,631-request burst**, so it fits the young-and-busy population — which is what the request
+    counter already said. That makes 596 ms **consistent with the burst**, not a second and
+    independent line of evidence.
+  - **WHAT STILL CARRIES THE WEDGE IS UNAFFECTED**, and it is the two bullets below: the browser
+    context was already CLOSED one second later (`Target.createTarget` failed), and `primeToken`
+    had answered a main-thread `page.evaluate` ~25 seconds earlier before the page went
+    permanently silent. Neither depends on `closeMs`.
 
 **THREE THINGS NOBODY PREDICTED, AND THE SECOND IS THE ONE THAT SETTLES THE FALSE-POSITIVE
 QUESTION.**
@@ -11540,6 +11564,11 @@ box since migration 075. Over twelve days:
 - **SO A FIRING'S `closeMs` HAS A BASELINE TO BE READ AGAINST.** 8-16 ms is an ordinary close;
   the container's wedged closes ran 86-2,532 ms; anything at the 5,000 ms bound is the race
   timing out, which is a finding rather than a success.
+- **QUOTE THE MAX, NOT THE p95 — AND THE p95 IS WHAT GOT QUOTED (2026-09-17).** The `max 628 ms`
+  on this very line is the number that decides how to read a firing, and the entry citing this
+  corpus used `8-16 ms` and concluded a 596 ms close was "squarely in the wedged band". **Four of
+  435 closes exceed 100 ms and all four exceed 600**, every one a renewal on an ~11-second
+  `no-signin-control` trip — a benign population at the same value. Correction under "IT FIRED".
 
 ##### THE DETECTION HALF HAS ONE PRODUCTION-PLATFORM ARGUMENT, AND IT IS AN IMPLICATION
 The probe is `page.evaluate` = `Runtime.evaluate`, which is **main-thread-bound** — measured
@@ -11932,6 +11961,20 @@ per day, trips over 60s:  09-15 23/26 · 09-16 51/52 · 09-17 0/6
 - **RAM DELTAS DID NOT MOVE WITH IT**, which is the caveat against the tidy story: before the cut
   `ramMb` averaged −159 (min −270), after it −131 (min −254). If the long trips were the ones
   loading Okta, a bigger difference would be expected there.
+- **IT REVERTED, WITH NOTHING CHANGING ON THE BOX (2026-09-17 10:12).** After a 340-minute hole
+  the next two renewals read **69,731 ms and 69,218 ms** — back in the 68-69 s band, on
+  `HEAD 6fc7292` throughout. So the 46-49 s window was a **~4-hour episode, not a step**, and
+  *"that is a step, not variance"* is too strong as written. Nothing was deployed and nothing was
+  updated; **the box's own sha is the control.**
+- **AND THE WINDOW COINCIDES WITH THE BOX'S NETWORK TROUBLE — A CANDIDATE, NOT A MECHANISM.**
+  Inside 00:13→04:29 the gaps alternate 11-12 m (minGap) with **62, 65, 90 and 96 m**, and none of
+  those four is a `planRenewal` band (floor 5, minGap 10, backoff 30, alive ~60). The 10:00:46
+  renewal is separately on record dying with `ERR_NAME_NOT_RESOLVED` and **losing its `tab-close`
+  row outright**, so lost rows would produce exactly those gaps — and a trip that fails early on
+  DNS would be exactly the shorter kind. **Do not write it in**: nothing pairs a specific trip
+  with a specific resolution failure, and the 21 s is unexplained either way.
+- **SO THE OPEN QUESTION NARROWS FROM "what CHANGED?" to "what OSCILLATES?"**, which rules out a
+  code, config or deploy cause — none of those comes back on its own.
 
 #### `restart-rc` IS 2-FOR-4 NOW, AND BOTH MISSES WERE MINE
 Fired 03:02:24 and 03:12:48 UTC with the box quiet at ~300 MB and the release twelve hours out.
