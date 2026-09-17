@@ -11035,6 +11035,41 @@ profile (610.8 min, `distinct=79`, busiest path 20 lifetime).
   2-for-2 figure is real and was measured when the burst population was live. **Do not quote it
   as today's rate.**
 
+##### THE OLD POPULATION LOOKS BAIL-SEEDED AND THE BASE RATE SAYS IT IS NOT (2026-09-17)
+
+Subtracting each old ramp's `ageMs` from its timestamp gives the browser's birth, and four of the
+eight land **within 0.1-0.2 minutes of a prior young ramp's bail** — with the other four at
+370-1,033 minutes. **No off-diagonal**, which is the shape that has carried half the findings in
+this file:
+```
+09-11 05:30 age 610.8m -> born 09-10 19:19:15   bail 19:19:06   0.2m before
+09-12 15:27 age 383.0m -> born 09-12 09:03:55   bail 09:03:49   0.1m
+09-14 16:01 age 253.0m -> born 09-14 11:47:40   bail 11:47:30   0.2m
+09-15 15:16 age 372.2m -> born 09-15 09:04:12   bail 09:04:07   0.1m
+```
+It reads as a chain — young ramp, bail, replacement browser, old ramp hours later — and it would
+explain the whole drought with ONE mechanism instead of two, since no restarts means no young
+ramps means no bail-seeded browsers.
+
+**IT IS NOISE. A bail CREATES a browser, so bail-seeded lives are a large share of all lives.**
+Over the nine days the file already counts **61 baselines against 26 ramps**, and a baseline is
+one per browser life that survived three minutes — so ~87 lives, of which the 26 bails seeded
+~30%. Four of eight against a 30% base rate is **P ≈ 0.19**. Unremarkable.
+
+- **THE TIGHTNESS OF THE GAPS IS WHAT MAKES IT PERSUASIVE AND IT IS ALSO MECHANICAL.** 0.1-0.2
+  minutes is not a coincidence to be explained — it is `supervise.ps1` restarting the process
+  immediately, which is what a bail is FOR. Every bail produces that gap; the question was only
+  whether such browsers ramp more, and the answer is no.
+- **SO THE DROUGHT STILL NEEDS ITS TWO EXPLANATIONS**, and the per-browser-life rate recorded
+  above (30% historically, 0% across 20 lives on 09-17) is untouched by this — it already
+  controls for restart frequency, which is precisely why this chain could not have rescued it.
+- **THE ONE THING THE PASS DID ESTABLISH IS A COUNT: six of the eighteen young ramps are at
+  09:03-09:04 UTC**, i.e. 02:0x PT, the box's quiet-window update restarting the browser — a
+  three-fold concentration over any other hour. The file records that cluster qualitatively
+  ("the hour is the restart's, not the leak's"); the share is new, and it means **the nightly
+  update has historically been the single most productive ramp-forcing event there is.** Not
+  available tonight: the 6 h release gate covers the entire 09:00-12:00 UTC window.
+
 #### THE RELEASE IS O(1) IN THE MAPPING COUNT — 16 ms ACROSS 1,877 MAPPINGS
 The open question against the container proof was scale: the reproduction peaks near 1,500-3,200
 mappings and production reaches **16,383**. A 180-second run answered it by accident, and the
