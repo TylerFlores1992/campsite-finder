@@ -665,11 +665,32 @@ test('RAMP: the browser-life gate reaches BOTH arms, because they share one read
   const body = timerBody();
   // The dump and the bail read one object, one arm apart. Two reads would be two chances to
   // gate one and forget the other — and the forgotten one is the arm that exits the process.
-  assert.equal((body.match(/readLatestMemory\(/g) ?? []).length, 1,
-    'ONE read in the timer, or the two arms can disagree about which browser the figure is about');
-  const read = body.indexOf('readLatestMemory(');
-  const decide = body.indexOf('rampBailDecision(');
-  const dump = body.indexOf('maybeMemoryDump(memory)');
+  //
+  // RE-ANCHORED 2026-09-17, NOT RELAXED. This counted `readLatestMemory(` across the WHOLE
+  // timer body, and `recycleWedgedPage` — the cure, defined inside that body — takes a
+  // DIAGNOSTIC reading of its own so its event can say whether the page it just closed was
+  // holding ~40 GB of commit or sitting at the ~7 GB baseline. Those want opposite responses
+  // and the event could not tell them apart. The RULE is that the two ARMS share one figure so
+  // they cannot disagree about which browser it describes; a read that feeds no decision
+  // cannot make them disagree. So the count excludes the helper — and the assertion below
+  // pins that the helper really is decision-free, which is what makes the exclusion a
+  // narrowing rather than a hole. Moving that read onto the decision path puts it back in
+  // scope and fails here.
+  const recycle = (() => {
+    const from = body.indexOf('const recycleWedgedPage = async');
+    assert.ok(from > -1, 'recycleWedgedPage moved — this guard is measuring nothing');
+    const to = body.indexOf('\n      };', from);
+    assert.ok(to > from, 'could not bound recycleWedgedPage — this guard is measuring nothing');
+    return body.slice(from, to);
+  })();
+  const decisions = body.replace(recycle, '');
+  assert.equal((decisions.match(/readLatestMemory\(/g) ?? []).length, 1,
+    'ONE read on the decision path, or the two arms can disagree about which browser the figure is about');
+  assert.doesNotMatch(recycle, /rampBailDecision\(|maybeMemoryDump\(/,
+    'the cure REPORTS, it must not decide — the moment its read drives an arm, excluding it from the count above is a hole');
+  const read = decisions.indexOf('readLatestMemory(');
+  const decide = decisions.indexOf('rampBailDecision(');
+  const dump = decisions.indexOf('maybeMemoryDump(memory)');
   assert.ok(read > -1 && decide > read && dump > decide,
     'read, then the bail, then the dump — the dump must not get its own ungated figure');
   // browserLifeSince is set where the browser life begins, so the gate cannot outlive a reopen.
