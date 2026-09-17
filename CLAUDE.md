@@ -10822,6 +10822,37 @@ is not happening.**
   `-13m`). Consistent with the 08-22 finding that the stale token comes from the SERVER, and
   **not demonstrated to be the same thing.** Do not write one in.
 
+#### WHAT IS PROVEN TONIGHT, AND WHAT THE PROOF IS GATED ON
+Re-run against master `be77157` — `node scripts/leak-repro.mjs wedge-and-fetch 30 --fix`:
+```
+series 2s:49 … 30s:1582      pid=542 renderer 2MiB=1582 (3.09 GiB)
+                             pid=501 browser 0    pid=521 utility 0
+VERDICT: peak 2 MiB shared mappings in any renderer = 1582  <<< CLIMBING — reproduces
+FIX: probe=wedged strikes=3 act=recycle after 6004ms
+FIX: mappings 1877 -> 0 in 2532ms   <<< CURED
+```
+**Browser 0 and utility 0 against a renderer at 3.09 GiB is the production peer asymmetry**
+(14,721 handles in the target renderer against 1,224 in the browser), so the reproduction is
+still reproducing the right thing, and the cure still releases everything — 3.67 GiB in 2.5 s
+from a renderer whose main thread would not answer a single CDP call.
+- **THE PLATFORM CAVEAT IS UNCHANGED AND IS THE WHOLE REASON THIS IS NOT THE PROOF.** Chromium
+  141/Linux against a 149/Windows box, which is the pair that burned the native sampler twice.
+- **SO THE PRODUCTION PROOF IS GATED ON A PRECONDITION WE DO NOT CONTROL**, and the chain is
+  worth stating once: a wedge needs an Okta trip that struggles → an Okta trip needs the SPA to
+  render signed out → that needs `okta=GONE` → which is the ABSOLUTE cap, not the rolling window,
+  and our own probe refreshes the rolling one. **No lever shortens it.** The one origin
+  observation on record (2026-08-19) put the cap **19h37m after the sign-in**, which against the
+  22:49 rehearsal would be ~18:26 UTC on 09-17 — **arithmetic on a single observation that this
+  file explicitly records as NOT established, quoted here only as an order of magnitude.**
+- **THE RECIPE, once `okta=GONE` AND the token is dead:** `scripts/rc-test-hold.mts --in 120`,
+  which opens the T−3h..T−30 warm-up window at once with ninety minutes of margin, then delete
+  the hold as soon as the trip is under way so nothing is ever carted. **It refuses while a real
+  hold is live**, so it is blocked until `#A124` releases at 2026-09-17 08:00 PT.
+- **DO NOT SPEND `test-login` WHILE OKTA IS ALIVE.** It forces `prompt=login` by interception, so
+  it does navigate — but Okta answers it from the cookie (09-07: eleven seconds, +24 MB), which
+  is the cheap cell, and by the finding above a rehearsal then suppresses the trigger for hours.
+  A password submission from an address that has eaten a twelve-hour block, for a few per cent.
+
 #### THE 22:49 REHEARSAL IS WHAT STOPPED THE RAMPS — a candidate, and it fits all three readings
 `rc_login_rehearsal_log` is a HISTORY table (the 2026-08-18 entry's complaint that
 `rc_login_rehearsal` keeps only one row was fixed and nobody had read the fix), and it puts a
