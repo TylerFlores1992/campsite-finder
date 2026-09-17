@@ -8054,6 +8054,19 @@ in **twenty seconds**.
   established.** It matters: the first reading would mean every `restart-rc`/`stop-all` costs the
   OKTA session and not merely the token — which `restart-rc.ps1` already asserts in its own output
   (*"the RC session is GONE until maybeAutoLogin runs"*) without anyone having named the mechanism.
+  **That wording is ambiguous and is NOT evidence either way**: "the RC session" may mean the
+  token, which certainly dies with the page.
+  - **WHAT THE PROFILE DOES SAY: persistent cookies survive a generation change and `idx` did
+    not.** `DT` came back with **527,588 minutes** on it (~366 days) and `luf_*` with 42,538
+    (~29.5 days), read off the new browser — so the on-disk jar is intact and a persistent `idx`
+    would have been in it. The 2026-08-19 census listed `idx` while a session was live; today's
+    lists it nowhere while the session is dead.
+  - **THE DISCRIMINATOR COSTS NOTHING AND ARRIVES BY ITSELF — do not build an experiment for it.**
+    `maybeAutoLogin` restores Okta at T−30. **The next browser generation change after that
+    answers it**: Okta still ALIVE across a `restart-rc`, an update's `stop-all` or a cure-driven
+    reopen ⇒ `idx` is persistent and 09:50 was the absolute cap; Okta GONE again ⇒ `idx` is
+    session-scoped and **every restart costs the Okta session**, which is a materially higher
+    price than the box's own scripts currently put on one.
 
 **TWO FREE READINGS RODE ALONG.**
 - **THE BLIND PER-PROCESS SCAN CLEARED WITH THE GENERATION CHANGE.** `rc_mb` was NULL through
