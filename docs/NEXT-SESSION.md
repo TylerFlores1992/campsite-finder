@@ -150,6 +150,35 @@ The cure's event now reports `commitUsedMb` even while the scan is blind, and th
 - **The update window shuts at 09:00 UTC anyway** (6 h before the release), and the box takes
   updates itself in the 02:00-05:00 PT quiet window once nothing is queued.
 
+### DO NOT UPDATE THE BOX BEFORE 15:00 UTC — the trade, settled, having been reversed twice
+
+The near-miss logging and the six event fields both reach the box only on an update, and an
+update is tempting for exactly that reason. **It is the wrong call today, and the reasoning is
+worth keeping because it is not obvious and I talked myself round twice.**
+
+- **AN UPDATE COSTS A GUARANTEED BLIND HOLE AT THE MOMENT OF PEAK EXPECTATION.** It resets the
+  browser to age 0, and the surviving ramp population's band **starts at 52 minutes** while the
+  young/burst population has been absent since 09-15 09:04. So for 52 minutes NEITHER population
+  can fire — and the last ramp was 25.6 h ago against an observed gap range of 6-26 h, i.e. we
+  are at the tail, which is when a hole is most expensive.
+- **AND THE PAYOFF IS SPECULATIVE, MEASURED.** Near-miss logging only speaks if the page ever
+  fails to answer for two whole seconds, and the evidence says it does not: the keep-warm's
+  05:09 and 05:29 keepalives both read `load/shoppingcart → HTTP 200`, which is the resident
+  page **executing a real RC fetch on the main thread**. A page doing that is not near-missing.
+- **THE FLIPPING `session_live_since` IS NOT A SYMPTOM, AND IT NEARLY READ AS ONE.** It moved at
+  ~05:20 and again at ~05:33 with two healthy keepalives in between, which looks like an
+  intermittently unresponsive page. It is the token lapsing (`token exp in 2m` at 05:29) and the
+  SPA silently re-minting — the documented self-renewal, observed live — reported by a second
+  caller on a shorter cadence than the keep-warm's 20 minutes. **Read the keepalive's own verdict
+  before reading a session flip as a page fault.**
+- **THE EVIDENCE PATH FOR A FIRING IS ALREADY ADEQUATE WITHOUT IT.** The capture monitor pulls
+  `tail-log rc-keepwarm` within ~90 s, against a window that rolls in ~20 minutes.
+- **THE TRIGGER TO UPDATE: after the 15:00 UTC hold resolves.** That is the natural moment — the
+  release-critical constraint lifts, and `14:30 UTC` is the day's ONE guaranteed Okta navigation
+  (`maybeAutoLogin` at T−30) and therefore the single highest-probability ramp trigger on the
+  calendar. **Updating before it would spend the best experiment of the day to improve the
+  readout of an event that has not happened.**
+
 ### HOW TO READ THE FIRST FIRING — and the one way it could go wrong
 
 > **⚠ THE TABLE BELOW DESCRIBES THE EVENT THIS SESSION WROTE, NOT THE ONE THE BOX EMITS.**
