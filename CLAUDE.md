@@ -1047,7 +1047,23 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   Supabase and Mapbox all present. They are the **LIVE** keys.
 - **Chromium can't reach Mapbox either** (`ERR_CONNECTION_RESET` — same TLS reset that
   blocks browsing the live site). `NODE_USE_ENV_PROXY=1` does NOT help: it affects
-  Node's fetch, not the browser. So any full-page screenshot renders maps as a blank
+  Node's fetch, not the browser.
+  - **THE MECHANISM NAMED THERE IS WRONG FOR RC, AND THE CONCLUSION HOLDS (re-measured
+    2026-09-17).** `curl https://www.reservecalifornia.com/` answers **200**, and headless
+    Chromium in this container fails on the same URL with **`ERR_CERT_AUTHORITY_INVALID`** in
+    342 ms — a TRUST failure, not a reset. The proxy CA *is* in the system store
+    (`/etc/ssl/certs/ccr-agent-proxy.pem`, and all 154 bundle certs are in
+    `ca-certificates.crt`), so this is Chromium's built-in verifier rather than a missing
+    bundle. **Quote the error you got, not this line.**
+  - **AND CHASING IT IS NOT WORTH IT — the payoff was never TLS-shaped.** The reason to want
+    RC's real page locally is to drive the leak's actual workload instead of a synthetic wedge.
+    It could not: **`js.arcgis.com` is 000**, so the WebGL map that makes RC's SPA what it is
+    would not load; and the production wedge happens during an **Okta navigation**, which needs
+    a real sign-in on the production RC account from an address whose anti-bot posture this file
+    records at length. **The blocker is the authenticated trip, not the certificate**, so fixing
+    the trust store buys a different page rather than the experiment. `scripts/leak-repro.mjs`'s
+    synthetic wedge already drives the named code path (`blink::RejectedPromises::HandlerAdded`)
+    and is as close as a container gets. So any full-page screenshot renders maps as a blank
   grey box, and rec.gov CDN photos likewise — capture those on a real device.
 - **Live site can't be browsed** — the agent proxy resets headless-Chromium TLS. `curl`
   against camphawk.app DOES work and is the way to verify a deploy. To eyeball UI, use
