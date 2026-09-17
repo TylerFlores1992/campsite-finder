@@ -949,6 +949,49 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
       That matters because the 08-23 failure it describes — a watcher that could not see its
       subject and stayed silent — was caused by using the placeholder TOKEN, not by the endpoint.
       A `Monitor` polling this unauthenticated works, and one was run to green on this very PR.
+      - **AND THE `head_sha` FILTER SILENTLY OMITS RUNS, WHICH IS HOW A WATCHDOG BUILT ON IT
+        STAYS QUIET THROUGH A FAILURE (measured 2026-09-17).** It returns **200 with
+        `total_count: 0`** for a sha whose runs demonstrably exist — three shas checked hours
+        after the fact, two of them `total 0`, while `?branch=<name>` returned every one of
+        them in the same second:
+        ```
+        ?head_sha=2824b06…  total 0   []            <- a run that FAILED at 06:27:40Z
+        ?head_sha=55d5a3e…  total 2   [cancelled, cancelled]
+        ?head_sha=0250fee…  total 0   []
+        ?branch=claude/…    total 50  (all of the above)
+        ```
+        **It cost exactly the failure this bullet says was caused by the token.** A background
+        watch pinned to `head_sha=2824b06` reported nothing for twenty minutes while that run
+        failed; the red was found by hand. **So the endpoint half of the 08-23 story is not
+        retired — it is narrower: the endpoint answers, and this FILTER is the blind one.**
+        - **NOT LAG — those runs were hours old.** And it is not the 40-character trap either
+          (full shas throughout, which is the other recorded way to get `total 0` here).
+        - **THE MECHANISM IS NOT ESTABLISHED. Do not write one in.** No clean pattern separates
+          the two that answered from the two that did not: both populations contain cancelled
+          runs, and both shas were the remote branch head when their runs were created.
+        - **BUILD IT ON `?branch=<name>` AND MATCH THE SHA IN THE RESULTS.** One request, no
+          filter that can silently under-report, and it sees the `pull_request` twin as well —
+          which is the pair that overlaps for 3-301 s on every push.
+        - **AND THE SHAPE, ONCE MORE: a filter returning `total 0` and a subject with no runs
+          are the same reading.** `total_count: 0` from a 200 is an absence, and this file's
+          most expensive recurring error is treating one as a negative.
+        - **AND "THE PUSH RUN CARRIES THE VERDICT" IS FALSE — WHICH TWIN SURVIVES VARIES,
+          MEASURED ON CONSECUTIVE SHAS OF ONE BRANCH, IN BOTH DIRECTIONS.** The concurrency
+          group's key is `github.head_ref || github.ref_name`, which resolves to the same branch
+          for both events, so the twins cancel **each other** and the winner is simply whichever
+          started second:
+          ```
+          2824b06  push          completed  FAILURE      2824b06  pull_request  cancelled
+          8e24174  push          cancelled                8e24174  pull_request  in_progress
+          ```
+          A watch that reads the `push` run reported `cancelled` as the verdict on `8e24174`
+          while the real run was still going — **a false red, from the second version of the
+          same watch.** The rule is **whichever twin is NOT cancelled**.
+        - **BOTH TWINS CANCELLED IS ITS OWN READING AND MUST NOT RENDER AS PENDING.** It means a
+          newer push superseded that sha before either run finished, so it will never get a
+          verdict — i.e. you pushed again while your own CI was running, which `docs/LANES.md`
+          already forbids and which a watch can now say out loud. Two of the four shas on this
+          branch are in that state.
     - **WRITES ARE UNTESTED AND ALMOST CERTAINLY STILL REFUSED.** Public reads are the claim.
       Anything that mutates (a merge, a comment, a dispatch) needs auth and the token is a
       placeholder, so **the MCP tools remain the only write path.** Do not widen this to
