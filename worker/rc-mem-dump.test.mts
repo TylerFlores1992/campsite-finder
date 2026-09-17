@@ -578,9 +578,12 @@ test('the leak probes parse and keep their deliberate playwright-core import', (
     'scripts/auto-cart-bot/mem-dump-probe.mjs',
     'scripts/auto-cart-bot/alloc-trail-probe.mjs',
     'scripts/leak-repro.mjs',
-    // `cdp-thread-probe.mjs` was measured and written up on 2026-09-17 and never added here —
-    // it is the probe that established WHICH CDP domains survive a wedged main thread, and
-    // therefore why `page.evaluate` is the cure's detector and `Performance.getMetrics` is not.
+    // The cure's own instrument. It answers WHICH CDP calls can see a wedge — and it is what
+    // resolved the 2026-09-05 counter-example, where a renderer "kept answering
+    // `Performance.getMetrics` all the way to 8,879 MB" and looked like a responsive main
+    // thread. It is not: that call is serviced OFF the main thread, so it is blind to a wedge,
+    // while `page.evaluate` (Runtime.evaluate, which runs JavaScript) is bound to it. Losing
+    // this probe would leave that reading looking like a live objection to the page-wedge arm.
     'scripts/cdp-thread-probe.mjs',
     // The cure's end-to-end run: the CDP signature, the mappings and the release on ONE page,
     // with the healthy-page control arm that caught its own first version reading `wedged` off

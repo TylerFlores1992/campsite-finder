@@ -175,12 +175,23 @@ export function planRenewal({
  */
 export function makeSkipLogger(emit) {
   let last = null;
-  return (key, reason) => {
+  /**
+   * `reset()` EXISTS BECAUSE AN ATTEMPT IS A STATE CHANGE THE KEY CANNOT SEE.
+   *
+   * The key is built from the gate's own inputs, so it says nothing about whether we went on
+   * to DO something. A caller that signs in has changed the world outside those inputs, and
+   * the next stand-down after it is news even when it names the same state as the last one
+   * printed before it. `rc-keepwarm.mjs` clears both of its loggers immediately before it
+   * spends a sign-in, for exactly that reason, and that behaviour predates the key.
+   */
+  const skip = (key, reason) => {
     if (key === last) return false;
     last = key;
     emit(reason);
     return true;
   };
+  skip.reset = () => { last = null; };
+  return skip;
 }
 
 /**
