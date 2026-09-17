@@ -55,7 +55,13 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ramp-arm-'));
 const MEM_FILE = path.join(dir, '.memory-latest.json');
 
 let verdict = 1;
-const fail = (msg) => { console.log(`x ${msg}`); };
+// `fail` RECORDS the failure as well as printing it. It logged only until 2026-09-17, so three
+// mutations that genuinely broke the blind-scan chain were each detected, printed, and reported
+// as exit 0 — a probe that cannot fail a build is a green proving nothing, which is the shape
+// this whole file exists to escape. Every arm below that forgot its own `ok = false` was covered
+// by luck; fixing the class rather than the instances is what stops the next one.
+let failed = false;
+const fail = (msg) => { failed = true; console.log(`x ${msg}`); };
 const pass = (msg) => { console.log(`+ ${msg}`); };
 
 const browser = await chromium.launch({ headless: true, executablePath: EXECUTABLE });
@@ -103,6 +109,32 @@ try {
     pass('an absent commit figure is UNKNOWN and stands down — the un-updated box is unchanged');
   } else {
     fail(`an absent commit figure fired or was coerced (fire=${older.fire}, commitUsedMb=${older.commitUsedMb})`);
+  }
+
+  // ── 1c. THE BLIND SCAN — the one shape the commit bar was ungated FOR ────────────────────
+  // Since 2026-09-17 04:15:30 the box's per-process scan has returned nothing (an unelevated
+  // WMI query cannot read a Chromium command line), so `rc_mb` is NULL while `commit_used_mb`
+  // keeps arriving. `readLatestMemory` used to refuse the WHOLE reading on a missing rc figure,
+  // which disabled the ramp arm — including the commit bar, the arm written for exactly the
+  // case the rc figure cannot carry. This drives the REAL writer and the REAL reader, because
+  // the ungating is two branches in two files and a test asserting a copy would assert the copy.
+  writeLatestMemory(MEM_FILE, { rcMb: null, maxPid: null, maxType: null, commitUsedMb: 38596, commitLimitMb: 43774 });
+  const blindRead = readLatestMemory(MEM_FILE, { notBefore: browserLifeSince });
+  const blind = rampBailDecision({ stalledMs: 139_000, memory: blindRead });
+  if (blind.fire && blind.trigger === 'commitUsedMb' && blind.rcMb === null) {
+    pass('the commit bar fires through a BLIND scan — rc unattributed, commit over the bar, chain intact');
+  } else {
+    fail(`the blind chain did not fire (fire=${blind.fire}, trigger=${blind.trigger}, rcMb=${blind.rcMb}): ${blind.why}`);
+  }
+  // AND THE SAME BLINDNESS AT THE IDLE BASELINE MUST STAND DOWN. Without this the ungating is a
+  // bypass rather than a bar: the box sits at ~7,090 MB of commit all day, and an arm that fired
+  // there would exit the keep-warm on every 120s stall the moment the scan went blind.
+  writeLatestMemory(MEM_FILE, { rcMb: null, maxPid: null, maxType: null, commitUsedMb: 7090, commitLimitMb: 43774 });
+  const quiet = rampBailDecision({ stalledMs: 139_000, memory: readLatestMemory(MEM_FILE, { notBefore: browserLifeSince }) });
+  if (!quiet.fire) {
+    pass('a blind scan at the idle baseline stands down — the ungating is a bar, not a bypass');
+  } else {
+    fail(`a blind scan at 7,090 MB fired: ${quiet.why}`);
   }
 
   // ── 2. THE REAL SEQUENCE, TICK BY TICK ───────────────────────────────────────────────────
@@ -235,8 +267,8 @@ try {
   if (deadMs > 20_000) { fail(`a dump against a closed browser took ${deadMs}ms — it must fail fast, not hang`); ok = false; }
   else pass(`a dump against a closed browser RETURNED in ${deadMs}ms (ok=${dead.ok}) — it cannot strand the in-flight flag`);
 
-  verdict = ok ? 0 : 1;
-  console.log(ok
+  verdict = ok && !failed ? 0 : 1;
+  console.log(ok && !failed
     ? '\n+ THE TRIGGER PATH HOLDS ON A REAL BROWSER. What it does under a real ramp — a renderer\n  that has stopped answering CDP — is still open; that needs the box.'
     : '\n x THE TRIGGER PATH DOES NOT HOLD. Read the failing line above before shipping anything.');
 } finally {
