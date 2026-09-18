@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { diffKeystrokes, CARET_MOVING_KEYS, type RemoteKey } from './remote-keys.ts';
+import { diffKeystrokes, CARET_MOVING_KEYS, type RemoteKey } from './remote-keys';
 
 const CONNECT = readFileSync(new URL('../app/connect/page.tsx', import.meta.url), 'utf8');
 /** Comments are stripped before any structural match, or a guard fails on its own explanation. */
@@ -157,7 +157,7 @@ test('the password reveal is a button, never a submit', () => {
   // A bare <button> inside a <form> defaults to type=submit, so the tap meant to reveal the
   // password would send the credentials instead. Anchored on the TOGGLE'S OWN ELEMENT: the call
   // site, not `setShowPassword` — which `indexOf` finds first at the useState declaration.
-  const toggle = jsxOpeningTag('setShowPassword((v) => !v)', 'button');
+  const toggle = jsxOpeningTag('setShowPassword(', 'button');
   assert.match(toggle, /type="button"/, 'the reveal toggle must be type="button"');
 });
 
