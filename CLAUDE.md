@@ -12782,7 +12782,164 @@ detection and says nothing about the cart.
   event is not evidence about the event.** Both corrections came from the owner, and both are the
   reason this instrument exists.
 
+### "RECONNECT AUTO-CART FOR REC.GOV" WAS ONE HIDDEN INPUT, AND THE LOOP WAS CLOSED (2026-09-18)
+
+Reported from the Android app: the auto-login fails with credentials the owner believes are
+correct, the app asks them to reconnect, and in the manual fallback window **the email is
+re-typed into the password field on every keystroke**. Three separate causes, none of them
+the password, and the box had been printing the first one for two days.
+
+```
+couldn't fill the login form for user_…: locator.waitFor: Timeout 8000ms exceeded.
+  - waiting for locator('input[type="email"], input[name="email"], …').first() to be visible
+    19 x locator resolved to hidden <input value="" name="email" type="hidden"/>
+```
+
+- **rec.gov CARRIES A NEWSLETTER FORM AHEAD OF ITS HEADER**, so `input[name="email"]` matches a
+  **hidden** input that comes FIRST in document order. `.first()` resolved to it and
+  `waitFor({state:'visible'})` could never succeed — for every attempt, with correct
+  credentials, since the helper was written. Every clause is `:not([type="hidden"]):visible`
+  now, which makes `.first()` the first VISIBLE candidate rather than the first in the DOM.
+- **IT IS BOTH HALVES OF THE REPORT BECAUSE IT IS A CLOSED LOOP.** The same helper is
+  `bot.mjs`'s auto-relogin (`attemptLoginWithCreds`, `bot.mjs:437`), so a dropped session can
+  never be repaired -> the ready marker goes -> the app says "reconnect auto-cart for rec.gov"
+  -> reconnecting runs THIS function and fails identically. **From the outside that reads as
+  "my password is wrong"**, which is why it was reported as a credentials problem.
+- **`attemptLoginWithCreds` RETURNED A BARE `false` FOR EVERY CAUSE**, so the one reason the
+  auto-relogin could never work was invisible in `bot.log` for as long as it was broken. It
+  logs the reason now. Same family as `claimBotCommands` returning `[]` for both "nobody asked"
+  and "the query threw".
+- **THE CENSUS READS MARKUP, NEVER VALUES.** When nothing visible turns up it reports
+  `N match(es), M visible — hidden input[type=hidden][name=email]` from tag/type/name/id alone.
+  *"The modal never opened"* and *"the modal opened and every field is hidden"* need different
+  fixes and used to print the same eight-second timeout. **`.value` is never read** — this repo
+  has published a credential twice by collecting a field it then had to filter (an OAuth code
+  on 08-09, a password on 08-16).
+- **THE OPENER IS NEVER CLICKED TWICE.** The header control TOGGLES the modal, and
+  `getByRole('button', /log ?in/i)` matches it before the modal's own "Log In" in document
+  order — so a second click on a slow-but-working modal shuts the thing being waited for. A
+  retry is only worth anything when the first round found no control at all.
+
+#### THE STREAMED FALLBACK REPLAYED THE WHOLE BUFFER, AND GBOARD FIRES IT EVERY KEYSTROKE
+`/connect`'s stream mode overlays one transparent `<input>` on the canvas — a `<canvas>` cannot
+raise a soft keyboard — and forwards the DIFFERENCE in its value. The old diff had three arms:
+append, trim, and **"anything else -> re-send the entire value"**, without deleting what was
+already there.
+- **THE BUFFER WAS NEVER CLEARED BETWEEN REMOTE FIELDS**, so after the email it still held the
+  email. **An email typed straight into a password with no space is ONE token to Gboard**, so
+  any recomposition takes that third arm — which is exactly "with every keystroke".
+- `diffKeystrokes` (`src/lib/remote-keys.ts`) is the ordinary common-prefix diff, and every
+  case the old code handled specially falls out of it. **IT CAN NEVER DELETE MORE THAN IT
+  TYPED** — the count is bounded by `prev`, and `prev` only ever grows by characters this
+  module already forwarded. That is the safety argument for forwarding Backspaces at all: a
+  "select all and replace" costs our own keystrokes, never the remote field's contents.
+- **DROPPING THE BUFFER SENDS NOTHING.** It is forgetting what we typed, not asking rec.gov to
+  unwind it; a reset that forwarded Backspaces would delete the email out of the field the user
+  just left. It drops on a tap and on any caret-moving key — **Backspace and Delete are
+  deliberately NOT caret-moving**, since they shrink the value and the diff already sees them.
+
+#### AND THE PASSWORD FIELD HAD NO REVEAL, WHICH IS WHY THE FIRST CAUSE WAS UNDIAGNOSABLE
+Asked for directly. The only feedback a wrong password gets on `/connect` is a streamed rec.gov
+window forty seconds later, so there was no way to check what the phone keyboard had actually
+put in the field. **`type="button"`: a bare `<button>` inside a `<form>` defaults to SUBMIT**, so
+the tap meant to reveal the password would send the credentials.
+`autoCapitalize`/`autoCorrect`/`spellCheck` are off because revealing turns it into
+`type="text"` and Android will then capitalise the first character of a password that was typed
+correctly.
+
+#### TESTING IT HERE: HEADLESS CHROMIUM CANNOT REACH recreation.gov, AND THE PROBES DO NOT NEED IT
+`page.goto('https://www.recreation.gov/')` fails **`ERR_CERT_AUTHORITY_INVALID`** while `curl`
+answers 200 in the same second. `~/.pki/nssdb` holds **only the SQLite schema and no
+certificates**, and `certutil` is not installed — so the proxy README's *"the browser NSS store
+is already set up"* is not true of this container. **Disabling TLS verification is forbidden**,
+so the answer is fixtures rather than a workaround.
+- **`scripts/recgov-login-probe.mjs`** serves rec.gov's SHAPE — a hidden `input[name="email"]`
+  in a newsletter form ahead of a header opener and a lazily-mounted modal — in four variants,
+  and drives the REAL `openLoginModalAndFill`.
+- **`scripts/connect-keys-probe.mts`** drives Chromium's own composition machinery over CDP
+  (`Input.imeSetComposition`, the path an Android IME takes) and feeds the values the BROWSER
+  produced through the REAL `diffKeystrokes`. A unit test pins the decision; only this can say
+  what an IME actually does to an input's value.
+- **EACH CARRIES A CONTROL THAT MUST REPRODUCE THE PRE-FIX FAILURE, or the probe refuses its
+  verdict.** The login control fails with the production log line's own shape
+  (`21 x locator resolved to hidden <input … type="hidden"/>`); the keystroke control forwards
+  **40 characters containing the email once** against the shipped 12 and zero. A probe whose
+  control cannot fail is a probe that proves nothing, and this repo has published a verdict
+  from one.
+- **THE KEYSTROKE PROBE'S FIRST VERSION REPORTED TWO FAILURES AND THE PROBE WAS WRONG, NOT THE
+  CODE.** It counted the legitimate typing of the email into the EMAIL field as a replay, and
+  simulated the reset by clearing only the tracker while the browser's own value still held the
+  email — so the diff ran `'' -> 'email+S'` and typed the whole thing. Both metrics are scoped
+  to the password phase now and the reset is a real second browser run. **An instrument that
+  measures the correct behaviour as a failure is the more expensive direction**, because the
+  natural response is to "fix" working code.
+
+#### AND THE REVEAL'S OWN GUARD ANCHORED ON THE DECLARATION — ~30th TIME
+It sliced +-400 characters around `code.indexOf('setShowPassword')`, which finds the `useState`
+destructuring on line 52, four hundred lines from the button. **It failed for the wrong reason
+and could never have caught the right one.** `jsxOpeningTag(needle, tag)` bounds on the ELEMENT
+instead — back to the nearest `<tag`, forward to the first `>` OUTSIDE braces, because
+`onClick={() => …}` and `aria-label={a ? b : c}` both carry a `>` that is not the end of the tag
+— and a missing anchor fails LOUDLY rather than passing vacuously. **Fourth time a window
+measured in characters has broken a guard here**, after `rehearsal.test.mts`'s 220,
+`rc-login-script.test.mts`'s 500 and the US-spelling guard's indentation.
+- **THE ANCHOR WAS THEN WIDENED, ON A MUTATION RATHER THAN ON TASTE.** `setShowPassword((v) =>
+  !v)` catches the regression AND fires on a legitimate refactor of the updater;
+  `setShowPassword(` catches the regression and does not, and it still cannot match the
+  destructuring (`setShowPassword] = useState`). **A guard that cries wolf is one that gets
+  deleted, taking the real finding with it.**
+- **AND `npm run typecheck` CAUGHT AN IMPORT THE WHOLE SUITE WAS HAPPY WITH** —
+  `from './remote-keys.ts'` is TS5097 without `allowImportingTsExtensions`. Fourth time the
+  typecheck has been the thing that noticed, and the reason it runs both configs.
+
+**DEPLOY: web-side for the page and the diff, BOT-SIDE for `recgov-login.mjs`** — so cause #1 is
+**not fixed on the box until the mini-PC updates**, and that update ends the RC session. None of
+the changed paths is in `worker-deploy.yml`'s `paths:` (read, not remembered), so no poller
+restarts.
+
+#### THE RC SIBLING HAS A MILDER VERSION OF THIS, AND IT IS DELIBERATELY NOT TOUCHED
+`rc-autologin.mjs`, `rc-probe.mjs` and `src/lib/rc-login-script.ts` carry the same kind of
+selector list for Okta. **They are structurally safer**: each tries its selectors ONE AT A TIME
+and asks `isVisible()` on each `.first()`, so a hidden first match makes it move to the next
+selector rather than wait out a timeout on a joined list. The residual hazard is narrower — a
+selector matching BOTH a hidden and a visible input would still resolve `.first()` to the hidden
+one and skip the selector entirely — and it has never been observed, because
+`signin.reservecalifornia.com` is a dedicated sign-in page with no newsletter form ahead of it.
+**Recorded, not fixed:** it is the release-critical path between a queued hold and a missed cart,
+the login rehearsal passes on it, and widening a fix past its evidence is how the 08-22 round was
+spent.
+
 ## Open / next session
+
+#### 2026-09-18 — THE rec.gov RECONNECT IS FIXED IN TWO PLACES AND ON THE BOX IN NEITHER
+
+**Read the "RECONNECT AUTO-CART FOR REC.GOV WAS ONE HIDDEN INPUT" entry above.** Merged as #363
+(`fff3b98`), verify 2290/2290, and **none of the changed paths is in `worker-deploy.yml`'s
+`paths:`** — read, not remembered — so no poller restarted.
+
+**THE WEB HALF IS LIVE ON A PUSH; THE HALF THAT FIXES THE REPORT IS NOT.**
+`src/app/connect/page.tsx` and `src/lib/remote-keys.ts` reach installed apps with no rebuild, so
+the email-into-the-password symptom is already gone from the manual window. **The auto-login
+selector is `scripts/auto-cart-bot/recgov-login.mjs` — bot-side, and inert until the mini-PC
+updates.** Until then the app will go on asking to reconnect, and reconnecting will go on
+failing, because that is the same function.
+
+- **CONFIRM THE BOX WITH `npx tsx scripts/bot-ask.mts git-status`, NEVER `autocart.bot_version`**
+  — that column COALESCEs and can show a stale sha beside a live heartbeat.
+- **THE UPDATE ENDS THE RC SESSION** (the token lives in the Chromium it closes), so it is worth
+  taking in the 02:00–05:00 PT quiet window rather than pressing "Update now". The 6 h release
+  gate shuts that window while a hold is queued.
+- **THIS CHANGE ALSO ARMS THE `autocart.bot_version` WARN**, because `CH_BOT_CODE_AT` is
+  `git log -1 -- scripts/auto-cart-bot`. That warn is REAL here — there is genuine bot-side code
+  in the gap — unlike the comment-only case recorded under that check.
+- **HOW TO READ THE FIRST RECONNECT AFTER IT LANDS:** `bot-ask tail-log broker` should no longer
+  carry `locator.waitFor: Timeout … resolved to hidden <input … type="hidden"/>`. A refusal now
+  names which of the two it was — *"the modal never opened"* vs *"every field is hidden"* — plus
+  a census of the page's email inputs by tag/type/name/id.
+- **AND THE PROBES RUN HERE, WITH NO PHONE AND NO BOX:** `node scripts/recgov-login-probe.mjs`
+  and `npx tsx scripts/connect-keys-probe.mts`. Each refuses a verdict unless its control
+  reproduces the pre-fix failure, so a green run is worth something.
+
 
 #### 2026-09-17 — THE CART BURST RECORDS ITSELF NOW, AND IT NEEDS ONE CONTESTED RELEASE
 
