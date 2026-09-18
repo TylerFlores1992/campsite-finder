@@ -56,40 +56,61 @@ as the site never opening**: `claimNotification` stamps every *sampled* open cyc
 seconds a sub-15-second flip is invisible by construction.
 
 
-## 0a. BOTH PRs ARE MERGED AND THE BOX IS UPDATED — nothing is pending
+## 0a. THE rec.gov RECONNECT IS FIXED AND LIVE ON BOTH HALVES — nothing is pending
 
-**#358 merged 16:41 UTC as `78f5fdf`; #360 merged 17:42 UTC as `637316e`.** Its worker deploy went
-green and the fleet came back **3/3 shards, heartbeat 5s, 11 watches**.
+**Read `CLAUDE.md` → "RECONNECT AUTO-CART FOR REC.GOV WAS ONE HIDDEN INPUT, AND THE LOOP WAS
+CLOSED".** Reported from the Android app on 2026-09-18: *"reconnect auto-cart for rec.gov"*, the
+reconnect failing with credentials the owner believed correct, and in the manual `/connect`
+fallback **the email re-typed into the password field on every keystroke.** Three causes, none of
+them the password.
 
-**THE BOX IS ON `637316e`** — requested 17:43:53, applied **17:44:17, twenty-four seconds** — and
-that is read from `bot-ask git-status`, never from `autocart.bot_version`. `list-processes` shows
-exactly ONE `rc-keepwarm.mjs` node and ONE `rc-hold-runner.mjs`, i.e. no duplicate payloads.
+- **THE LOOP.** `openLoginModalAndFill`'s selector list matched rec.gov's **hidden** newsletter
+  `input[name="email"]`, which comes first in DOM order — so `.first()` resolved to it and
+  `waitFor({state:'visible'})` timed out at 8,000 ms on every attempt, forever, with correct
+  credentials. The same helper is `bot.mjs`'s auto-relogin, so a dropped session could never
+  repair itself: marker goes → the app says *reconnect* → reconnecting runs the same broken
+  function. **From the outside that reads as "my password is wrong."**
+- **THE REPLAY.** `/connect`'s stream mode re-sent the whole buffer on any recomposition and never
+  cleared it between remote fields — and an email typed straight into a password with no space is
+  **one token to Gboard**, so every keystroke recomposed. `src/lib/remote-keys.ts` is an ordinary
+  common-prefix diff now.
+- **THE REVEAL.** There was no way to see what the phone keyboard had put in the password field,
+  which is *why* the first cause was undiagnosable from the app. `type="button"` — a bare
+  `<button>` inside a `<form>` defaults to submit and would have sent the credentials.
 
-So all three bot-side things are live for the first time: **the `cart-burst` event**,
-`wedge.silent` (the near-miss counter) and the decaying recycle budget.
+**BOTH HALVES ARE LIVE.** #363 (`fff3b98`) and #364 (`2e49994`) are merged; **the box applied
+`2e49994` on 2026-09-18 at 15:19 UTC in 35 seconds** (`updated and verified`), confirmed with
+`bot-ask git-status` and corroborated by `autocart.bot_version` reading *"mini-PC and web are both
+on 2e49994"*. `git merge-base --is-ancestor fff3b98 2e49994` holds. No worker deploy fired — none
+of the changed paths is in `worker-deploy.yml`'s `paths:`, read rather than inferred.
 
-**`autocart.rc_session` WENT WARN AND THAT IS THE UPDATE'S OWN COST, NOT A FAULT.** `stop-all`
-closes the Chromium the token lives in; `planRenewal` repairs it unattended in about eleven
-minutes, and the check's own detail says *"normal between releases"*. **Do not reach for
-`rc-login.bat`** — it force-kills the browser the repair needs.
+**TWO PROBES RUN HERE, WITH NO PHONE AND NO BOX**, and each **refuses its verdict unless the
+control reproduces the pre-fix failure** — so a green run is worth something:
 
-**THE COLD RESTART WAS ALSO A FORCING LEVER AND IT HAS NOT PAID YET.** A cold browser on RC's home
-page is the BURST population's shape, and that population had been absent since 09-15 09:04 until
-the 09-17 09:50 wedge. As of 17:46 the series is **flat at ~7,550 MB of commit with `rc_mb` a real
-number throughout** — so the per-process scan is healthy and no ramp has followed. **Read
-`commit_used_mb`, not `rc_mb`**, when checking: a ramp is a ~32 GB step, and the scan can go blind
-while commit keeps answering.
+```bash
+node scripts/recgov-login-probe.mjs        # serves rec.gov's shape, drives the REAL helper
+npx tsx scripts/connect-keys-probe.mts     # drives Chromium's own IME over CDP
+```
+
+**HEADLESS CHROMIUM CANNOT REACH recreation.gov FROM HERE** — `ERR_CERT_AUTHORITY_INVALID` while
+`curl` answers 200 in the same second (`~/.pki/nssdb` holds only the schema; `certutil` is absent).
+**Disabling TLS verification is forbidden**, which is why both probes are fixtures.
+
+**THE RC SIBLING IS RECORDED, NOT TOUCHED.** `rc-autologin.mjs`, `rc-probe.mjs` and
+`src/lib/rc-login-script.ts` carry the same kind of selector list — but each tries selectors one at
+a time and asks `isVisible()` on each `.first()`, so a hidden first match moves on instead of
+timing out, and `signin.reservecalifornia.com` has no newsletter form ahead of its sign-in. It is
+the release-critical path between a queued hold and a missed cart. **Widening a fix past its
+evidence is how the 08-22 round was spent.**
 
 > **AFTER AN UPDATE, CHECK THE PAYLOADS CAME BACK.** `bot-ask list-processes` should show ONE
-> `rc-keepwarm.mjs` node and one `rc-hold-runner.mjs` — it did. Repeated
-> `starting: node rc-keepwarm.mjs` in `restarts.log` (**Pacific!**) inside ten minutes is the
-> crash-loop, and the remedy is a human at the box.
+> `node.exe rc-keepwarm.mjs` and ONE `node.exe rc-hold-runner.mjs` — it did, at 15:22 UTC.
+> Repeated `starting: node rc-keepwarm.mjs` in `restarts.log` (**Pacific!**) inside ten minutes is
+> the crash-loop, and the remedy is a human at the box.
 
-**A MERGE IS A TEST RUN — AND THIS SESSION BROKE THAT RULE AGAIN.** #358 was merged at 16:41 and a
-local `npm run verify` started while master's CI ran the same suite against the same production
-database; four `claim.test.mts` tests failed and passed **14/14 alone** minutes later. The three
-conditions for an honest re-run all held, but the breach was the named one. **Do not merge and then
-verify locally.**
+**A MERGE IS A TEST RUN.** Do not merge and then verify locally — CI runs the same suite against
+the same production database, and the `claim`/`hold-line` suites fail in ways indistinguishable
+from a regression.
 
 ---
 
@@ -115,15 +136,23 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 0c. THE CURE HAS FIRED ONCE — read the box with these queries, not with the memory series
+## 0c. THE CURE HAS FIRED THREE TIMES — read the box with these queries, not with the memory series
 
-**One firing (09-17 09:50:17 UTC) is not a rate.** §0 and `CLAUDE.md` → "IT FIRED" are the
-account; this section is how to read the box for the NEXT one.
+**Three firings (09-17 09:50:17, 09-17 17:44:39, 09-18 15:19:36 UTC) are not a rate either, and
+all three are the SAME lever** — the last two are box updates, which produce the cold RC home-page
+load the burst population needs. `CLAUDE.md` → "IT FIRED", "A SECOND TIME" and "A THIRD TIME" are
+the account; this section is how to read the box for the next one.
 
 ```sql
 SELECT at, detail->>'reason' FROM bot_events
- WHERE detail->>'reason' = 'wedge-recycle' ORDER BY at DESC;   -- 1 row as of 09-17 10:20 UTC
+ WHERE detail->>'reason' = 'wedge-recycle' ORDER BY at DESC;   -- 3 rows as of 09-18 15:25 UTC
 ```
+
+**`silent` AND `strikes` ARE ON THOSE ROWS NOW.** `silent === strikes` (3 and 3, on both firings
+that carry the field) is the direct answer to the predicted flapping failure: every silent probe
+went into the run of three and no `alive` reading reset the counter. **A non-zero `silent` with no
+firing would be the finding**, and the repair there is a decaying strike counter, never a lower
+threshold.
 
 **A ~30 s cure fits entirely between two two-minute memory samples, so the SERIES IS THE WRONG
 INSTRUMENT** — and a wedge the cure wins produces **no** `bail:ramp`, **no** `ramp-scan` and
@@ -399,27 +428,30 @@ real logins from a blocked address.
 
 ---
 
-## 1. State — re-verified 2026-09-17, 17:46 UTC
+## 1. State — re-verified 2026-09-18, 15:25 UTC
 
 | | |
 |---|---|
-| master | `637316e` (#360 merged 17:42 UTC; #358 before it). **Verify against `origin/master`; this line ages.** One open issue, **#243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). |
+| master | `2e49994` (#364; #363 `fff3b98` before it). **Verify against `origin/master`; this line ages.** One open issue, **#243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). |
 | open PRs | **none.** |
-| mini-PC | **`637316e` — the same sha as web**, applied 17:44:17 in 24 seconds. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
-| health | **18 of 19 ok**, overall `degraded` — one warn, and it is the update's own cost (below). |
-| fleet | worker heartbeat **5s**, **11 watches**; `poller.shards` **3/3 held**; `poller.capacity` **7/12 across 3 machines, 5 slots free**. |
-| holds | **ZERO live.** `#A124` went `failed` at 15:20:01Z; its fairness-line sibling `expired`. |
-| RC session | **WARN, and that is the box update's own cost** — `stop-all` closed the Chromium the token lives in at 17:44. `planRenewal` repairs it unattended in ~11 minutes. **Do not reach for `rc-login.bat`**; it force-kills the browser the repair needs. |
-| the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* CURED — still NOT eliminated.** §2. The cure has fired **twice** (09-17 09:50:17 and 17:44:39 UTC), both on the burst population, neither followed by a ramp. A is built, B is answered and off, C is built. |
-| the last ramp | **09-17 14:31:49 UTC**, on an 82-minute browser (the OLD population), from the T-30 auto-login. The bail arm caught it at ~T+70 s; peak `rc_mb` **3,168 MB**, commit **45,568 / 48,894**. The walk is thirteenth-consistent and the dump is `target-silent` for the sixth time — **nothing left to read there.** |
-| the burst | **has never been observed firing.** `cart-burst` is LIVE on the box now and has **0 rows** — correct until the next tapped hold. §0. |
+| mini-PC | **`2e49994` — the same sha as web**, applied 2026-09-18 15:19 UTC in 35 seconds. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
+| health | **14 of 19 ok**, overall `degraded` — five warns, **every one documented-benign** (below). |
+| fleet | worker heartbeat **6s**, **15 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines, 4 slots free**. |
+| holds | **ZERO live and zero released in 24h.** That is the ordinary state, not a fault. |
+| RC session | **WARN, and that is the box update's own cost** — `stop-all` closed the Chromium the token lives in at 15:19. `planRenewal` repairs it unattended. **Do not reach for `rc-login.bat`**; it force-kills the browser the repair needs. |
+| the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* CURED — still NOT eliminated.** §2. The cure has fired **three times** (09-17 09:50:17, 09-17 17:44:39, 09-18 15:19:36), all on the burst population, none followed by a ramp. A is built, B is answered and off, C is built. |
+| the last ramp | **09-17 14:31:49 UTC**, on an 82-minute browser (the OLD population), from the T-30 auto-login. Peak `rc_mb` **3,168 MB**, commit **45,568**. The walk is thirteenth-consistent and the dump is `target-silent` for the sixth time — **nothing left to read there.** |
+| the burst | **has never been observed firing.** `cart-burst` is LIVE on the box and has **0 rows** — correct until the next tapped hold. §0. |
 | migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left** — the next main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 
-**THE `bot_version` WARN IS GONE AND `rc_session` HAS TAKEN ITS PLACE — read the swap correctly.**
-For a fortnight `autocart.bot_version` was the documented not-worth-acting-on case; on 09-17 it
-became genuine (real bot-side code in the gap) and the update cleared it. The warn now standing is
-`autocart.rc_session`, and its own detail says *"normal between releases, the token only lives
-~1h"*. **Nothing is owed.**
+**ALL FIVE WARNS ARE DOCUMENTED-BENIGN, AND ONE OF THEM IS NEW.**
+`autocart.rc_session` is the update's own cost (above). `autocart.rc_login` is the once-per-20h
+rehearsal gate — last PASS 2026-09-17 13:10, last night skipped. **The three `delivery:*` warns are
+the new one**: the alert-health canary last reported **2026-09-17T04:39Z**, ~35 h against a 24 h
+interval and a 27.6 h stale threshold. **It is warn, not fail, it does not page, and detection is
+demonstrably fine** (3/3 shards, every `detect:*` green) — what is stale is the canary that proves
+an alert would be *sent*. **Recorded, not chased**; it runs from Fly and no mini-PC update touches
+it. Back to green tomorrow means a restart ate one window; still stale means it has stopped.
 
 **THE CAPTCHA IS OVER AND BOTH PREDICTIONS WERE FALSIFIED BY THE BOX.** The 12:00 UTC warm-up was
 stopped by an image challenge; the handover said `maybeAutoLogin` would meet the same overlay and

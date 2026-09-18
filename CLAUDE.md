@@ -8051,7 +8051,7 @@ localStorage rule would silence `autocart.rc_session` and the phone alarm perman
      firing is genuinely ambiguous.
 ##### IT FIRED — 2026-09-17 09:50:17 UTC, ON A GENUINE BURST WEDGE, AND NO RAMP FOLLOWED
 **First production firing. `wedge-recycle` events, all time: 1 at the moment this was written —
-2 by that evening; see "IT FIRED A SECOND TIME" below.** Against the predictions written
+2 by that evening, and 3 by 2026-09-18; see "IT FIRED A SECOND TIME" and "A THIRD TIME" below.** Against the predictions written
 before it, the log is a line-for-line match — the `♻`, the close, the reopen, and **no `✗ RAMP`
 and no `✗ WEDGED` beneath it**:
 ```
@@ -8253,6 +8253,43 @@ The entry above is written around one firing and calls the true-positive half **
 - **WHAT IT DOES BUY IS THE FALSE-POSITIVE HALF, DOUBLED.** Two firings across ~30 browser lives,
   both on a page demonstrably in a 25-30k answer-less burst, and not one firing on an ordinary
   renewal, warm-up or auto-login trip.
+
+
+##### IT FIRED A THIRD TIME, ON THE NEXT BOX UPDATE, AND `wedge.silent` ANSWERED THE FLAPPING PREDICTION (2026-09-18)
+Two firings became three on the update that shipped the rec.gov reconnect fix — **so a box update
+is 2-for-2 at forcing this wedge**, which is the entry above holding rather than a new claim.
+```
+15:19:02  start-all brings up a cold browser (update.bat -> stop-all -> start-all)
+15:19:04  memory sample: commit 7,644 -> 9,488 MB, max_type renderer   <- ~2s of browser age
+15:19:36  wedge-recycle  ageMs 34,566  distinct 16  strikes 3  silent 3  closeMs 538
+          17,622 asks on futurebookingstartsendsdates, statuses {}
+15:21:05  commit back to 7,715 MB.  No ramp-scan, no bail:ramp.
+```
+- **`silent 3` WITH `strikes 3` IS THE FIRST DIRECT ANSWER TO THE FLAPPING FAILURE MODE.** That
+  prediction — a page answering one probe in three holds its 32 GiB for ever and never reaches the
+  threshold — was retired on **five joined memory dumps arguing the silence lasts minutes**, which
+  is an argument. `silent === strikes` is the reading: **every silent probe went straight into the
+  run of three and not one `alive` reading reset the counter.** Two for two (09-17 17:44 reads the
+  same pair), on the only two firings that carry the field.
+- **THE BROWSER AGE IS 34,566 ms AGAINST 09-17's 34,538 — twenty-eight milliseconds apart.** That
+  is not the leak being punctual; it is `start-all` producing the same cold RC home-page load each
+  time, and the cure acting at its own fixed `WEDGE_PROBE_EVERY_MS x WEDGE_STRIKES` (~30 s) plus
+  the load. **The reproducibility belongs to the LEVER, not to the wedge.**
+- **`closeMs 538` CORROBORATES THE CORRECTION RATHER THAN THE WEDGE.** The healthy corpus's own
+  MAX is 628 ms over 435 closes, so 538 sits **below** it — consistent with the finding that
+  `closeMs` tracks how BUSY the page is (this one was in a 17.6k-request burst), not whether it is
+  wedged. **Do not quote a close time as evidence of a wedge**; that reading was struck once
+  already.
+- **THE COMMIT STEP IS NOT EVIDENCE THE CURE PREVENTED A RAMP, AND IT IS THE TEMPTING READING.**
+  Commit rose 1,844 MB and came back — but the sample that caught it is at ~2 s of browser age and
+  **the peak between it and the next sample two minutes later is UNOBSERVED**, which is the
+  standing rule that any figure taken while a ramp is in progress is a lower bound. A burst at
+  full rate costing nothing is a recorded, observed outcome (2026-09-05 09:47). **Three firings,
+  three quiet series, and the counterfactual is unavailable in all three.**
+- **THE ANSWER-LESS BRANCH IS FOUR FOR FOUR.** 17,622 asks on one RDR path with `statuses {}` —
+  no 2xx, no 401, no `failed` — while every other path on the page answered. Still the fourth
+  branch of `loopAnswerReading`, still only ever on that path, still **not** to be re-linked to
+  the leak.
 
 ##### AND THE LOG CARRIES TWO MORE THINGS: THE REOPEN, AND A BLIP THAT DELETES `tab-close` ROWS
 Pulled at 10:20 with `tail-log rc-keepwarm:400`, which still reached back to 09:29 — the colon is
@@ -12911,35 +12948,54 @@ spent.
 
 ## Open / next session
 
-#### 2026-09-18 — THE rec.gov RECONNECT IS FIXED IN TWO PLACES AND ON THE BOX IN NEITHER
+#### 2026-09-18 — THE rec.gov RECONNECT IS FIXED, MERGED, AND LIVE ON BOTH HALVES
 
 **Read the "RECONNECT AUTO-CART FOR REC.GOV WAS ONE HIDDEN INPUT" entry above.** Merged as #363
-(`fff3b98`), verify 2290/2290, and **none of the changed paths is in `worker-deploy.yml`'s
-`paths:`** — read, not remembered — so no poller restarted.
+(`fff3b98`) and #364 (`2e49994`), verify 2290/2290, and **none of the changed paths is in
+`worker-deploy.yml`'s `paths:`** — read, not remembered — so no poller restarted.
 
-**THE WEB HALF IS LIVE ON A PUSH; THE HALF THAT FIXES THE REPORT IS NOT.**
-`src/app/connect/page.tsx` and `src/lib/remote-keys.ts` reach installed apps with no rebuild, so
-the email-into-the-password symptom is already gone from the manual window. **The auto-login
-selector is `scripts/auto-cart-bot/recgov-login.mjs` — bot-side, and inert until the mini-PC
-updates.** Until then the app will go on asking to reconnect, and reconnecting will go on
-failing, because that is the same function.
+**THE BOX TOOK `2e49994` ON 2026-09-18 AT 15:19 UTC, IN 35 SECONDS** (`updated and verified`),
+requested from a session rather than waiting for the quiet window. Confirmed with
+`bot-ask git-status`, corroborated by `autocart.bot_version` reading *"mini-PC and web are both on
+2e49994"*, and `git merge-base --is-ancestor fff3b98 2e49994` holds. `list-processes` shows ONE
+`node.exe rc-keepwarm.mjs` and ONE `rc-hold-runner.mjs` — no duplicate payloads.
 
-- **CONFIRM THE BOX WITH `npx tsx scripts/bot-ask.mts git-status`, NEVER `autocart.bot_version`**
-  — that column COALESCEs and can show a stale sha beside a live heartbeat.
-- **THE UPDATE ENDS THE RC SESSION** (the token lives in the Chromium it closes), so it is worth
-  taking in the 02:00–05:00 PT quiet window rather than pressing "Update now". The 6 h release
-  gate shuts that window while a hold is queued.
-- **THIS CHANGE ALSO ARMS THE `autocart.bot_version` WARN**, because `CH_BOT_CODE_AT` is
-  `git log -1 -- scripts/auto-cart-bot`. That warn is REAL here — there is genuine bot-side code
-  in the gap — unlike the comment-only case recorded under that check.
-- **HOW TO READ THE FIRST RECONNECT AFTER IT LANDS:** `bot-ask tail-log broker` should no longer
-  carry `locator.waitFor: Timeout … resolved to hidden <input … type="hidden"/>`. A refusal now
-  names which of the two it was — *"the modal never opened"* vs *"every field is hidden"* — plus
-  a census of the page's email inputs by tag/type/name/id.
+- **THE UPDATE COST THE RC SESSION AND THAT IS ITS PRICE, NOT A FAULT.** `stop-all` closes the
+  Chromium the token lives in; the check's own detail says *"normal between releases, the token
+  only lives ~1h"*, and `planRenewal` repairs it unattended. **Do not reach for `rc-login.bat`** —
+  it force-kills the browser the repair needs. It was taken deliberately with **zero holds
+  queued**, so the 6 h release gate was open and nothing was at risk.
+- **AND IT FIRED THE CURE A THIRD TIME, 34 SECONDS INTO THE NEW BROWSER** — see "IT FIRED A THIRD
+  TIME" above. A box update is now **2-for-2** at forcing the burst wedge, and `wedge.silent` got
+  its first production reading.
+- **HOW TO READ THE FIRST RECONNECT FROM HERE:** `bot-ask tail-log broker` should no longer carry
+  `locator.waitFor: Timeout … resolved to hidden <input … type="hidden"/>`. A refusal now names
+  which of the two it was — *"the modal never opened"* vs *"every field is hidden"* — plus a
+  census of the page's email inputs by tag/type/name/id. **Never `.value`.**
+- **BOTH RECOVERY PATHS ARE FIXED BY THE ONE CHANGE**, because `bot.mjs`'s auto-relogin and the
+  broker's manual reconnect call the same `openLoginModalAndFill`. **The `.camphawk-relogin`
+  retry-budget state lives on the box's filesystem and is not readable from a session**, so
+  whether a repair is owed right now is unknown from here; the next reconnect attempt answers it.
 - **AND THE PROBES RUN HERE, WITH NO PHONE AND NO BOX:** `node scripts/recgov-login-probe.mjs`
   and `npx tsx scripts/connect-keys-probe.mts`. Each refuses a verdict unless its control
   reproduces the pre-fix failure, so a green run is worth something.
 
+#### 2026-09-18 — THE DELIVERY CANARY HAS BEEN QUIET FOR ~35 HOURS — WARN, UNCHASED
+
+`delivery:email`, `delivery:sms` and `delivery:push` all read their last result as
+**2026-09-17T04:39:26Z**, against a `DELIVERY_INTERVAL_MS` of 24 h and a stale threshold of
+**27.6 h** (`DELIVERY_INTERVAL_MS * 1.15`). So it is genuinely overdue and the warn is real.
+
+- **IT IS NOT ALERTING ITSELF.** The poller is beating (6 s), `poller.shards` is 3/3, and every
+  `detect:*` canary is green — so detection is fine. What is stale is the canary that proves an
+  alert would actually be **sent**, which is Roadmap A's whole job.
+- **WARN, NOT FAIL, AND IT DOES NOT PAGE.** Two tiers exist precisely so "late" and "dead" do not
+  share one word; the comment in `health-thresholds.ts` is explicit that a canary is late whenever
+  the worker restarted inside the window.
+- **RECORDED RATHER THAN CHASED — it is not this session's change and cannot be.** The canary runs
+  from Fly and is untouched by a mini-PC update. **The next reading decides it:** back to green
+  means a restart ate one window; still stale tomorrow means it has stopped, and then the question
+  is why the worker's 24 h timer is not firing.
 
 #### 2026-09-17 — THE CART BURST RECORDS ITSELF NOW, AND IT NEEDS ONE CONTESTED RELEASE
 
