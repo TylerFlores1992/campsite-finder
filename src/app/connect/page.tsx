@@ -2,8 +2,9 @@
 import Link from "next/link";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Loader2, CheckCircle2, ShieldCheck, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import Logo from '@/components/Logo';
+import { diffKeystrokes, CARET_MOVING_KEYS } from '@/lib/remote-keys';
 
 // Remote one-time recreation.gov sign-in. Primary path: the user enters their
 // rec.gov email/password into a normal form here; the credentials are sent over the
@@ -48,6 +49,7 @@ export default function ConnectPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [note, setNote] = useState('');
 
@@ -139,14 +141,24 @@ export default function ConnectPage() {
   };
   const btn = (b: number) => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left');
 
+  // THE BUFFER ONLY DESCRIBES THE FIELD IT WAS DIFFED AGAINST.  A tap on the stream, or a
+  // caret-moving key, may put the remote caret in a DIFFERENT field — and carrying the old
+  // field's text across is half of the 2026-09-18 report: the buffer still held the email
+  // when the user tapped the password field.  Dropping it sends NOTHING (no Backspaces): we
+  // are forgetting what we typed, not asking the remote page to unwind it.
+  const resetBuffer = () => {
+    if (kbRef.current) kbRef.current.value = '';
+    kbPrevRef.current = '';
+  };
+
   // Non-text keys only (they don't change the input's value, so the value-diff below
   // won't see them): Enter/Tab/arrows/etc. Backspace/Delete DO shrink the value and are
   // handled by the diff, so they're intentionally NOT here (avoids double-sending).
-  const named = ['Enter', 'Tab', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (status !== 'live') return;
-    if (named.includes(e.key)) {
+    if (CARET_MOVING_KEYS.includes(e.key)) {
       send({ t: 'key', key: e.key });
+      resetBuffer();
       e.preventDefault();
     }
   };
@@ -154,20 +166,16 @@ export default function ConnectPage() {
   // Text channel — the reliable one across iOS/Android/desktop. React's `onBeforeInput`
   // often doesn't expose `inputType`/`data`, so instead we let the hidden input hold the
   // typed text and diff its value on every `input` event (composition-friendly, and it
-  // catches soft-keyboard backspace that keydown misses on Android). Append → forward the
-  // new chars as text; shrink → forward Backspace(s). Cursor edits mid-string are rare in
-  // a login, so a non-append/non-trim change just replays the whole value.
+  // catches soft-keyboard backspace that keydown misses on Android).
+  //
+  // The diff itself is `src/lib/remote-keys.ts` — a pure function with its own guards,
+  // because the arm that used to live here re-sent the WHOLE buffer whenever Gboard
+  // recomposed a word, which is how an email ended up being typed into a password field on
+  // every keystroke. Read that file's header before changing this.
   const onTextInput = (e: React.FormEvent<HTMLInputElement>) => {
     if (status !== 'live') return;
     const v = e.currentTarget.value;
-    const prev = kbPrevRef.current;
-    if (v.length > prev.length && v.startsWith(prev)) {
-      for (const ch of v.slice(prev.length)) send({ t: 'text', text: ch });
-    } else if (v.length < prev.length && prev.startsWith(v)) {
-      for (let i = 0; i < prev.length - v.length; i++) send({ t: 'key', key: 'Backspace' });
-    } else if (v !== prev) {
-      for (const ch of v) send({ t: 'text', text: ch });
-    }
+    for (const msg of diffKeystrokes(kbPrevRef.current, v)) send(msg);
     kbPrevRef.current = v;
   };
 
@@ -287,17 +295,41 @@ export default function ConnectPage() {
                 className="mt-1 w-full rounded-ch-input border border-ch-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ch-green disabled:opacity-60"
               />
             </label>
+            {/* REVEAL, because the only feedback a wrong password gets here is a streamed
+                rec.gov window forty seconds later. Asked for 2026-09-18 after an Android
+                sign-in that failed with credentials the owner believed were right — there
+                was no way to check what the phone keyboard had actually put in the field.
+                `type="button"`: a bare <button> inside a <form> defaults to SUBMIT, which
+                would fire the sign-in on the tap meant to show the password.
+                autoCapitalize/autoCorrect/spellCheck are off because revealing turns this
+                into `type="text"`, and Android will then happily capitalise the first
+                character of a password that was typed correctly. */}
             <label className="block text-sm font-medium text-ch-ink-2">
               recreation.gov password
-              <input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={submitting}
-                className="mt-1 w-full rounded-ch-input border border-ch-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ch-green disabled:opacity-60"
-              />
+              <span className="relative mt-1 block">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={submitting}
+                  className="w-full rounded-ch-input border border-ch-line py-2.5 pl-3 pr-12 text-sm outline-none focus:ring-2 focus:ring-ch-green disabled:opacity-60"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  disabled={submitting}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-ch-input text-ch-muted hover:text-ch-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green disabled:opacity-60"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </span>
             </label>
             <label className="flex items-start gap-2 text-ch-meta text-ch-ink-2">
               <input
@@ -361,7 +393,7 @@ export default function ConnectPage() {
                 spellCheck={false}
                 aria-label="recreation.gov sign-in"
                 onPointerMove={(e) => status === 'live' && send({ t: 'move', ...rel(e) })}
-                onPointerDown={(e) => { kbRef.current?.focus(); send({ t: 'down', ...rel(e), button: btn(e.button) }); }}
+                onPointerDown={(e) => { kbRef.current?.focus(); resetBuffer(); send({ t: 'down', ...rel(e), button: btn(e.button) }); }}
                 onPointerUp={(e) => send({ t: 'up', ...rel(e), button: btn(e.button) })}
                 onWheel={(e) => send({ t: 'wheel', dx: e.deltaX, dy: e.deltaY })}
                 onKeyDown={onKeyDown}
