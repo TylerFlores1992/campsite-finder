@@ -972,6 +972,50 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
         - **BUILD IT ON `?branch=<name>` AND MATCH THE SHA IN THE RESULTS.** One request, no
           filter that can silently under-report, and it sees the `pull_request` twin as well —
           which is the pair that overlaps for 3-301 s on every push.
+          - **AND POLL IT NO FASTER THAN ONCE A MINUTE: THE UNAUTHENTICATED LIMIT IS 60 AN
+            HOUR (measured 2026-09-19).** A watcher on a 30-second poll asks 120 times an hour,
+            so it exhausts the budget partway through a single CI run and **every request after
+            that is a 403.** Observed on this very branch: `x-ratelimit-remaining` had fallen to
+            48 within minutes and then to **0**, and the watcher's own output alternated a real
+            reading with `no runs yet` — which is **the 403 being reported as an absence**, i.e.
+            this file's most-repeated failure, committed inside the instrument built to avoid the
+            `head_sha` version of it, by the person writing the entry about it. The reset is an
+            hour out, so a blown budget costs the whole run you were watching.
+          - **SO CHECK THE STATUS CODE AND REFUSE TO SPEAK ON A NON-200.** *"We could not
+            look"* and *"the API answered and this sha has no runs"* are opposite facts and
+            `(j.workflow_runs || [])` merges them silently. Print
+            `x-ratelimit-remaining` beside the refusal — it is the one header that says which
+            kind of 403 you have, and it costs nothing.
+          - **AND THE AUTHENTICATED ROUTE HAS NO SUCH CEILING: `mcp__github__actions_list` with
+            `workflow_runs_filter.branch`.** It returns the same twins and is what actually
+            produced the verdict here once the unauthenticated budget was gone. **Use `curl` for
+            a one-off reading and MCP for anything that POLLS** — the 09-10 finding that public
+            reads need no auth is about a single request, not about a loop.
+
+###### AND A FIFTH RED ON A DOCS-ONLY DIFF, WITH THE TWIN OVERLAP RULED OUT BY ARITHMETIC (2026-09-19)
+`# fail 2` of 2290 on a diff of **two Markdown files**, and the same tree then passed
+**2290/2290 locally in full** — not merely "the suite passes alone", which is the stronger form
+of the second condition. The names are unreachable: the log's visible window is `ok 1..11` and
+`ok 1461..2257`, so the **hidden range is 12..1460** and `not ok` appears **zero** times in
+312,688 characters.
+- **THE CI TWINS ARE ELIMINATED, AND BY ARITHMETIC RATHER THAN BY HOPE.** The `push` twin ran
+  **02:40:33 → 02:41:01** and the `pull_request` twin started **02:40:49**, so they overlapped
+  for **twelve seconds** — the bottom of the recorded 3-301 s range. `verify` spends that on
+  checkout, `setup-node` and `npm ci` before it reaches jsx-spacing, let alone `npm test`, so
+  the cancelled twin **cannot have written a fixture row.** Compute the overlap before reaching
+  for this explanation; it is the first one to hand and it does not always fit.
+- **THE OTHER NAMED WRITERS ARE OUT TOO.** No other workflow was `in_progress`, and the Nightly
+  RIDB Sync last ran **09-18 13:15-14:37 UTC**, thirteen hours earlier.
+- **WHAT IS LEFT IS THE TEST-VERSUS-PRODUCTION CLASS, AND IT CANNOT BE SERIALISED.** The poller
+  runs `rankHoldLine` every cycle, `dueHolds` every 15 s from the box, and `rcSyncIfDue` /
+  `gtcSyncIfDue` write `campgrounds` — and **every recorded-flaky assertion falls inside
+  12..1460** (`hub totals…` at 481, `a state under the threshold gets null` at 480, the
+  `dueHolds` pair at 1052/1070, the line-rank tests at 1060-1070), while the two ruled-out
+  suites (`sync-claim`, `ridb-photos`) fall **outside** it. **Consistent, and not identifying** —
+  do not promote it to a named test.
+- **SO THE THIRD CONDITION IS MET AT THE CLASS AND NOT AT THE TEST, and the honest substitute is
+  the local FULL-SUITE pass.** A re-run is legitimate here for the reason the file already
+  gives: the diff cannot reach the code, the suite passes, and the mechanism's family is named.
         - **AND THE SHAPE, ONCE MORE: a filter returning `total 0` and a subject with no runs
           are the same reading.** `total_count: 0` from a 200 is an absence, and this file's
           most expensive recurring error is treating one as a negative.
