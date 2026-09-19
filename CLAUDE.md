@@ -12997,6 +12997,25 @@ requested from a session rather than waiting for the quiet window. Confirmed wit
   means a restart ate one window; still stale tomorrow means it has stopped, and then the question
   is why the worker's 24 h timer is not firing.
 
+##### THE NEXT READING SAID "A RESTART ATE ONE WINDOW", AND THE RESTART IS NAMED (2026-09-19 02:37 UTC)
+All three `delivery:*` checks read **ok**, last result **2026-09-18T17:41:07Z** — nine hours old
+against a 27.6 h threshold. **It recovered on its own with nobody touching it**, which is the first
+of the two branches above and retires the second.
+- **AND THE PHASE IS EXACT, WHICH MAKES THE MECHANISM A READING RATHER THAN THE TIDY STORY.** The
+  gap is 04:39:26Z on 09-17 → 17:41:07Z on 09-18, i.e. **37 hours = 24 h + 13**, so one slot was
+  skipped and the timer then re-phased. `637316e` touches `worker/**` and merged at **17:38:40Z on
+  09-17**, firing a worker deploy — and the canary's next firing is **24 h and 2.5 minutes after
+  it**. (`78f5fdf` an hour earlier also touched `worker/**`; the LATER deploy is the one that set
+  the phase.)
+- **SO THE INTERVAL IS ANCHORED AT PROCESS START, NOT AT A WALL CLOCK**, the same shape as
+  `keepSessionsWarm`'s 30-minute cycle — and **every worker deploy re-phases it**. A deploy
+  therefore costs at most one window, deterministically, and the warn that follows is arithmetic.
+- **THE TWO-TIER DESIGN IS WHAT MADE WAITING THE RIGHT MOVE**, and is worth quoting the next time a
+  canary is late: `DELIVERY_STALE_MS` is `interval * 1.15` and the level is **warn**, so "late" and
+  "dead" never share a word, nothing paged, and the cheapest possible action — reading it again a
+  day later — separated them. **Do not chase a late alert-health canary within one interval of a
+  worker deploy.**
+
 #### 2026-09-17 — THE CART BURST RECORDS ITSELF NOW, AND IT NEEDS ONE CONTESTED RELEASE
 
 **Read "THE 08:00 FAST LANE HAS NEVER ONCE BEEN OBSERVED RUNNING" above before anything else.**

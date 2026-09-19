@@ -432,10 +432,10 @@ real logins from a blocked address.
 
 | | |
 |---|---|
-| master | `2e49994` (#364; #363 `fff3b98` before it). **Verify against `origin/master`; this line ages.** One open issue, **#243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). |
+| master | `00fdcb5` (#365 docs; `2e49994` #364 and `fff3b98` #363 before it). **Verify against `origin/master`; this line ages.** One open issue, **#243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). |
 | open PRs | **none.** |
 | mini-PC | **`2e49994` — the same sha as web**, applied 2026-09-18 15:19 UTC in 35 seconds. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
-| health | **14 of 19 ok**, overall `degraded` — five warns, **every one documented-benign** (below). |
+| health | **16 of 19 ok** (re-read 2026-09-19 02:37 UTC), overall `degraded` — three warns, **every one documented-benign** (below). |
 | fleet | worker heartbeat **6s**, **15 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines, 4 slots free**. |
 | holds | **ZERO live and zero released in 24h.** That is the ordinary state, not a fault. |
 | RC session | **WARN, and that is the box update's own cost** — `stop-all` closed the Chromium the token lives in at 15:19. `planRenewal` repairs it unattended. **Do not reach for `rc-login.bat`**; it force-kills the browser the repair needs. |
@@ -444,14 +444,16 @@ real logins from a blocked address.
 | the burst | **has never been observed firing.** `cart-burst` is LIVE on the box and has **0 rows** — correct until the next tapped hold. §0. |
 | migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left** — the next main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 
-**ALL FIVE WARNS ARE DOCUMENTED-BENIGN, AND ONE OF THEM IS NEW.**
-`autocart.rc_session` is the update's own cost (above). `autocart.rc_login` is the once-per-20h
-rehearsal gate — last PASS 2026-09-17 13:10, last night skipped. **The three `delivery:*` warns are
-the new one**: the alert-health canary last reported **2026-09-17T04:39Z**, ~35 h against a 24 h
-interval and a 27.6 h stale threshold. **It is warn, not fail, it does not page, and detection is
-demonstrably fine** (3/3 shards, every `detect:*` green) — what is stale is the canary that proves
-an alert would be *sent*. **Recorded, not chased**; it runs from Fly and no mini-PC update touches
-it. Back to green tomorrow means a restart ate one window; still stale means it has stopped.
+**ALL THREE WARNS ARE DOCUMENTED-BENIGN — and the delivery canary ANSWERED (2026-09-19 02:37
+UTC).** All three `delivery:*` checks are **green again**, last result 2026-09-18T17:41:07Z, with
+nobody touching them: the 35-hour silence was a worker deploy re-phasing an interval anchored at
+process start (`637316e` merged 17:38:40Z on 09-17 and the next firing is 24 h + 2.5 min after it).
+**Do not chase a late alert-health canary within one interval of a worker deploy.** What is left:
+`autocart.rc_session` (RC rejects the token between releases — the token lives ~1h and
+`planRenewal` repairs it; **never reach for `rc-login.bat`**), `autocart.rc_login` (the once-per-20h
+rehearsal gate, last PASS 2026-09-17), and `autocart.bot_version` (box `2e49994` vs web `00fdcb5`,
+and the check itself says **"No bot-side code in the gap"** — the gap is docs, so **do not spend a
+box update on it**; an update ends the RC session).
 
 **THE CAPTCHA IS OVER AND BOTH PREDICTIONS WERE FALSIFIED BY THE BOX.** The 12:00 UTC warm-up was
 stopped by an image challenge; the handover said `maybeAutoLogin` would meet the same overlay and
