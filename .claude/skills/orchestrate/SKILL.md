@@ -29,6 +29,25 @@ Fable report naming its tier, and a PR. **A dedicated orchestrator session is ti
 one that is also doing its own work** — its context stays on dispatch rather than filling
 with implementation detail — but any session can do it.
 
+**Starting a fresh orchestrator.** There is nothing to install and no setup step: open a
+cloud session on this repo and invoke the skill. What is worth doing deliberately is the
+first sixty seconds, because an orchestrator that skips it is the 2026-09-04
+two-main-lanes collision waiting to happen:
+
+1. **`list_sessions {mine: true}`** — what is already live in this repo, and whether any
+   of it is mid-dispatch. A child left `BLOCKED` by a previous orchestrator is unfinished
+   work that will never resolve itself.
+2. **`git fetch origin master && git log --oneline origin/master -5`** — what landed while
+   you were away. A stale local `master` has already produced one confident, wrong
+   diagnosis in this repo.
+3. **`CLAUDE.md`'s Open block** — what is owed.
+4. **`actions_list` on `verify.yml`** — is the CI slot free before you take it.
+
+Then `/orchestrate <task>`. **Name the session "Orchestrator"** so it is obvious in
+`list_sessions` which one holds the slot. Steps 1 and 3 are also exactly what you do after
+a clear — see "Clearing the orchestrator" — because a fresh orchestrator and a cleared one
+are the same thing.
+
 ## What the tools actually do — verified 2026-09-20, not assumed
 
 Six facts decide the whole design. Each was read off the tool surface or measured on a
@@ -94,6 +113,9 @@ than because it was economical.** It is documentation, one file, and the orchest
 session could plausibly have made these edits itself faster than spawning a child and
 waiting on it. A rule whose own first application is an exception to the "do it yourself"
 case above should say so rather than pretend it was dispatched for the reasons in the list.
+**It was also over-banded:** the table below puts "a doc edit" at haiku and it was sent at
+sonnet. Rehearsing the harness is a reason to dispatch; it is not a reason to go up a band,
+and the two got conflated.
 
 ## Sizing — one line, and it is a model
 
@@ -147,7 +169,8 @@ child it spawned, so it holds the slot itself.**
 
 **At most one child may be in its push/CI phase at a time. Everything else queues.**
 
-The slot is held from the moment a child is told to push until the **PR's** run is green
+**The slot is held from SPAWN** — not from the moment a child is told to push — until the
+**PR's** run is green
 — not just the push run. Opening a PR fires a second full `npm test` against the
 production database, so the slot covers all of: the child's local `npm run verify`, its
 push, and the PR's own run.
@@ -157,7 +180,25 @@ pushes to master; nothing stops a child pushing its own branch early except havi
 told not to. So the robust form is **one push-phase child at a time**, and parallelism is
 reserved for work that never reaches CI — research, reading, a doc draft.
 
-**Three things the slot cannot cover. Say so rather than implying coverage:**
+**THE ORCHESTRATOR'S OWN FOLLOW-UP COMMIT IS INSIDE THE SLOT TOO, AND THAT WAS LEARNED BY
+BREACHING IT** (2026-09-20). Everything above is written about *children* pushing. The
+orchestrator legitimately adds its own commit to a child's branch — the `CLAUDE.md`
+fold-in, a fix for something the verifier flagged — and **that push is a push.** On this
+file's own first dispatch the orchestrator pushed a follow-up **eight minutes into the
+child's `verify` run**, GitHub cancelled it seventeen seconds later, and the child's SHA
+never got a verdict. That is `docs/LANES.md` in as many words: *"do not push again while
+your own CI is still running."*
+
+- **Wait for the run in flight before pushing your own commit.** `actions_list` on
+  `verify.yml`, branch-filtered, answers it in one call.
+- **A Stop hook nagging about an unpushed commit is not authority to breach this.** It is
+  a real risk on the other side of a real trade — name both, then decide; do not let the
+  louder one win by default.
+- **The verifier's SHA moves under it.** Whatever Fable was given is no longer the branch
+  head, so its verdict covers the old commit and must be reported that way. If the
+  follow-up is substantive, it wants its own pass.
+
+**Three more things the slot cannot cover. Say so rather than implying coverage:**
 
 1. **The push/`pull_request` twins.** One push to a branch *that already has a PR open*
    starts two runs on the same SHA; the concurrency group cancels one, and cancellation is
@@ -270,11 +311,18 @@ SESSION_STATUS_BUCKET_FAILED        its turn errored (plain `status` reads idle 
 `post_turn_summary.status_category` (`completed`, `need_input`) and `needs_action` say
 more. `session_context.outcomes[].git_repository.git_info.branches` is the join key to git.
 
-**Children draw on the same five-hour and seven-day rate limit as the orchestrator** — a
-fan-out can starve the session that spawned it, not just each other. A child whose
-`post_turn_summary.status_category` reads `failed` with a rate-limit message in the detail
-is **not a defect in the work**; it is the quota, shared. The right response is to wait
-and resume it, not to re-dispatch the same task at another child and burn twice the quota.
+**Children draw on the same rate limit as the orchestrator** — a fan-out can starve the
+session that spawned it, not just each other. **Measured 2026-09-20:** the orchestrator and
+its child both carried `external_metadata.rate_limit_info` with the *identical*
+`resetsAt` and `rateLimitType: "five_hour"`. (A seven-day window exists in the product; that
+this pair shares one is **not** evidenced here — do not quote it as measured.)
+
+**Read the quota off `external_metadata.rate_limit_info.status`, not off a status word.**
+`failed` is a value of **`status_bucket`** (`SESSION_STATUS_BUCKET_FAILED`), not of
+`post_turn_summary.status_category`, whose observed values are `completed` and `need_input`
+— so looking for `status_category: "failed"` searches the wrong field. A child stopped by
+the quota is **not a defect in the work**; the right response is to wait and resume it, not
+to re-dispatch the same task at another child and burn the same quota twice.
 
 **A child that finishes cleanly does not report back** — you only get a
 `<child-session-event>` on failure or worker restart. So completion is polled, never
@@ -282,11 +330,27 @@ waited on. Poll with `send_later` or a backgrounded sleep sized to the task; **n
 loop**, and never a "are you done?" message. **`BLOCKED` is the state that never resolves
 itself**; treating it as "still working" waits forever.
 
-**Bound the wait on a child that is neither.** After roughly 45 minutes of `WORKING` with
-**no branch on origin** (`git fetch origin claude/<topic>` finds nothing), `interrupt_session`
-and inspect rather than continuing to poll. The branch is the evidence, not the bucket —
-`get_session` can report `WORKING` indefinitely on a wedged child, but a fetch that finds
-nothing means it has pushed nothing, whatever its status claims.
+**Bound the wait on a child that is neither — but bound it against the TASK, not a
+constant.** The branch is the evidence, not the bucket: `git fetch origin claude/<topic>`
+finding nothing means the child has pushed nothing, whatever its status says. What that
+does **not** license is a fixed deadline. **Under "push when done", a healthy child has no
+branch on origin for its entire run** — so a long consequential task reading a subsystem is
+indistinguishable, by that test alone, from a wedged one. A flat 45-minute rule would
+interrupt exactly the dispatches most worth making.
+
+So: **decide the bound when you size the task** — the same moment you choose the model, and
+the same estimate step 4 already asks for in *"a backgrounded sleep sized to the task"* —
+and treat overrunning it by roughly double as the trigger. **Say the number in the report
+when you spawn**, so a wrong estimate is visible rather than discovered as a timeout.
+
+**And know what interrupting buys, because it is less than it sounds.** You cannot read a
+child's transcript (see the table above), so `interrupt_session` does not let you *inspect*
+anything — `get_session` and `git fetch` are the two readings available and you have
+already taken both. What it buys is **stopping the spend and freeing the slot**. That is a
+real reason to do it and a poor reason to do it early.
+
+**Unmeasured:** whether `get_session` can report `WORKING` indefinitely on a genuinely
+wedged child. Nothing here has observed one. The one dispatch on record ran **4m19s**.
 
 **5. Verify — Fable, as a subagent.** Not another cloud session: `Agent` takes
 `model: "fable"`, runs in this checkout with fresh context, and costs no clone and no
@@ -395,7 +459,7 @@ That is what makes clearing it free at any moment, not just at the end of a cycl
 | which children exist | `list_sessions {mine: true}` |
 | what each one produced | its branch on origin |
 | decisions and findings | the PR body, then `CLAUDE.md` |
-| whether the CI slot is free | visible from open PRs and pushed branches |
+| whether the CI slot is free | `actions_list` on `verify.yml` — **not** the branch list; a pushed branch does not show a run in progress |
 
 Nothing here needs the orchestrator's own context to survive — which is exactly why the
 "state what you left behind" line in Reporting exists: **every report is already a
@@ -403,9 +467,11 @@ handover**, whether or not a clear is imminent.
 
 **For this to hold, children have to be findable after a clear.** Give every spawned
 child a `title` naming its topic and a `tags` entry marking it as this orchestrator's
-(step 3). Without that, `list_sessions {mine: true}` in a fresh session cannot
-reconstruct the fleet, and the claim that the orchestrator is freely clearable is just a
-claim, not a mechanism anyone could rely on.
+(step 3). **Stated precisely:** the listing already carries `parent_session_id` and
+`origin: "claude_code_mcp_seed"` with no spawn-time input, so a child is never *invisible*
+— but a fresh session does not know the previous orchestrator's id, so without a tag it
+cannot tell which children were **this** fleet's. The title is what makes the list legible
+at a glance; the tag is what makes it filterable.
 
 **When to clear:**
 
