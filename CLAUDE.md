@@ -12992,6 +12992,60 @@ spent.
 
 ## Open / next session
 
+#### 2026-09-20 — ONE SESSION CAN DISPATCH ANOTHER, AND IT COSTS MORE TO ARRIVE THAN TO WORK
+
+`.claude/skills/orchestrate/SKILL.md` takes a task, sizes it, spawns a **child cloud session**
+on its own `claude/<topic>` branch, holds the single CI slot while it works, has **Fable**
+check the branch before anything reaches a PR, and reports. It is itself a MAIN lane in
+`docs/LANES.md` terms, so every child obeys main-lane rules: the orchestrator hands down the
+branch and the migration number rather than letting a child pick, because **an orchestrator
+fanning out is the 2026-09-04 two-main-lanes collision at scale.**
+
+- **THE BRANCH IS THE DELIVERABLE AND THE CHILD'S REPORT IS A CLAIM.** There is no
+  `send_message` and no `list_events` among the 22 `mcp__Claude_Code_Remote__*` tools, so a
+  child's transcript cannot be read at all, and a cloud child **cannot answer back** —
+  `SendMessage` reaches it, nothing returns. Its summaries arrive wrapped `untrusted="true"`.
+  So completion is polled and **verified against the diff**, never against the sentence the
+  child wrote about its own work. Same rule as `6006428`, which claimed a fix it never made.
+- **EXERCISED END TO END ON THE SAFEST POSSIBLE CHANGE**, deliberately as a rehearsal: the
+  skill's own six-gap edit, markdown only, in neither of `worker-deploy.yml`'s `paths:` lists.
+  Child `claude-sonnet-5`, **4m19s**, one file, 124 insertions.
+- **AND THE COST SHAPE IS THE FINDING, NOT THE TOTAL.** `get_session` →
+  `external_metadata.usage` reads **$5.45** for that child — **12,008,877 cache-read tokens
+  against 17,980 output.** Nearly all of it is the child ARRIVING: cloning, then reading this
+  file, `docs/LANES.md` and the skill before it types a character. **So the economics invert
+  the intuition — a big self-contained change is a better dispatch than a small one**, because
+  the arrival cost is paid either way and only a large change amortises it. "Don't dispatch
+  trivia" is that, measured.
+  - **IT IS A SUBSCRIPTION DRAW, NOT NECESSARILY AN INVOICE LINE** (`isUsingOverage: false`,
+    `rateLimitType: "five_hour"`), and **children share the orchestrator's own quota** — so a
+    fan-out can starve the session that spawned it, and a child failing with a rate-limit
+    message is the quota rather than a defect in its work.
+  - **The orchestrator's own cost is the larger half**: $242.46 at the moment it spawned a
+    $5.45 child. Sizing, spawning, polling and verifying are not free.
+- **FABLE VERIFIES IN TWO TIERS AND THE WORD "VERIFIED" NEVER CARRIES THE STRONGER ONE.**
+  Tier 1 touches no database — read the diff adversarially, `npm run typecheck` (both
+  configs), `jsx-spacing` **read by output not exit code**, `us-spelling` as a single file,
+  the changed paths against `worker-deploy.yml`'s `paths:`, the commit/PR claims against the
+  diff, and **read CI rather than running it**. Tier 2 is the real-DB `npm test`, on request
+  only, with nothing in flight. **A second concurrent run against production is a second
+  writer, not more evidence.**
+- **THE ORCHESTRATOR CAN BE THE CI LOCK THIS REPO HAS NEVER HAD.** `docs/LANES.md` says there
+  is no locking anywhere; a controlling session knows every child it spawned, so it serialises
+  them. **It cannot cover the push/`pull_request` twins, the Nightly RIDB Sync, or another
+  lane** — those are named in the skill rather than implied away.
+- **TWO HARNESS FACTS MEASURED BY ERROR.** `outcome_branch` is rejected without an explicit
+  `source_url` — inheriting the parent's checkout is not enough. And `effort_level` is
+  **absent entirely** on a spawned child's record, so the skill's own instruction to read it
+  off the first child does not work; an absent field is not a default.
+- **CLEARING IT IS FREE BY DESIGN: the orchestrator holds no state that is not also in a file,
+  a branch, a PR or a session id.** Children are `list_sessions {mine: true}` (which is why
+  every spawn sets a `title` and `tags`), their work is branches on origin, findings go to the
+  PR body then here. **Every report is therefore a handover.** Clear after a cycle closes or
+  at ~70% context, never mid-flight with a child unaccounted for. **If a fresh session cannot
+  reconstruct the fleet from the repo and the session list, something was held only in
+  context, and that is the bug.**
+
 #### 2026-09-20 — CLAUDE HAS HANDS ON THE SITE NOW, FROM THE HOME SERVER
 
 **A phone-driven browser test of camphawk.app succeeded end to end** — Remote Control on the

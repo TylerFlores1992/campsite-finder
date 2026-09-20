@@ -31,8 +31,8 @@ with implementation detail — but any session can do it.
 
 ## What the tools actually do — verified 2026-09-20, not assumed
 
-Four facts decide the whole design. Each was read off the tool surface, and the first
-two contradict what people expect to be there.
+Six facts decide the whole design. Each was read off the tool surface or measured on a
+real dispatch, and the first two contradict what people expect to be there.
 
 | | |
 | --- | --- |
@@ -40,6 +40,8 @@ two contradict what people expect to be there.
 | **A cloud child cannot answer you** | `SendMessage` reaches it, but its own docs say a cloud session *"receives your message but cannot message any session back yet"*, and `notify_when_idle` is **this-machine only**. A child is `environment_kind: anthropic_cloud`. Messaging one is fire-and-forget. |
 | **`create_session` has no effort knob** | It takes `model` and nothing else bearing on depth. `effort_level` is real and readable (`session_context.effort_level`) but `flag_settings_origin` is `server_fold_v1` — folded server-side from the user's `/config`. **Effort is expressible only as model choice.** |
 | **`permission_mode: 'plan'` blocks forever** | It waits on a human approval in the web UI. A child is never spawned in plan mode. A child also cannot be more permissive than this session. |
+| **`outcome_branch` needs an explicit `source_url`** | Measured, by the error: *"outcome_branch requires a github.com git source"*. Inheriting the parent's checkout is **not** enough. Pass `source_url` and `source_revision: "master"` alongside it, or the spawn is rejected. |
+| **A child is identifiable without its tags** | It carries `parent_session_id` pointing back at the orchestrator, and `origin: "claude_code_mcp_seed"` where a human-started session reads `desktop_app`. Tags are still worth setting (they survive into `list_sessions`), but these two are the harness's own record and cannot be forgotten at spawn time. |
 
 **So the branch is the deliverable, and the child's own report is a claim, not evidence.**
 That is the discipline this repo already paid for — *"a commit message is not evidence
@@ -52,9 +54,14 @@ work.** Read the diff.
 does not change the reasoning the server allocates. Do not describe it as effort control
 in a report — say "spawned at sonnet" and mean it.
 
-**Unmeasured, worth reading once:** whether a child inherits the parent's folded
-`effort_level` or gets a default. `get_session` on the first child answers it. Record the
-answer here rather than guessing at it.
+**MEASURED 2026-09-20, and the check this file used to prescribe does not work.** It said
+*"`get_session` on the first child answers it."* It does not: on a spawned child the
+`effort_level` key is **absent entirely** — not in `session_context`, not in
+`external_metadata`, where the orchestrator's own record carries both it and
+`flag_settings: {effortLevel}`. So the question "does a child inherit the folded effort
+level?" is not answerable from the session record, and an absent field is not a default —
+it is an absent reading. **Do not infer one from the other.** The operative rule is
+unchanged and is the row above: effort is expressible only as model choice.
 
 ## When not to dispatch
 
@@ -106,6 +113,31 @@ model working harder.
 **Cost is the hard number underneath "do not dispatch trivia."** Sessions in this repo
 have run into the hundreds of dollars. That is not a hypothetical to be weighed against
 convenience — it is why "when not to dispatch" above is a real gate and not a formality.
+
+**THE FIRST REAL DISPATCH PUT A NUMBER ON IT, AND THE SHAPE MATTERS MORE THAN THE TOTAL**
+(2026-09-20, this file's own six-gap change, `claude-sonnet-5`). Read off `get_session` →
+`external_metadata.usage`:
+
+```
+4m19s   cost_usd 5.4543674
+        cache_read 12,008,877   cache_write 718,181   input 34   output 17,980
+```
+
+**Twelve million cached tokens read, against 17,980 written, for a 124-line markdown
+diff.** Nearly all of it is the child *arriving* — cloning, then reading `CLAUDE.md`,
+`docs/LANES.md` and this file before it types a character. The work itself is a rounding
+error on the bill. That is the "clone and an `npm install`" cost made concrete, and it
+scales with **how much a child must read to be useful**, not with how much it writes.
+- **So the economics invert the intuition: a big, self-contained change is a better
+  dispatch than a small one**, because the arrival cost is paid either way and only a
+  large change amortises it.
+- **It is a subscription draw, not necessarily an invoice line.** The same record reads
+  `rate_limit_info: {isUsingOverage: false, rateLimitType: "five_hour"}` — so this spent
+  shared quota, which is the constraint that actually binds (see the rate-limit note in
+  step 4). Quote it as a token-cost figure, never as a bill.
+- **And the orchestrator's own cost is on top and is the larger half.** The session that
+  dispatched this one was at **$242.46** when it spawned the child — sizing, spawning,
+  polling and verifying are not free either. A child at $5.45 is ~2% of its parent.
 
 ## The one CI slot
 
