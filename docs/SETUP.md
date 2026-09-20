@@ -1244,6 +1244,41 @@ Encodes the reading rules, which is the part that goes wrong: `offered` is not a
 a **dead** one, and `autocart.bot` being green says nothing about RC. The two Routines cover
 the scheduled cases; this covers the ad-hoc one.
 
+### `.claude/skills/browser-qa/` — the QA hands on the home server (2026-09-20)
+
+**A web session cannot run this.** The agent proxy resets headless-Chromium TLS, so nothing
+in the cloud can browse camphawk.app; the skill runs on the Windows home server, where
+Claude Code drives a real, signed-in Chrome through the Claude in Chrome extension:
+
+```
+claude --chrome --remote-control "camphawk-qa"
+```
+
+started from a **plain folder, never a repo checkout** (a checkout loads this repo's
+`CLAUDE.md` into a session whose whole job is clicking through a website). The phone steers
+it through Remote Control; `/chrome` reading "not available" from the phone view is expected.
+The skill refuses to run without the extension — a `curl` is not a click, and a green run that
+never opened a browser proves nothing.
+
+**Install** (PowerShell on the server; re-run to pick up a newer version from master):
+
+```
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\skills\browser-qa" | Out-Null; irm https://raw.githubusercontent.com/TylerFlores1992/campsite-finder/master/.claude/skills/browser-qa/SKILL.md -OutFile "$env:USERPROFILE\.claude\skills\browser-qa\SKILL.md"
+```
+
+The repo copy is the source of truth; the server holds a personal-skill copy of the same file.
+
+**Accounts.** The Gmail account is the owner's real one (live watches, real hold offers,
+`line_priority = 1`), so the skill treats it as **read-only**; anything that creates or edits
+runs on a dedicated QA account, optionally `is_beta = true` so it reads as subscribed. The
+Yahoo demo account (`iamtylerflores12345@yahoo.com`) is App Review's and is never touched. The
+skill's NEVER list is the important half: no ReserveCalifornia/Okta/rec.gov navigation, no hold
+buttons, no live checkout, no `/admin` action buttons, no CAPTCHA solving.
+
+**Scheduling.** `/loop 24h /browser-qa` inside the `camphawk-qa` session — untested as of
+2026-09-20. A cloud Routine cannot substitute for it; the nightly triage Routine reads the
+readouts and health page, not the browser.
+
 ### `.mcp.json` — Sentry and Vercel only
 
 Two servers, deliberately not five. Skipped: Supabase MCP (redundant with the interpreted

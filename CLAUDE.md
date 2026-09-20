@@ -12992,6 +12992,39 @@ spent.
 
 ## Open / next session
 
+#### 2026-09-20 — CLAUDE HAS HANDS ON THE SITE NOW, FROM THE HOME SERVER
+
+**A phone-driven browser test of camphawk.app succeeded end to end** — Remote Control on the
+phone → Claude Code on the Windows home server → the Claude in Chrome extension → a real
+signed-in Chrome → a screenshot back. That is the one thing no cloud session can do here (the
+agent proxy resets headless-Chromium TLS), and it is now `.claude/skills/browser-qa/SKILL.md`,
+installed on the server as a personal skill so the QA session never loads this file.
+`docs/SETUP.md` carries the install one-liner and the run command
+(`claude --chrome --remote-control "camphawk-qa"`, from a plain folder).
+
+- **TWO FINDINGS FROM THE FIRST RUN, and only one is about the site.** The Explore result
+  card's TITLE did not navigate — only "See full calendar" did — which is a real, unfixed UI
+  finding and is written into the skill's smoke flow so the next run re-checks it. The first
+  screenshot attempt timed out; that is the tool, not the product, and the skill's reporting
+  rules keep the two apart.
+- **THE ACCOUNT POLICY IS THE PART TO KEEP.** The Gmail account is real — live watches, real
+  hold offers, `line_priority = 1` — so it is READ-ONLY to the QA hands. Creating, editing,
+  pausing, muting and removing run on a dedicated QA account (optionally `is_beta = true`,
+  which short-circuits `hasActiveSubscription`, so it reads as subscribed without a Stripe
+  row). The Yahoo demo account is App Review's and is never touched — a QA run that subscribed
+  it would recreate the 2026-08-22 rejection.
+- **THE NEVER LIST IS ENFORCED BY THE SKILL TEXT ALONE**, which is a known weakness: no RC /
+  Okta / rec.gov navigation, no hold buttons, no live checkout, no `/admin` action buttons, no
+  CAPTCHA. Nothing mechanical stops a QA session from pressing "Hold it for me"; the skill
+  says so and the reader should too.
+- **A LEAN NIGHTLY TRIAGE ROUTINE WAS CREATED THE SAME DAY** (fresh session, 03:30 PT,
+  push + email, silent when nothing is non-ok and no ramp / wedge / cart-burst rows). It
+  delegates to `scripts/bot-events-readout.mts`, `scripts/rc-holds-readout.mts` and
+  `/api/health/status` rather than embedding rules — the previous nightly review was
+  disabled precisely because its long prompt went stale. It never runs `npm test`. Check
+  `list_triggers` for its id rather than this line.
+- **`/loop 24h /browser-qa` on the server is the suggested cadence and is UNTESTED.**
+
 #### 2026-09-18 — THE rec.gov RECONNECT IS FIXED, MERGED, AND LIVE ON BOTH HALVES
 
 **Read the "RECONNECT AUTO-CART FOR REC.GOV WAS ONE HIDDEN INPUT" entry above.** Merged as #363
