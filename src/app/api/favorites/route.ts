@@ -22,11 +22,15 @@ export async function GET(request: NextRequest) {
       longitude: number;
       source: string;
       reservations_url: string | null;
+      // A favourite is a candidate for a watch, and a first-come campground cannot be
+      // watched. The New watch picker lists favourites, so it needs this to say so
+      // rather than offering a click that leads nowhere. See @/lib/booking-policy.
+      reservable: boolean;
     }>(
       `SELECT f.campground_id AS id, c.name,
               c.address->>'city' AS city, c.address->>'state' AS state,
               ST_Y(c.location::geometry) AS latitude, ST_X(c.location::geometry) AS longitude,
-              c.source, c.reservations_url
+              c.source, c.reservations_url, c.reservable
          FROM favorites f
          JOIN campgrounds c ON c.id = f.campground_id
         WHERE f.user_id = $1

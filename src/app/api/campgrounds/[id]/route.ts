@@ -11,14 +11,19 @@ import { query } from '@/lib/db/client';
  * only wanted the detail. The grouping expression is kept in step with /api/suggest and
  * with `parkOf` in components/v2/campground-name.ts.
  */
-async function divisionsOf(id: string): Promise<Array<{ id: string; name: string }>> {
+async function divisionsOf(
+  id: string,
+): Promise<Array<{ id: string; name: string; reservable: boolean }>> {
   const PARK = `CASE WHEN %s.name ~ '[—–]'
                      THEN btrim(split_part(regexp_replace(%s.name, '–', '—', 'g'), '—', 1))
                      ELSE %s.name END`;
   const expr = (alias: string) => PARK.replace(/%s/g, alias);
   try {
-    return await query<{ id: string; name: string }>(
-      `SELECT c.id, c.name
+    return await query<{ id: string; name: string; reservable: boolean }>(
+      // `reservable` rides along so a caller can tell a part it may watch from one it
+      // may not: 33 parks are MIXED, so this is a property of the DIVISION and a
+      // park-level answer would be wrong for every one of them.
+      `SELECT c.id, c.name, c.reservable
          FROM campgrounds c
          JOIN campgrounds self ON self.id = $1
         WHERE NOT c.hidden

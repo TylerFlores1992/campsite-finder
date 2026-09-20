@@ -13,6 +13,7 @@ import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
 import { supportsAutoCart } from "./providers";
+import { bookingPolicy, watchable, FIRST_COME_BADGE, FIRST_COME_WHY } from "@/lib/booking-policy";
 import { supportsRcHold } from "@/lib/sources/reservecalifornia/providers";
 import { AUTOCART_BETA_LABEL, AUTOCART_BETA_NOTE } from "@/lib/autocart-beta";
 import { divisionLabel, dropRedundantState, parseCampgroundName, placeLabel } from "./campground-name";
@@ -41,6 +42,11 @@ import { WATCH_LIMIT, MAX_DIVISIONS_PER_WATCH } from "@/lib/limits";
 interface Division {
   id: string;
   name: string;
+  /**
+   * Does this part take reservations? NOT REPORTED by an older server, and `undefined`
+   * behaves exactly as before this field existed — see `bookingPolicy`.
+   */
+  reservable?: boolean;
 }
 
 interface Suggestion {
@@ -51,6 +57,36 @@ interface Suggestion {
   /** Every bookable part of this park. Absent on favourites, which are single rows. */
   divisions?: Division[];
   divisionCount?: number;
+  /** A favourite is one row, so it answers for itself. Absent on a search hit, where
+      `divisions` carries the answer per part. */
+  reservable?: boolean;
+}
+
+/**
+ * THE WATCHABLE PARTS OF A SUGGESTION.
+ *
+ * A first-come campground cannot be watched — no booking, no cancellation, so the poller
+ * would find nothing for the life of the watch and nothing anywhere would say why. 678 of
+ * 7,620 campgrounds are in that state and this screen was offering every one of them.
+ *
+ * PER DIVISION, NOT PER PARK, because **33 parks are MIXED** (Williams Lake, Black Bear,
+ * McFarland …). A park-level answer would drop a bookable campground along with its
+ * first-come siblings.
+ */
+function watchableParts(s: Suggestion): Division[] {
+  return (s.divisions ?? []).filter((d) => watchable(bookingPolicy(d.reservable)));
+}
+
+/**
+ * Can this row lead anywhere at all?
+ *
+ * A park counts if ANY part survives. A favourite carries no `divisions`, so it answers
+ * from its own column.
+ */
+function suggestionWatchable(s: Suggestion): boolean {
+  const all = s.divisions ?? [];
+  if (all.length > 0) return watchableParts(s).length > 0;
+  return watchable(bookingPolicy(s.reservable));
 }
 
 /** Does a favourite still match what's been typed? Name, town and state all
@@ -173,6 +209,14 @@ export default function NewWatch({
   // ordinary single campground and the section never renders.
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * The chosen campground's own `reservable`, for the single-campground case.
+   *
+   * `null` is NOT REPORTED and keeps every offer, which is the safe direction: a watch
+   * that is merely unnecessary costs an alert that never arrives, while a watch withheld
+   * from a bookable campground costs the campsite.
+   */
+  const [campgroundReservable, setCampgroundReservable] = useState<boolean | null>(null);
 
   /**
    * The campgrounds this watch will actually cover: the checked divisions, or the single
@@ -183,13 +227,25 @@ export default function NewWatch({
    * selection — and two rules for "what does this watch cover?" is exactly how the mute
    * list ended up absent on Leo Carrillo while the payload thought it was fine.
    */
+  /**
+   * AND `divisions` NOW HOLDS ONLY THE WATCHABLE PARTS, which adds a third arm.
+   *
+   * In a MIXED park the representative (`campgroundId` — the park's first division
+   * alphabetically) can itself be first-come while one sibling is watchable. Filtering
+   * to a single survivor used to fall through to that representative, i.e. it would have
+   * created a watch on the very campground the filter existed to refuse. The single
+   * survivor IS the target; the checkbox list stays hidden because one choice is not a
+   * choice.
+   */
   const targets = useMemo(
     () =>
       divisions.length > 1
         ? divisions.filter((d) => chosen.has(d.id))
-        : campgroundId
-          ? [{ id: campgroundId, name: campgroundName }]
-          : [],
+        : divisions.length === 1
+          ? divisions
+          : campgroundId
+            ? [{ id: campgroundId, name: campgroundName }]
+            : [],
     [divisions, chosen, campgroundId, campgroundName],
   );
 
@@ -211,6 +267,11 @@ export default function NewWatch({
         if (cancelled || !j) return;
         setCampgroundName(j.campground.name);
         setCampgroundSource(j.campground.source);
+        // The deep-link path. Nothing in the product links here for a first-come
+        // campground any more — the Explore card and the campground page both withhold
+        // the watch — but a stale link or a hand-typed URL still arrives, and it has to
+        // land somewhere that explains itself rather than on a submit that 409s.
+        setCampgroundReservable(j.campground.reservable ?? null);
         setQ(parseCampgroundName(j.campground.name).park);
         // ALL CHECKED BY DEFAULT, here as well as in `pick()`.
         //
@@ -225,9 +286,16 @@ export default function NewWatch({
         // link from a pick, so it applied to both. A park watch counts as ONE watch now,
         // so covering the whole park is close to free and is what someone who searched
         // for the park meant.
+        //
+        // FILTERED, for the same reason `pick()` filters: a park's first-come parts must
+        // not appear as checkboxes. `all.length > 1` still decides whether this is a
+        // PARK — a single-division campground answers from its own `reservable` above —
+        // and `bookable` may then be 0 (an all-first-come park), 1 (a mixed park with one
+        // survivor, which `targets` handles) or more.
         const all = j.divisions ?? [];
-        setDivisions(all.length > 1 ? all : []);
-        if (all.length > 1) setChosen(defaultChosen(all));
+        const bookable = all.filter((d) => watchable(bookingPolicy(d.reservable)));
+        setDivisions(all.length > 1 ? bookable : []);
+        if (bookable.length > 1) setChosen(defaultChosen(bookable));
       })
       .catch(() => {
         /* the id still works even if the name doesn't resolve */
@@ -278,15 +346,21 @@ export default function NewWatch({
   const pick = useCallback((s: Suggestion) => {
     setCampgroundId(s.id);
     setCampgroundName(s.name);
+    setCampgroundReservable(s.reservable ?? null);
     setQ(s.name);
     setSuggestions([]);
     setPickerOpen(false);
     // ALL CHECKED BY DEFAULT. Someone who searched for the park and picked it wants
     // the park; making them tick four boxes to get what they just asked for is the
     // work this screen is supposed to remove.
+    //
+    // MINUS THE PARTS THAT CANNOT BE WATCHED. A row with nothing watchable is not
+    // clickable and never reaches here; a MIXED park does, and ticking its first-come
+    // parts by default would create watches that can never fire.
     const all = s.divisions ?? [];
-    setDivisions(all.length > 1 ? all : []);
-    setChosen(defaultChosen(all));
+    const bookable = watchableParts(s);
+    setDivisions(all.length > 1 ? bookable : []);
+    setChosen(defaultChosen(bookable));
   }, []);
 
   // Favourites shown in the picker: everything while the box is empty, then
@@ -404,7 +478,25 @@ export default function NewWatch({
     // payload is stale while the JSX, the body and the API all look correct.
   }, [campgroundId, campgroundName, divisions, chosen, range, mode, flexNights, weekendsOnly, autoCart, offer, muted, router]);
 
-  const canAutoCart = campgroundSource ? supportsAutoCart(campgroundSource) : false;
+  /**
+   * NOTHING HERE CAN BE WATCHED.
+   *
+   * Only the single-campground case can reach it: in a park, `divisions` already holds
+   * the watchable parts, so a non-empty list means at least one target is fine. An
+   * all-first-come park lands here too — every part is filtered out, `divisions` is
+   * empty, and the representative answers.
+   */
+  const firstCome =
+    Boolean(campgroundId) &&
+    divisions.length === 0 &&
+    !watchable(bookingPolicy(campgroundReservable));
+
+  // `supportsAutoCart` is `source === 'ridb'` — a fact about the PROVIDER — and every
+  // one of the 678 non-reservable campgrounds is rec.gov, so this promise was on all of
+  // them. The provider fact is left alone and the call site answers the second question,
+  // exactly as ResultCard and CampgroundDetail do.
+  const canAutoCart =
+    campgroundSource ? supportsAutoCart(campgroundSource) && !firstCome : false;
   // Narrower than isUseDirectSource on purpose -- the bot holds ONE ReserveCalifornia
   // account, so advertising this on an Ohio watch would promise what nothing can perform.
   const canRcHold = campgroundSource ? supportsRcHold(campgroundSource) : false;
@@ -472,13 +564,28 @@ export default function NewWatch({
                   Your favorites
                 </p>
                 <ul>
-                  {visibleFavorites.map((f) => (
+                  {visibleFavorites.map((f) => {
+                    // SHOWN, AND NOT CLICKABLE. A favourite that simply vanished would
+                    // read as a bug — the user knows they saved it — and hiding a real
+                    // place is the same mistake the Explore card was making. The row
+                    // stays findable and says why it cannot be watched.
+                    const pickable = suggestionWatchable(f);
+                    const Row = pickable ? "button" : "div";
+                    return (
                     <li key={`fav-${f.id}`} className="flex items-center border-b border-ch-line last:border-b-0">
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => pick(f)}
-                        className="min-w-0 flex-1 cursor-pointer bg-ch-card px-3 py-2 text-left text-ch-body hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+                      <Row
+                        {...(pickable
+                          ? {
+                              type: "button" as const,
+                              onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
+                              onClick: () => pick(f),
+                            }
+                          : {})}
+                        className={
+                          pickable
+                            ? "min-w-0 flex-1 cursor-pointer bg-ch-card px-3 py-2 text-left text-ch-body hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+                            : "min-w-0 flex-1 bg-ch-card px-3 py-2 text-left text-ch-body"
+                        }
                       >
                         {/* A FAVOURITE IS ONE DIVISION, not a park, so it cannot collapse
                             to the park name the way a search hit does — that would name a
@@ -501,7 +608,12 @@ export default function NewWatch({
                             {parseCampgroundName(f.name).division}
                           </span>
                         )}
-                      </button>
+                        {!pickable && (
+                          <span className="mt-0.5 block text-ch-fine text-ch-muted">
+                            {FIRST_COME_BADGE} — no reservations, so there is nothing to watch.
+                          </span>
+                        )}
+                      </Row>
                       <FavoriteHeart
                         favorite={favorites.isFavorite(f.id)}
                         onToggle={() => void favorites.toggle(f.id)}
@@ -509,7 +621,8 @@ export default function NewWatch({
                         className="mr-1.5 bg-ch-card"
                       />
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </>
             )}
@@ -519,28 +632,52 @@ export default function NewWatch({
               <ul>
                 {suggestions
                   .filter((s) => !favoriteIds.has(s.id))
-                  .map((s) => (
+                  .map((s) => {
+                    // A park counts as pickable if ANY part can be watched, and the
+                    // checkbox list then offers only those — 33 parks are mixed, so
+                    // dropping the whole row would take a bookable campground with it.
+                    const pickable = suggestionWatchable(s);
+                    const parts = watchableParts(s).length;
+                    const Row = pickable ? "button" : "div";
+                    return (
                     <li key={s.id}>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => pick(s)}
-                        className="w-full cursor-pointer border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+                      <Row
+                        {...(pickable
+                          ? {
+                              type: "button" as const,
+                              onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
+                              onClick: () => pick(s),
+                            }
+                          : {})}
+                        className={
+                          pickable
+                            ? "w-full cursor-pointer border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+                            : "block w-full border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0"
+                        }
                       >
                         <span className="font-semibold">
                           {parseCampgroundName(dropRedundantState(s.name, s.state)).full}
                         </span>
-                        {(s.divisionCount ?? 1) > 1 && (
+                        {/* THE COUNT IS OF WATCHABLE PARTS, not of parts. Offering
+                            "4 parts" on a park whose checkbox list will show two is a
+                            number that contradicts the next screen. */}
+                        {pickable && parts > 1 && (
                           <span className="ml-1.5 rounded-full border border-ch-line bg-ch-paper px-1.5 py-0.5 text-ch-fine text-ch-muted">
-                            {s.divisionCount} parts
+                            {parts} parts
                           </span>
                         )}
                         {placeLabel(s.city, s.state) && (
                           <span className="text-ch-muted"> · {placeLabel(s.city, s.state)}</span>
                         )}
-                      </button>
+                        {!pickable && (
+                          <span className="mt-0.5 block text-ch-fine text-ch-muted">
+                            {FIRST_COME_BADGE} — no reservations, so there is nothing to watch.
+                          </span>
+                        )}
+                      </Row>
                     </li>
-                  ))}
+                    );
+                  })}
               </ul>
             )}
           </div>
@@ -979,13 +1116,23 @@ export default function NewWatch({
               subscriber, so a billing hiccup never demotes a paying customer to a
               signup prompt. The post-submit messages below still handle the case
               where the server disagrees with what the client believed. */}
+          {/* THE DEEP-LINK BACKSTOP. Nothing in the product links here for a first-come
+              campground any more, so this renders only for a stale link or a typed URL —
+              but a disabled button with no sentence beside it reads as broken, and the
+              server's 422 would otherwise be the first the user heard of it, after they
+              had filled the whole form in. */}
+          {firstCome && (
+            <p className="mb-2 rounded-ch-input border border-ch-line bg-ch-paper px-3 py-2 text-ch-fine leading-normal text-ch-muted">
+              <strong className="font-bold">{FIRST_COME_BADGE}.</strong> {FIRST_COME_WHY}
+            </p>
+          )}
           {gate === "signedOut" || gate === "needsSub" ? (
             <SubscribeCta fallbackReturnTo="/new" fullWidth />
           ) : (
             <Button
               type="submit"
               fullWidth
-              disabled={saving || flexTooLong || tooManyDivisions || gate === "loading"}
+              disabled={saving || flexTooLong || tooManyDivisions || firstCome || gate === "loading"}
               onClick={() => void submit()}
             >
               {saving ? "Setting up…" : "Start watching"}

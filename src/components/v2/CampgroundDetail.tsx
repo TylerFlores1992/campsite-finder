@@ -9,6 +9,12 @@ import AvailabilityGrid from "./AvailabilityGrid";
 import WatchCta from "./WatchCta";
 import { RichDescription } from "./richText";
 import { providerLabel, supportsAutoCart } from "./providers";
+import {
+  bookingPolicy,
+  watchable,
+  FIRST_COME_BADGE,
+  FIRST_COME_WHY,
+} from "@/lib/booking-policy";
 import type { Campground } from "@/lib/types";
 
 /**
@@ -100,7 +106,13 @@ export default function CampgroundDetail({
     );
   }
 
-  const { name, address, source, photos, amenities, phone, description } = campground;
+  const { name, address, source, photos, amenities, phone, description, reservable } =
+    campground;
+  // A campground that takes no reservations has no calendar and cannot be watched — see
+  // @/lib/booking-policy for the measurement. THREE THINGS CHANGE TOGETHER BELOW and the
+  // grid is the one that matters most: an empty availability grid is indistinguishable
+  // from "every night is booked", which is the opposite of the truth.
+  const policy = bookingPolicy(reservable);
   const place = [address?.city, address?.state].filter(Boolean).join(", ");
   const month = startDate?.slice(0, 7);
   const livePhotos = (photos ?? []).filter((p) => !brokenPhotos.has(p.url));
@@ -132,7 +144,14 @@ export default function CampgroundDetail({
       <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="mb-2 flex flex-wrap gap-1.5">
-            {supportsAutoCart(source) && <Tag kind="cart">Auto-cart</Tag>}
+            {!watchable(policy) && (
+              <Tag kind="paused" srPrefix="Booking:">
+                {FIRST_COME_BADGE}
+              </Tag>
+            )}
+            {supportsAutoCart(source) && watchable(policy) && (
+              <Tag kind="cart">Auto-cart</Tag>
+            )}
             <Tag kind="src">{providerLabel(source, campgroundId)}</Tag>
           </div>
           <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">{name}</h1>
@@ -141,14 +160,16 @@ export default function CampgroundDetail({
         {/* Same gate as the result cards — one component so a non-subscriber
             can't reach the New watch screen from here while being stopped
             everywhere else. */}
-        <WatchCta
-          campgroundId={campgroundId}
-          startDate={startDate}
-          endDate={endDate}
-          fullWidth={false}
-          className="px-5"
-          label="Watch this campground"
-        />
+        {watchable(policy) && (
+          <WatchCta
+            campgroundId={campgroundId}
+            startDate={startDate}
+            endDate={endDate}
+            fullWidth={false}
+            className="px-5"
+            label="Watch this campground"
+          />
+        )}
       </div>
 
       {/* Photo URLs come from the provider catalogs and DO rot — a dead one used
@@ -171,7 +192,23 @@ export default function CampgroundDetail({
         </div>
       )}
 
-      <AvailabilityGrid campgroundId={campgroundId} initialMonth={month} initialDay={startDate} />
+      {watchable(policy) ? (
+        <AvailabilityGrid
+          campgroundId={campgroundId}
+          initialMonth={month}
+          initialDay={startDate}
+        />
+      ) : (
+        /* NOT an empty grid, and this is the sharpest of the three. The grid would render
+           every night as unavailable — which reads as "booked solid" and is the exact
+           opposite of what is true. A panel that states the policy cannot be misread. */
+        <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
+          <h2 className="font-ch-display text-ch-h font-bold">{FIRST_COME_BADGE}</h2>
+          <p className="mt-1 max-w-[62ch] text-ch-body leading-normal text-ch-muted">
+            {FIRST_COME_WHY}
+          </p>
+        </div>
+      )}
 
       {(description || amenities?.length > 0 || phone) && (
         <section className="mt-5 rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
