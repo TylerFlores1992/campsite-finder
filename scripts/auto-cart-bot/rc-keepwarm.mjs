@@ -88,7 +88,7 @@ import {
 import { hasCredentials, attemptLogin, clickSignInControl } from './rc-autologin.mjs';
 import { shouldRehearse, shouldRehearseOnDemand, rehearsalSlot } from './rehearsal.mjs';
 import { tokenSecondsNeeded } from './session-coverage.mjs';
-import { planRenewal, recordRenewal, newRenewalState, makeSkipLogger } from './renewal-schedule.mjs';
+import { planRenewal, recordRenewal, newRenewalState, noteLiveToken, makeSkipLogger } from './renewal-schedule.mjs';
 import { settleBudget, budgetForRelease, MAX_KILL_REFUNDS } from './autologin-budget.mjs';
 import { warmupPlan, warmupWindowOpen } from './autologin-warmup.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
@@ -3715,6 +3715,13 @@ async function warmResident() {
           // NO `renewBeforeS` ANY MORE — see planRenewal. It waits for the token to LAPSE
           // rather than acting ten minutes out, because the near-expiry cell is where the
           // Chromium leak lives and it has never once produced a fresher token.
+          // A LIVE TOKEN ENDS THE FAILING EPISODE — BEFORE the plan, not after it.
+          //
+          // `maybeAutoLogin` repairs the session at T−30 of a release and never calls
+          // `recordRenewal`, so nothing here would otherwise clear `failures`, and the
+          // escalating backoff would judge a brand-new lapse on the previous episode's
+          // count and wait four hours to make its first attempt. See noteLiveToken.
+          renewal = noteLiveToken(renewal, { leftS: left });
           const plan = planRenewal({ token, leftS: left, now: Date.now(), state: renewal });
           if (!plan.go) {
             renewalSkip(plan.key, plan.reason);
