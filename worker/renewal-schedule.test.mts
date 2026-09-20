@@ -205,6 +205,41 @@ test('the ladder is a CEILING and never a STOP, at any failure count', () => {
   );
 });
 
+test('the ladder TERMINATES on degenerate inputs — a hung bot beats every ramp', () => {
+  /**
+   * FOUND BY THE MUTATION RUN, IN THE FIRST DRAFT OF THIS VERY FUNCTION. It was written
+   * `for (let n = backoffAfter; n < failures && gap < backoffMaxMs; n++) gap *= 2`, which is
+   * bounded by the value it is mutating — and doubling ZERO never reaches the cap, so a first
+   * rung of 0 spins to MAX_SAFE_INTEGER. Measured at 5,000,001 iterations and still going.
+   * That loop sits inside the keep-warm's own `for(;;)`: it is not a slow schedule, it is a
+   * hung bot and a dead session, which is strictly worse than the ramps the ladder buys.
+   *
+   * So the iteration count is bounded by a constant and this test is the reason it stays that
+   * way. Every case below would hang, not fail, under the original — which is itself the
+   * argument for asserting the property rather than trusting the reading.
+   */
+  const huge = Number.MAX_SAFE_INTEGER;
+  assert.equal(renewBackoffGapMs(huge, { backoffGapMs: 0 }), 0,
+    'a zero first rung stays zero — degenerate, but it must RETURN');
+  assert.ok(Number.isFinite(renewBackoffGapMs(huge, { backoffGapMs: 1 })));
+  assert.ok(Number.isFinite(renewBackoffGapMs(huge)));
+
+  // Nonsense failure counts fall to the safe end of the ladder rather than off it.
+  assert.equal(renewBackoffGapMs(Number.NaN), RENEW_BACKOFF_GAP_MS, 'NaN → the first rung');
+  assert.equal(renewBackoffGapMs(-5), RENEW_BACKOFF_GAP_MS, 'negative → the first rung');
+  assert.equal(renewBackoffGapMs(0), RENEW_BACKOFF_GAP_MS);
+
+  // AND THE STRUCTURAL HALF, because the behavioural half above can only fail by HANGING —
+  // a guard whose failure mode is a test run that never finishes is a guard somebody deletes.
+  // The loop's exit condition must not mention the variable it is growing.
+  const sched = readFileSync('scripts/auto-cart-bot/renewal-schedule.mjs', 'utf8');
+  const ladder = sched.slice(sched.indexOf('export function renewBackoffGapMs'));
+  const loop = ladder.slice(ladder.indexOf('for ('), ladder.indexOf(')', ladder.indexOf('for (')) + 1);
+  assert.ok(loop.length > 0, 'the ladder must still have a loop to check');
+  assert.ok(!/gap\s*<|<\s*gap/.test(loop),
+    `the loop must not be bounded by the gap it is doubling — found: ${loop}`);
+});
+
 test('the stand-down NAMES the rung, and says whether it is still climbing', () => {
   // The caller collapses on the KEY, and every rung shares the key `backoff`, so this state
   // prints once per episode. The sentence is therefore the only place the rung is legible to

@@ -103,21 +103,38 @@ const mins = (ms) => Math.round(ms / 60_000);
  * `backoffGapMs` is the first rung and it doubles once per failure past `backoffAfter`:
  * 3 → 30m, 4 → 60m, 5 → 120m, 6 → 240m, and 240m for ever after.
  *
- * WRITTEN AS A BOUNDED LOOP RATHER THAN `gap * 2 ** (failures - backoffAfter)` ON PURPOSE.
- * `failures` has no upper bound — a dead Okta cookie over a long weekend reaches the
- * hundreds — and that expression overflows to `Infinity` long before it gets there. `Math.min`
- * would still clamp it today, but a schedule whose arithmetic passes through `Infinity` to
- * arrive at the right answer is one refactor away from returning `NaN`, and a `NaN` gap
- * compares false against everything, which turns the backoff into no backoff at all. The
- * loop's exit condition is the cap itself, so it runs at most log2(max/first) times.
+ * THE ITERATION COUNT IS BOUNDED BY A CONSTANT — not by `failures`, and NOT BY THE GAP IT IS
+ * GROWING. Two things go wrong otherwise, in opposite directions, and the second one is the
+ * one that bites:
+ *
+ *   • `backoffGapMs * 2 ** (failures - backoffAfter)` reaches `Infinity` — `failures` has no
+ *     upper bound and a dead Okta cookie over a long weekend gets into the hundreds. `Math.min`
+ *     does clamp `Infinity` correctly today, so this is a robustness preference rather than a
+ *     live bug; a schedule whose arithmetic passes through `Infinity` to arrive at the right
+ *     answer is one refactor from returning `NaN`, and a `NaN` gap compares false against
+ *     everything, which is no backoff at all.
+ *   • **`for (…; n < failures && gap < backoffMaxMs; …)` DOES NOT TERMINATE IF THE FIRST RUNG
+ *     IS EVER 0**, because doubling zero never reaches the cap — it spins towards
+ *     `MAX_SAFE_INTEGER` inside the keep-warm's own `for(;;)`, which is a hung bot and a dead
+ *     session, i.e. strictly worse than every ramp this change is buying. That was the first
+ *     draft of this function, and the MUTATION RUN is what found it: measured at 5,000,001
+ *     iterations and still going. **A loop must never be bounded by the value it is mutating.**
+ *
+ * `MAX_DOUBLINGS` makes termination structural: at most that many iterations whatever the
+ * inputs, and 2^52 of any positive first rung is past every ceiling anyone would set.
  */
+const MAX_DOUBLINGS = 52;
+
 export function renewBackoffGapMs(failures, {
   backoffGapMs = RENEW_BACKOFF_GAP_MS,
   backoffAfter = RENEW_BACKOFF_AFTER,
   backoffMaxMs = RENEW_BACKOFF_MAX_MS,
 } = {}) {
+  // `Math.max(0, …)` also absorbs a NaN `failures` into zero steps, which returns the first
+  // rung — the safe end of the ladder to fail towards.
+  const steps = Math.max(0, Math.min(failures - backoffAfter, MAX_DOUBLINGS));
   let gap = backoffGapMs;
-  for (let n = backoffAfter; n < failures && gap < backoffMaxMs; n++) gap *= 2;
+  for (let n = 0; n < steps; n++) gap *= 2;
   return Math.min(gap, backoffMaxMs);
 }
 
