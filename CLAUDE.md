@@ -1888,6 +1888,49 @@ the plain failure arm: spent one of two attempts, reported `dead`, rang the phon
 - A REAL login failure still reports `dead` and still spends an attempt, pinned separately so
   this is not bought by making every failure inconclusive. `worker/autologin-noload.test.mts`.
 
+### THE NIGHTLY UPDATE IS STRUCTURALLY IMPOSSIBLE ON ANY NIGHT WITH AN 08:00 HOLD (2026-09-20)
+Asked to "resolve the blocked issue and find a solution so this doesn't keep happening" after a
+bot-side fix failed to reach the box for a third time. **The blocked issue is arithmetic in
+`update-guard.mjs`'s own defaults, and the comment beside them asserts the opposite.**
+```
+windowStart 2 · windowEnd 5 · minHoursToRelease 6      RC releases at 08:00 PT
+08:00 − 6h = 02:00, and the quiet window is 02:00–05:00 — they touch and do not overlap
+```
+- **MEASURED AGAINST THE REAL FUNCTION, NOT READ OFF THE CONSTANTS.** `safeToUpdate` walked
+  across a night with a genuine 08:00 hold queued:
+  ```
+  01:45 PT  SKIP  outside the quiet window (1:00 PT, allowed 2:00-5:00)
+  02:00 PT  OK    quiet window, next release 6.0h away          <- the ONLY passing moment
+  02:05 PT  SKIP  a hold releases in 5.9h — too close to take the session down
+  02:30 PT  SKIP  a hold releases in 5.5h
+  03:00 PT  SKIP  5.0h      04:00 PT  SKIP  4.0h      04:59 PT  SKIP  3.0h
+  ```
+  The gate is `hrs < minHoursToRelease`, so **02:00:00 passes by exactly zero margin and every
+  instant after it is refused.** The scheduled task fires every five minutes and is essentially
+  never at 02:00:00.000, so in practice the window is shut for its entire length.
+- **THE COMMENT SAYS THE REVERSE, AND IT IS THE REASON NOBODY LOOKED.** `minHoursToRelease`
+  carries *"Six covers a 02:00 update against an 08:00 release with the whole quiet window to
+  spare."* It covers a 02:00 update with **no** spare and covers nothing at 02:05. A plausible
+  sentence asserting a margin that the same file's other two constants delete — the
+  tidy-story-as-fact shape, in the module whose whole job is a decision.
+- **SO A BOT-SIDE FIX CANNOT REACH THE BOX UNATTENDED ON ANY NIGHT A HOLD IS QUEUED**, which is
+  most nights this product does anything. That is why #363's successor sat undeployed, and why
+  the same "it is merged but not on the box" sentence has been written three times.
+- **"UPDATE NOW" IS THE UNBLOCK AND IT WORKS TODAY.** An explicit request lifts the window and
+  not the release check, so with a release 17.7h out it returns
+  `{ok: true, reason: "requested, next release 17.7h away"}` — verified against the real
+  function in the same run. **The lever was never broken; the SCHEDULE was.**
+- **THE CHEAPEST REPAIR IS TO MOVE THE WINDOW, NOT TO SHORTEN THE GATE.** Six hours is the
+  protection and it is the half that should not move; 02:00–05:00 is a preference. A window of
+  **23:00–02:00 PT** runs the lead from 9h down to 6h and is clear of the gate for its whole
+  length. **NOT MADE HERE** — it is a bot-side change to the guard that stands between an
+  update and a missed cart, and it wants its own change with its own mutation-verified guard
+  rather than a drive-by inside a docs branch.
+- **AND A GUARD SHOULD PIN THE RELATIONSHIP, NOT THE NUMBERS.**
+  `worker/update-guard.test.mts` asserts the constants; nothing asserts that the window and the
+  lead leave a usable overlap against an 08:00 release. That is why three constants could be
+  individually correct and jointly useless.
+
 ### "UPDATE NOW" IS FAST NOW (2026-08-19) — and the ~20-minute note below is superseded
 - **THE CLAIM WAS THE STALL.** A poller claims within 15s and spawns the updater; when the
   GUARD refuses (release within 6h, feed unreachable) the run ENDS — but the claim sat until
