@@ -1,13 +1,35 @@
 # CLAUDE.md — a classification, not a move
 
-*Written 2026-09-20. It moves nothing.*
+*Written 2026-09-20 against `db08b9b`. It moves nothing.*
 
-`CLAUDE.md` is **19812 lines** and is auto-loaded into every session in this repo, so every
-session pays for all of it before it reads a single line of code. This file classifies every
-entry so a wrong call is visible here, in a table, rather than after twelve thousand lines
-have moved.
+`CLAUDE.md` is auto-loaded into every session in this repo, so every session pays for all of
+it before it reads a single line of code. This file classifies every entry so a wrong call is
+visible here, in a table, rather than after twelve thousand lines have moved.
 
 **Nothing here is a recommendation to delete anything.** Every verdict is a destination.
+
+## EVERY LINE RANGE BELOW IS AGAINST `db08b9b`, WHERE THE FILE IS 19,812 LINES
+
+**Not against master.** `CLAUDE.md` gains lines on most days, and an insertion anywhere
+shifts every range below it — so a range checked against a later master is wrong by however
+many lines landed above it, and the entries added since are not classified at all.
+
+It was stale before the day was out. Four commits later master read **20,166 lines**, and the
+first insertion landed at **line 2151**, so all but the opening ~2,100 lines of the table had
+moved. That is not a defect in the classification; it is what a line number is.
+
+Re-derive rather than trusting a range:
+
+    git show db08b9b:CLAUDE.md                                        # the file as classified
+    git diff --unified=0 db08b9b origin/master -- CLAUDE.md | grep '^@@'   # where it shifted
+
+**The classification does not go stale — only the coordinates do.** The verdicts, the reasons
+and the arithmetic hold whatever line an entry starts on: the leak is 38.5% of the file today
+and will be 38.5% of it next week.
+
+**The partition was checked, not asserted.** 274 rows, every row's stated line count equal to
+its span, covering 14–19812 with zero overlaps and a single 2-line gap at 12993–12994 (the
+Open block's own heading). Verified independently on 2026-09-20 before this merged.
 
 ## How to read a verdict
 
