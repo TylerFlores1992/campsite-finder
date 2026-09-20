@@ -2148,6 +2148,40 @@ first re-run, as it always does.
   legitimate here is that the diff cannot touch the code, the suite passes alone, and the
   mechanism is named. Any one of those missing and it is a regression being waved through.
 
+##### AND THE SLOT DISCIPLINE WAS PERFECT WHEN IT HAPPENED AGAIN — CI IS EXCLUDED BY ARITHMETIC (2026-09-20)
+The entry above says *"serializing the lanes cannot prevent it"* as REASONING. This is the
+measured instance: a docs-only branch (`CLAUDE.md`, one file, +32 lines) failed **1 of 2314** on
+`rc-holds.test.mts` → *"once the window has closed, a cart failure IS final"*, `'already-failed'`
+where `'failed'` was expected — and every environmental mechanism this file records is ruled out
+by the clock rather than by argument.
+```
+master   Verify  17:31:01 -> 17:40:23  SUCCESS
+branch   Verify  17:41:06 -> 17:50:46  FAILURE     <- created 43s AFTER master finished
+Nightly RIDB Sync: not running.   No PR open yet, so no pull_request twin.
+```
+- **THE PUSH WAS DELIBERATELY HELD FOR THE SLOT** by a job that polled master until it was clear.
+  So this is not a lane breach to find; the discipline worked, and the red arrived anyway.
+- **THE WRITER IS `failMissedHolds` ON FLY, read in source rather than guessed.** `poller.ts`
+  runs `sweepMissedHolds` on a `setInterval` of `EXPIRE_HOLDS_INTERVAL_MS` (**60s**), and it marks
+  any `requested` hold past its grace `failed`. The fixture is `requested` with
+  `release_at = pacific(-90)` — **ninety minutes ago, past both the 45-minute and 5-minute
+  graces** — so it sits in that predicate from the moment the test's UPDATE creates it until
+  `reportCartFailure` runs a few hundred milliseconds later. The sweeper wins that window
+  sometimes, `reportCartFailure` correctly reports `'already-failed'`, and the assertion is
+  correctly disappointed. **Nothing is broken.**
+- **THIS EXACT TEST AND THIS EXACT VALUE ARE ALREADY IN THIS FILE TWICE** (2026-08-28, 2026-09-04),
+  both times with TWO candidates and no way to choose. **The arithmetic above is what retires the
+  concurrent-CI one**, leaving the production sweeper as the surviving mechanism — so the 09-04
+  entry's *"second candidate, recorded not chosen"* can now be read as chosen.
+- **IT PASSED 18/18 ALONE, on the same sha, minutes later** — which is the second of the three
+  conditions, and the reason a re-run here is a reading rather than a shrug.
+- **STILL DELIBERATELY NOT FIXED**, for the reason the entry above gives: the honest repairs are
+  to tolerate the sweep having won, or to scope the fixture out of it, and both are changes to a
+  safety-critical query that must not be made in passing on an unrelated PR. **The exposure is
+  every real-DB suite whose fixture sits in a production timer's predicate** — the grace is
+  45 minutes and the fixture is ninety minutes old by construction, so it is in range for its
+  whole life.
+
 ### THE SESSION RENEWS ITSELF ONCE WE STOP TOUCHING IT (2026-08-18, first 2.5 hours)
 An OBSERVATION, not yet a measurement, and it is better than the stand-down was meant to buy.
 Straight off the keepalive lines, with **zero `renewing the session` entries in the window**:
@@ -2928,6 +2962,38 @@ run 1209  event=pull_request  created 13:23:14   FAILURE   13:33:59   <- 1 of 19
   does not make it safe — it makes the first run die in a state that harms the second. Second
   time in one day the rule was broken by the person enforcing it, and the first time it was
   idling; this time it was impatience.
+
+###### OPENING THE PR *AFTER* THE PUSH RUN FINISHES COSTS NOTHING AND BUYS TWO REAL VERDICTS (2026-09-20)
+The entry above is about a push to a branch that **already has a PR open** — there one push
+matches both triggers and the two fire together. **A branch with no PR yet behaves differently,
+and the difference is controllable.** Three PRs merged in one afternoon, timings off
+`actions/runs?branch=<name>`:
+```
+#371  push 14:59:31 -> 15:08:35 SUCCESS      PR run created 15:09:59    gap +84s, no overlap
+#373  push 16:42:44 -> 16:52:13 SUCCESS      PR run created 16:53:44    gap +91s, no overlap
+#374  push 17:16:35 -> 17:19:55 CANCELLED    PR run created 17:19:40    overlap 15s (run-level)
+```
+- **THE PUSH FIRES ONE RUN AND *OPENING THE PR* FIRES THE SECOND.** So "push before the PR
+  exists, therefore one run" is half right: there are still two, and what the ordering decides is
+  whether they **overlap**. `.claude/skills/orchestrate/SKILL.md` says *"a push to a branch with
+  no PR yet fires exactly one run, which is why the PR is opened afterwards"* — true of the push,
+  and it reads as one run in total, which it is not.
+- **OPEN THE PR ONCE THE PUSH RUN HAS *FINISHED* AND THE GROUP NEVER CANCELS ANYTHING.** #371 and
+  #373 each ran two COMPLETE suites, sequentially, ~90 seconds apart — two independent verdicts
+  and zero concurrent execution. **That is strictly better than the cancel path** and costs only
+  the wait, which is the CI slot you are holding anyway.
+- **OPEN IT MID-RUN AND THE GROUP CANCELS THE PUSH TWIN** (#374), which leaves one verdict and a
+  `mergeable_state: unstable` that is entirely the cancelled twin. Read whichever twin is NOT
+  cancelled — the recorded rule, and here it is the `pull_request` one.
+- **COMPUTE THE OVERLAP FROM THE JOBS, NOT THE RUNS.** #374's run-level figures say 15 seconds;
+  the JOBS say **zero** — push job `17:16:38 -> 17:19:55`, PR job `started_at 17:19:57`. A run is
+  created before its job is assigned a runner (measured queue lag here: 3s and 17s), so
+  **run-level timestamps overstate the overlap by roughly the winner's queue time.** `npm test`
+  runs in the job, so the job window is the one that says whether two suites were live at once.
+  The 3-301s figures above are run-level and are therefore upper bounds; the 3s one may well have
+  been none at all.
+- **NONE OF THIS NARROWS THE TRIGGERS**, which the entry above forbids for a stated reason. It is
+  an ordering habit for the session opening the PR, and it is free.
 
 ### THE TRAIL'S SILENCE IS INSTRUMENTED, AND THE BOX HAS IT (2026-08-28)
 Four ramps have now passed with **zero `trail-*` readings**: 08-25 20:22 (~3.6 GB), 08-26
