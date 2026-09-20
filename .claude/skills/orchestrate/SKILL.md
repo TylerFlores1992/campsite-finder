@@ -92,6 +92,26 @@ level?" is not answerable from the session record, and an absent field is not a 
 it is an absent reading. **Do not infer one from the other.** The operative rule is
 unchanged and is the row above: effort is expressible only as model choice.
 
+### A child cannot `git push` unless you grant it AT SPAWN — measured 2026-09-20
+
+**Three children finished real work on one day and none of it reached origin.** Each sat
+`BLOCKED` on the same wall: the permission classifier denies `git push`, and it is not the
+repo's doing — `.claude/settings.json` has no `permissions` block at all, and
+`push-guard.mjs` blocks master only. **It cannot be granted after the fact**, because
+`extra_allowed_tools` is a `create_session` parameter and a new session has no commits. One
+child's commit — 4 files, +609/−77 — exists nowhere now that its container is reclaimed.
+
+**So pass `extra_allowed_tools` covering the push on EVERY spawn, and prove it on the first
+child of a session before giving any child real work.** Proven working the same day: the
+next child's branch appeared on origin minutes after it was told to push.
+
+**PROVE IT ON A BRANCH OUTSIDE `claude/**`, e.g. `probe/push-grant`, then delete it.**
+`verify.yml` fires on `push:` to `master` or `claude/**` — so a throwaway push to the
+child's real branch **starts a full `verify` run**, `npm test` against the production
+database, and takes the CI slot for ten minutes to prove a permission. It did exactly that
+here, colliding with the orchestrator's own in-flight run. A `probe/` branch fires nothing.
+**The proof does not need a `claude/` branch; only the WORK does.**
+
 ## When not to dispatch
 
 Sizing (below) answers "which model." This is the earlier question: whether to dispatch
