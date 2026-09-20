@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
+import type { BillingReading } from "@/lib/subscription-management";
 
 /**
  * Signed-in + subscribed state, in one place.
@@ -32,6 +33,21 @@ export interface SubscriptionState {
   autocartPlanAvailable: boolean;
   /** The status lookup failed. Distinct from a confirmed "no". */
   unknown: boolean;
+  /**
+   * WHO IS BILLING THEM, for `manageDestination` in `@/lib/subscription-management`.
+   *
+   * ONE SOURCE OF TRUTH, EXTENDED RATHER THAN DUPLICATED. The alternative was a second
+   * hook doing a second fetch of the same row, which is how two surfaces end up
+   * disagreeing about one subscription. It is the same argument this hook's own header
+   * makes for the gate.
+   *
+   * IT CARRIES THE `unknown` STATE INSIDE IT, as a union: while the lookup is in flight
+   * or after it failed this is `{ known: false }`, and there is no provider field to
+   * misread as a fact. A failed lookup must never be able to say "no store subscription,
+   * therefore Stripe" — that would send the one subscriber this exists for to a portal
+   * that 404s on them.
+   */
+  billing: BillingReading;
 }
 
 export function useSubscription(): SubscriptionState {
@@ -42,6 +58,9 @@ export function useSubscription(): SubscriptionState {
     autocart: false,
     autocartPlanAvailable: false,
     unknown: false,
+    // Not yet asked. `{ known: false }` is the same shape a FAILED lookup produces, and
+    // that is correct: both mean "we cannot say", and neither may be read as an answer.
+    billing: { known: false },
   });
   const [checked, setChecked] = useState(false);
 
@@ -55,7 +74,14 @@ export function useSubscription(): SubscriptionState {
         if (!r.ok) throw new Error(String(r.status));
         return r.json();
       })
-      .then((j: { active?: boolean; everSubscribed?: boolean; autocart?: boolean; autocartPlanAvailable?: boolean }) => {
+      .then((j: {
+        active?: boolean;
+        everSubscribed?: boolean;
+        autocart?: boolean;
+        autocartPlanAvailable?: boolean;
+        provider?: string | null;
+        tier?: string | null;
+      }) => {
         if (cancelled) return;
         setState({
           subscribed: !!j.active,
@@ -63,6 +89,11 @@ export function useSubscription(): SubscriptionState {
           autocart: !!j.autocart,
           autocartPlanAvailable: !!j.autocartPlanAvailable,
           unknown: false,
+          // PASSED THROUGH VERBATIM, not normalized here. `provider` has no CHECK
+          // constraint (migration 071), so an unrecognized value is a thing that can
+          // really arrive, and the one place that decides what to do about it is the
+          // pure function — not this hook and not a component.
+          billing: { known: true, provider: j.provider ?? null, tier: j.tier ?? null },
         });
       })
       .catch(() => {
@@ -74,6 +105,7 @@ export function useSubscription(): SubscriptionState {
             autocart: false,
             autocartPlanAvailable: false,
             unknown: true,
+            billing: { known: false },
           });
       })
       .finally(() => {
