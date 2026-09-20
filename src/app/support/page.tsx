@@ -120,15 +120,40 @@ export default function SupportPage() {
 
         <section>
           <h2 className="font-semibold text-base mb-2">Managing your subscription</h2>
+          {/* THIS USED TO SAY THE SUBSCRIPTION IS "managed at camphawk.app", FULL STOP,
+              and that stopped being true the day the first store purchase landed — a Play
+              subscriber cannot manage anything from our site, because Google holds the
+              billing relationship. This page is also where Settings sends somebody whose
+              status lookup failed, so it has to answer for all three cases without
+              knowing which one the reader is. Still no prices anywhere on it. */}
           <p>
             Searching is free forever. Watching a booked campground, text alerts and auto-cart come
-            with a subscription, which is managed at{' '}
-            <a href="https://camphawk.app" className="text-ch-green-deep underline">
-              camphawk.app
-            </a>
-            . Open Settings → Subscription → Manage billing to change your payment method or cancel.
-            Cancelling stops future charges and you keep access until the period you have already
-            paid for ends.
+            with a subscription.{' '}
+            <strong>Where you manage it depends on where you started it.</strong>
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>
+              Started on{' '}
+              <a href="https://camphawk.app" className="text-ch-green-deep underline">
+                camphawk.app
+              </a>
+              : open Settings → Subscription → Manage billing, on the website or in the app.
+            </li>
+            <li>
+              Started inside the <strong>Android app</strong>: Google Play holds it. Settings →
+              Subscription in the app opens Play for you, or go to the Play Store → Payments and
+              subscriptions.
+            </li>
+            <li>
+              Started inside the <strong>iPhone app</strong>: Apple holds it. Settings →
+              Subscription in the app opens the App Store for you, or go to Settings → your name →
+              Subscriptions on the phone.
+            </li>
+          </ul>
+          <p className="mt-2">
+            Cancelling stops future charges whichever of the three it is, and you keep access until
+            the period you have already paid for ends. If you are not sure which one you have, email
+            us and we will look it up.
           </p>
         </section>
 
@@ -139,8 +164,8 @@ export default function SupportPage() {
             saved campgrounds permanently, and it cannot be undone. If you have a subscription it is{' '}
             <strong>cancelled immediately</strong> — you will not be charged again, and the
             remainder of the period you have already paid for is not refunded. Delete the account
-            only when that is what you want; to simply stop paying, cancel from the billing portal
-            instead and keep your watches.
+            only when that is what you want; to simply stop paying, cancel from wherever your
+            subscription is managed (above) and keep your watches.
           </p>
         </section>
 

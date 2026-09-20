@@ -9,6 +9,7 @@ import { useSubscription } from "./useSubscription";
 import SmsAlerts from "./SmsAlerts";
 import AutoCartSettings from "./AutoCartSettings";
 import { SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
+import { useManageSubscription } from "./manageSubscription";
 import DeleteAccount from "./DeleteAccount";
 import SignOutConfirm from "./SignOutConfirm";
 import BuildStamp from "./BuildStamp";
@@ -29,7 +30,8 @@ import BuildStamp from "./BuildStamp";
 export default function Settings() {
   const { isLoaded, isSignedIn, user } = useUser();
   const isNative = useIsNativeApp();
-  const { subscribed, everSubscribed, loaded: subLoaded, unknown } = useSubscription();
+  const { subscribed, everSubscribed, loaded: subLoaded, unknown, billing } = useSubscription();
+  const manage = useManageSubscription(billing);
 
   if (!isLoaded) {
     return (
@@ -103,69 +105,71 @@ export default function Settings() {
         <AutoCartSettings />
       </Section>
 
-      {/* Apple and Google require digital subscriptions to go through in-app
-          purchase, so the native app never renders a price or a checkout route.
-          It points at the web instead. */}
-      {!isNative && (
-        <Section title="Subscription">
-          {!subLoaded || unknown ? (
-            <p className="text-ch-body text-ch-muted">
-              We couldn&apos;t check your subscription just now.{" "}
-              <button
-                onClick={() => void openBillingPortal()}
-                className="cursor-pointer font-bold text-ch-green underline underline-offset-2 hover:text-ch-green-deep"
-              >
-                Open the billing portal
-              </button>{" "}
-              to see where it stands.
-            </p>
-          ) : subscribed ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-ch-body font-bold">Your subscription is active</p>
-                <p className="mt-0.5 text-ch-fine text-ch-muted">
-                  Watching, alerts and auto-cart are all switched on.
-                </p>
-              </div>
-              <Button variant="quiet" size="sm" onClick={() => void openBillingPortal()}>
-                Manage billing
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-ch-body font-bold">
-                  {everSubscribed ? "Your subscription has ended" : "No subscription yet"}
-                </p>
-                <p className="mt-0.5 max-w-[52ch] text-ch-fine leading-normal text-ch-muted">
-                  Searching stays free. Watching a booked campground, text alerts and auto-cart need
-                  a subscription.
-                </p>
-              </div>
-              <Link href="/" className={buttonClasses({ size: "sm" })}>
-                {everSubscribed ? "Resubscribe" : "Start free trial"}
-              </Link>
-            </div>
-          )}
-        </Section>
-      )}
+      {/* ── MANAGEMENT IS NOT PURCHASE, AND THIS SECTION USED TO CONFLATE THEM ────────
+          It was wrapped in `{!isNative && …}` under the comment *"Apple and Google
+          require digital subscriptions to go through in-app purchase, so the native app
+          never renders a price or a checkout route."* That sentence is TRUE and it is
+          about BUYING. Applied to MANAGING it is backwards: both stores expect an
+          in-app-purchase subscriber to be able to reach the subscription they bought, and
+          the native arm below it offered a paying subscriber one flat sentence and no way
+          out at all. Our first production Play subscriber reported exactly that on
+          2026-09-19.
 
-      {isNative && (
-        <Section title="Subscription">
-          {subscribed ? (
-            <p className="text-ch-body text-ch-muted">
-              Your subscription is active. Watching, alerts and auto-cart are all switched on.
-            </p>
-          ) : (
-            <>
-              <p className="text-ch-body text-ch-muted"><SubscribeSentence /></p>
-              {/* Never offered to someone already paying — a "Subscribe" prompt on a
-                  live subscription reads as a billing failure. */}
-              <SubscribeLink className="mt-2 text-ch-body text-ch-green" />
-            </>
-          )}
-        </Section>
-      )}
+          The purchase half is untouched: `SubscribeSentence` / `SubscribeLink` still own
+          the non-subscriber arm, still carry no price, and `StorePaywall`, `WatchCta`,
+          `NewWatch` and `LINKOUT_BY_STORE` are not involved here at all.
+
+          ROUTED ON THE STORED PROVIDER, NOT ON `isNative`. `useManageSubscription` reads
+          `subscriptions.provider`, so a Play subscriber reaches Play whether they opened
+          the app or camphawk.app on a laptop, and a web subscriber reaches the Stripe
+          portal from inside the app. The device answers a question nobody asked. */}
+      <Section title="Subscription">
+        {!subLoaded ? (
+          <p className="text-ch-body text-ch-muted">Checking your subscription…</p>
+        ) : subscribed || unknown ? (
+          /* `unknown` IS GROUPED WITH `subscribed`, DELIBERATELY. A failed lookup must
+             never fall through to the "No subscription yet" arm below — that is the rule
+             that stops a Clerk blip telling a paying subscriber to subscribe, and the
+             destination's own copy says we could not check rather than guessing a store. */
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-ch-body font-bold">
+                {unknown ? "Your subscription" : "Your subscription is active"}
+              </p>
+              <p className="mt-0.5 max-w-[52ch] text-ch-fine leading-normal text-ch-muted">
+                {subscribed
+                  ? `Watching, alerts and auto-cart are all switched on. ${manage.destination.detail}`
+                  : manage.destination.detail}
+              </p>
+            </div>
+            <Button variant="quiet" size="sm" onClick={manage.open}>
+              {manage.destination.label}
+            </Button>
+          </div>
+        ) : isNative ? (
+          <>
+            <p className="text-ch-body text-ch-muted"><SubscribeSentence /></p>
+            {/* Never offered to someone already paying — a "Subscribe" prompt on a
+                live subscription reads as a billing failure. */}
+            <SubscribeLink className="mt-2 text-ch-body text-ch-green" />
+          </>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-ch-body font-bold">
+                {everSubscribed ? "Your subscription has ended" : "No subscription yet"}
+              </p>
+              <p className="mt-0.5 max-w-[52ch] text-ch-fine leading-normal text-ch-muted">
+                Searching stays free. Watching a booked campground, text alerts and auto-cart need
+                a subscription.
+              </p>
+            </div>
+            <Link href="/" className={buttonClasses({ size: "sm" })}>
+              {everSubscribed ? "Resubscribe" : "Start free trial"}
+            </Link>
+          </div>
+        )}
+      </Section>
 
       <Section title="Account">
         <p className="text-ch-body text-ch-ink-2">{email ?? "Signed in"}</p>
@@ -195,16 +199,6 @@ export default function Settings() {
       <BuildStamp />
     </div>
   );
-}
-
-async function openBillingPortal() {
-  try {
-    const res = await fetch("/api/stripe/portal", { method: "POST" });
-    const data = await res.json();
-    if (data.url) window.location.href = data.url;
-  } catch {
-    /* the control just does nothing rather than throwing at the user */
-  }
 }
 
 function Section({
