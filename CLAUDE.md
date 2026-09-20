@@ -13045,6 +13045,20 @@ fanning out is the 2026-09-04 two-main-lanes collision at scale.**
   at ~70% context, never mid-flight with a child unaccounted for. **If a fresh session cannot
   reconstruct the fleet from the repo and the session list, something was held only in
   context, and that is the bug.**
+- **AND THE ORCHESTRATOR'S OWN FOLLOW-UP COMMIT IS INSIDE THE CI SLOT TOO, WHICH WAS LEARNED
+  BY BREACHING IT.** Everything above about serialising is written about CHILDREN pushing.
+  This session pushed a `CLAUDE.md` fold-in **eight minutes into the child's own verify run**;
+  GitHub cancelled that run seventeen seconds later, and the child's sha **never got a
+  verdict** — `docs/LANES.md` verbatim, third recorded instance, again by the session
+  enforcing it.
+  - **A Stop hook nagging about an unpushed commit is not authority to breach it.** That is
+    what made it easy: the hook fires on an unpushed commit, says nothing about CI, and the
+    obvious response to it is the one that cancels a live run. **It fired a second time later
+    the same hour and was correctly held against**, with a backgrounded poll pushing once the
+    run completed — which satisfies both without choosing between them.
+  - **And the verifier's sha moves underneath you when you do it.** Fable's pass covered the
+    child's commit; two commits landed on top before the PR, so the verdict had to be
+    re-earned on the new head rather than quoted from the old one.
 
 #### 2026-09-20 — CLAUDE HAS HANDS ON THE SITE NOW, FROM THE HOME SERVER
 
