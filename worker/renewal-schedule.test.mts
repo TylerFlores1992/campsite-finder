@@ -218,19 +218,12 @@ test('the ladder TERMINATES on degenerate inputs — a hung bot beats every ramp
    * way. Every case below would hang, not fail, under the original — which is itself the
    * argument for asserting the property rather than trusting the reading.
    */
-  // THE STRUCTURAL HALF RUNS FIRST, AND THE ORDER IS THE POINT. The behavioural half below
-  // can only fail by HANGING — under the first draft this test does not go red, it never
-  // returns, and node:test then runs nothing after it either. Checked with the mutation
-  // applied: killed at 45s, having asserted nothing. So the shape is asserted BEFORE the
-  // behaviour, and a reinstated exit condition fails in milliseconds with a message that
-  // names the line. A guard whose failure mode is a test run that never finishes is a guard
-  // somebody deletes.
-  const sched = readFileSync('scripts/auto-cart-bot/renewal-schedule.mjs', 'utf8');
-  const ladder = sched.slice(sched.indexOf('export function renewBackoffGapMs'));
-  const loop = ladder.slice(ladder.indexOf('for ('), ladder.indexOf(')', ladder.indexOf('for (')) + 1);
-  assert.ok(loop.length > 0, 'the ladder must still have a loop to check');
-  assert.ok(!/gap\s*<|<\s*gap/.test(loop),
-    `the loop must not be bounded by the gap it is doubling — found: ${loop}`);
+  // THE STRUCTURAL HALF USED TO LIVE HERE AND COULD NOT REPORT FROM HERE. Everything below
+  // can only fail by HANGING, and **node:test buffers a file's output until the file
+  // completes** — so a hang anywhere in this file yields `TAP version 13` and nothing more,
+  // whatever order the assertions are in. Measured both ways. The shape is asserted by
+  // `renewal-ladder-shape.test.mts`, which never calls the ladder and so can speak; read its
+  // header before moving it back.
 
   const huge = Number.MAX_SAFE_INTEGER;
   assert.equal(renewBackoffGapMs(huge, { backoffGapMs: 0 }), 0,
