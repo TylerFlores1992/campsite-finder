@@ -13,6 +13,22 @@ its children are all main-lane sessions and must obey main-lane rules.
 
 **Read `docs/LANES.md` before the first dispatch of a session.** This file assumes it.
 
+## Using it
+
+`/orchestrate <task>` — or just describe a task and say to farm it out. The orchestrator
+is whichever session invokes this; there is nothing to set up, but it needs the repo
+checkout and the `mcp__Claude_Code_Remote__*` tools, so it runs in the cloud environment.
+
+```
+/orchestrate  add a --dry-run flag to scripts/rc-test-hold.mts so it prints the
+              hold it would queue without writing a row
+```
+
+Expect back: one line sizing it, a child session spawned on its own branch, a wait, a
+Fable report naming its tier, and a PR. **A dedicated orchestrator session is tidier than
+one that is also doing its own work** — its context stays on dispatch rather than filling
+with implementation detail — but any session can do it.
+
 ## What the tools actually do — verified 2026-09-20, not assumed
 
 Four facts decide the whole design. Each was read off the tool surface, and the first
@@ -176,7 +192,14 @@ Remove it afterwards (`git worktree remove --force`, then `git worktree prune`).
 
 **6. Open the PR**, only if tier 1 passed, with a body whose claims Fable checked.
 
-**7. Report.** Then fold any finding into `CLAUDE.md` yourself — that obligation has no
+**7. Archive the child.** `archive_session` once its work is merged or abandoned. **A
+child that finishes does not go away** — it sits `IDLE` holding its container, and they
+accumulate in `list_sessions` until somebody clears them. Archiving is reversible
+(`unarchive_session`); a fresh container is provisioned if it is ever messaged again.
+**Never archive a child that is `BLOCKED`** — that is unfinished work waiting on an
+answer, not a finished one.
+
+**8. Report.** Then fold any finding into `CLAUDE.md` yourself — that obligation has no
 trigger and has stranded findings for six days before.
 
 ## What Fable checks — tier 1, the default
@@ -241,6 +264,7 @@ Keep two things apart, always: **what the work did** and **what the tooling did*
 that failed to start, a poll that timed out, a worktree that would not create are tooling
 events and are reported as such — not as a defect in the work.
 
-State what you left behind: children spawned and their state, branches pushed, PRs opened,
-worktrees removed, and whether the CI slot is free. If a child is still running or blocked,
+State what you left behind: children spawned and their state, which were archived and
+which are still live, branches pushed, PRs opened, worktrees removed, and whether the CI
+slot is free. If a child is still running or blocked,
 lead with that — a blocked child is invisible unless somebody says so.
