@@ -13231,8 +13231,10 @@ Status: STOPPED — wrong machine · re-confirmed on a follow-up trigger, same s
   machine, and `Unknown skill: chrome` is the `--chrome` flag never having been passed.
 - **TWO READINGS, AND NEITHER IS ESTABLISHED — do not write one in.** Either the bridge session
   is not actually on the box, or the routine routed into a different session than intended:
-  `trig_01NM8gcao9fuMNEasnR7x3kJ` carries **no `last_run` at all**, while
+  `trig_01NM8gcao9fuMNEasnR7x3kJ` carried **no `last_run` at all** when this was written, while
   `trig_01EuXNJ1qVcSPzHA6VZ7mN12` fired at 06:37:56 into `cse_018gBCueqpd49GzNA8V4Y3QG`.
+  **That half is stale as of the same evening** — it has a `last_run` now (18:24:14Z), into the
+  same `cse_` id, so "it never fired" is not the explanation. See the narrowing below.
 - **THE OWNER ACTION IS ONE COMMAND, ON THE WINDOWS MACHINE, FROM A PLAIN FOLDER:**
   `claude --chrome --remote-control "camphawk-qa"`. Nothing in this repo can substitute for it.
 - **NARROWED THE SAME EVENING, AND IT IS THE SECOND READING: THE ROUTINE ANSWERED, THE BRIDGE
@@ -13250,12 +13252,18 @@ Status: STOPPED — wrong machine · re-confirmed on a follow-up trigger, same s
   — so a bridge session exists, is live, and was started from a CLI. **A bridge session is on
   the owner's machine by definition**, so "the bridge session is not actually on the box" is
   out, and what is left is that the routine's firing landed somewhere else.
-- **THE DISCRIMINATOR IS THE `cse_<suffix>`, AND IT IS FREE.** `fire_trigger` returns a
-  session id; a delivery into a bound session returns `cse_<the same suffix>` as the
-  `session_<suffix>` it was bound to. A mismatch means a FRESH cloud session was spawned and
-  the bound one never woke. **Read that suffix before believing a fired session is the one you
-  aimed at** — the artifact it publishes will describe a machine, and a fresh container
-  describes a real machine perfectly accurately while being the wrong one.
+- **AND THE OBVIOUS DISCRIMINATOR DOES NOT WORK — I WROTE IT IN AND THE TRIGGER LIST REFUTED
+  IT WITHIN THE HOUR.** The tempting rule is *"`fire_trigger` returns a session id; a matching
+  suffix means the bound session woke."* **It matches on every firing and proves nothing.**
+  All three triggers bound to `session_018gBCueqpd49GzNA8V4Y3QG` report
+  `last_run.session_id: "cse_018gBCueqpd49GzNA8V4Y3QG"` — same suffix, **different prefix** —
+  and the artifacts they produced describe a Firecracker cloud sandbox. **`cse_` is not
+  `session_`**: the suffix says which session the run was DERIVED from, never which environment
+  executed it. Do not read a matching suffix as delivery into a bridge session.
+- **SO THERE IS NO CHEAP DISCRIMINATOR, AND THE HONEST ONE IS THE FIRST LINE OF THE ANSWER.**
+  Make the fired session run `uname -a` and `pwd` and print them verbatim before anything else,
+  which is what both QA prompts already did — and it is why the wrong machine was visible at all.
+  **Treat the environment as unknown on every firing rather than inferred from the binding.**
 - **DO NOT READ AN ARTIFACT'S `pwd` AND `uname` AS A FAULT ON THE BOX.** They are a correct
   description of whatever answered. Two `qa-box-report-2026-09-20` artifacts now exist and
   both describe a Firecracker cloud sandbox; neither is a reading about the Windows machine,
