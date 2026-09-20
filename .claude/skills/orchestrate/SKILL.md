@@ -19,6 +19,13 @@ its children are all main-lane sessions and must obey main-lane rules.
 is whichever session invokes this; there is nothing to set up, but it needs the repo
 checkout and the `mcp__Claude_Code_Remote__*` tools, so it runs in the cloud environment.
 
+**`/orchestrate` with NO task is the boot sequence, and it is the whole start-up
+procedure.** Do the four readings under "Starting a fresh orchestrator" below, report what
+they say in four lines, and **stop — dispatch nothing on that turn.** That is deliberate:
+if the CI slot is busy or a previous child is sitting `BLOCKED`, that has to surface
+*before* a dispatch is in flight rather than during one. It is also the re-entry after a
+`/clear`, because a fresh orchestrator and a cleared one are the same thing.
+
 ```
 /orchestrate  add a --dry-run flag to scripts/rc-test-hold.mts so it prints the
               hold it would queue without writing a row
@@ -43,10 +50,13 @@ two-main-lanes collision waiting to happen:
 3. **`CLAUDE.md`'s Open block** — what is owed.
 4. **`actions_list` on `verify.yml`** — is the CI slot free before you take it.
 
-Then `/orchestrate <task>`. **Name the session "Orchestrator"** so it is obvious in
-`list_sessions` which one holds the slot. Steps 1 and 3 are also exactly what you do after
-a clear — see "Clearing the orchestrator" — because a fresh orchestrator and a cleared one
-are the same thing.
+**Name the session "Orchestrator"** so it is obvious in `list_sessions` which one holds
+the slot.
+
+**Do not ask the owner to paste this list.** A start-up procedure that lives in a note
+somewhere is one that drifts from the file governing it and is wrong the first time the
+file changes. It lives here, and bare `/orchestrate` runs it — so starting a session is
+one word, and the words are always the current ones.
 
 ## What the tools actually do — verified 2026-09-20, not assumed
 
