@@ -288,3 +288,232 @@ test('the RevenueCat assertion runs BEFORE the IPA is built', () => {
     'assert before building, not after',
   );
 });
+
+// ─── THE PURPOSE STRINGS (2026-09-18) ─────────────────────────────────────────────────
+//
+// Apple rejected `1.0 (27)` under Guideline 2.1(a) — "App crashed when we tapped on
+// camera", iPad Air 11-inch (M3), iPadOS 27.0. There was no NSCameraUsageDescription
+// anywhere in the repo, and iOS TERMINATES a process that touches the camera without one.
+//
+// This is the `grep -rn "NSCamera"` returning nothing that nobody ran for five
+// submissions, turned into a test. It is the same blind spot `src/lib/store-listing.test.mts`
+// exists for: a native Info.plist key is plain text in a YAML file that `tsc`, `next build`
+// and the whole suite are structurally unable to see — so the first reader is App Review.
+//
+// ANCHORING, because this file has now been bitten by it a dozen-plus times: every key name
+// below occurs TWICE in the comment-stripped body — once where it is written and once in the
+// list that verifies it. A bare /NSCameraUsageDescription/ match therefore survives deleting
+// the write entirely. Both occurrences are pinned separately, and that was verified by
+// mutation rather than reasoned about.
+
+const PURPOSE_KEYS = [
+  'NSCameraUsageDescription',
+  'NSPhotoLibraryUsageDescription',
+  'NSPhotoLibraryAddUsageDescription',
+] as const;
+
+const LOCATION_KEYS = [
+  'NSLocationWhenInUseUsageDescription',
+  'NSLocationAlwaysAndWhenInUseUsageDescription',
+] as const;
+
+test('the iOS build WRITES all three camera/photo purpose strings', () => {
+  const body = code(ios[find(ios, 'camera and photo library usage descriptions')]);
+  for (const key of PURPOSE_KEYS) {
+    // Pinned on the CALL, not the key name: the name also appears in the verification
+    // loop, so matching it bare passes against a step that writes nothing.
+    assert.match(
+      body,
+      new RegExp(`set_desc ${key} "\\$[A-Z]+"`),
+      `${key} must actually be written, not merely mentioned`,
+    );
+  }
+});
+
+test('the strings describe what the app does, and are not empty', () => {
+  // An empty or placeholder string is worse than none: it satisfies a grep, ships, and
+  // App Review reads it. Apple rejects "" and a bare app name under 5.1.1 as it is.
+  const body = code(ios[find(ios, 'camera and photo library usage descriptions')]);
+  for (const v of ['CAMERA=', 'LIBRARY=', 'SAVE=']) {
+    const line = body.split('\n').find((l) => l.trim().startsWith(v));
+    assert.ok(line, `${v} must be assigned`);
+    const value = line.slice(line.indexOf('"') + 1, line.lastIndexOf('"'));
+    assert.ok(value.length >= 40, `${v} is "${value}" — too short to be a real purpose string`);
+    assert.match(value, /CampHawk/, `${v} must name the app`);
+    // The location step's own argument, applied here: do not justify behaviour we do not
+    // have. Nothing in this app opens a camera by itself.
+    assert.match(value, /only when you/, `${v} must say the user initiates it`);
+  }
+});
+
+test('a purpose string that did not land FAILS the build, with a reason', () => {
+  const body = code(ios[find(ios, 'camera and photo library usage descriptions')]);
+
+  // AN EXPLICIT `if`, NOT A BARE `Print`. The location step above ends with a bare Print
+  // and relies on the shell aborting; whether Codemagic runs these under `set -e` has
+  // never been read off a build log here. This one declares `set -e` AND does not need it.
+  assert.match(body, /set -e/, 'the step must not rely on Codemagic\'s default shell flags');
+  assert.match(
+    body,
+    /if ! \/usr\/libexec\/PlistBuddy -c "Print :\$KEY" ios\/App\/App\/Info\.plist; then/,
+    'the verification must be a checked `if`, not a bare Print',
+  );
+  for (const key of PURPOSE_KEYS) {
+    assert.ok(
+      new RegExp(`for KEY in [^\\n]*${key}`).test(body),
+      `${key} must be in the verification loop, not just written`,
+    );
+  }
+  assert.match(body, /exit 1/, 'a missing key must fail the build');
+  assert.doesNotMatch(body, /exit 0/, 'no early success path — that neuters the assertion');
+
+  // THE WRITE MUST NOT ABORT BEFORE THE CHECK REPORTS. Found by running this script body
+  // against a PlistBuddy stub told to refuse one key: under `set -e` the Add-or-Set pair
+  // killed the script at the write, so the build went red with NO explanation of which key
+  // or why. The trailing `|| echo` is what keeps the loop below as the single gate.
+  assert.match(
+    body,
+    /\|\| echo "could not write \$1 here/,
+    'set_desc must not abort under set -e before the verification loop runs',
+  );
+});
+
+test('adding the camera strings did not cost the location ones', () => {
+  // The lesson from `android-release still carries the three assertions that predate
+  // billing`, one workflow along: every round here has added a key and this is the step
+  // where one would quietly go missing.
+  const body = code(ios[find(ios, 'location usage description')]);
+
+  // ANCHORED ON THE LOOP, NOT THE NAME — and this version exists because the first one
+  // was not. NSLocationAlwaysAndWhenInUseUsageDescription ALSO appears in this step's
+  // trailing `Print`, so a bare match on the name survived deleting the key from the loop
+  // that writes it. Caught by mutation; it would never have been caught by reading. That
+  // is the same token-occurs-twice mistake this file already documents three times above,
+  // made once more in a test written directly underneath a comment describing it — which
+  // is the entire argument for running the mutations rather than reasoning about them.
+  const loop = body.split('\n').find((l) => l.includes('for KEY in NSLocation'));
+  assert.ok(loop, 'the location step must still write its keys in a loop');
+  for (const key of LOCATION_KEYS) {
+    assert.ok(loop.includes(key), `${key} must still be WRITTEN, not merely mentioned`);
+  }
+});
+
+test('both purpose-string steps run before the IPA is built', () => {
+  // After the build they would edit a plist nothing reads again. And both must come after
+  // the native project exists at all — before `cap add ios` there is no Info.plist, so the
+  // step would fail on every build for the wrong reason, and the natural fix for that is
+  // to weaken it.
+  for (const step of ['location usage description', 'camera and photo library usage descriptions']) {
+    assert.ok(find(ios, step) > find(ios, 'Generate the iOS native project'), `${step} needs ios/ to exist`);
+    assert.ok(find(ios, step) < find(ios, 'Build the IPA'), `${step} must run before the build`);
+  }
+});
+
+// ─── AND THE ONE THAT READS WHAT APPLE RECEIVES ───────────────────────────────────────
+//
+// Everything above verifies the file the step just wrote — the WRITE half. `android-release`
+// has read a BUILD OUTPUT since 2026-08-27 (the merged manifest) and `ios-testflight` had no
+// equivalent at all: the location keys had been written since build 15 and NO BUILD LOG HERE
+// HAD EVER CONFIRMED THEY REACH THE BINARY. That gap is what would make this whole fix a
+// silent no-op — green build, upload, sixth rejection, identical cause.
+
+test('the iOS workflow asserts the purpose strings in the SHIPPED binary', () => {
+  const body = code(ios[find(ios, 'survived into the IPA')]);
+  // ALL FIVE, camera and location. If the PlistBuddy mechanism does not work, it does not
+  // work for either family, and one build answers both questions.
+  for (const key of [...PURPOSE_KEYS, ...LOCATION_KEYS]) {
+    assert.ok(new RegExp(`for KEY in [\\s\\S]*?${key}`).test(body), `${key} must be checked in the IPA`);
+  }
+  assert.match(body, /exit 1/, 'a missing key must fail the build');
+  assert.doesNotMatch(body, /exit 0/, 'no early success path');
+});
+
+test('every purpose string this workflow writes is also checked in the IPA', () => {
+  // THE SELF-MAINTAINING HALF, and the reason this test is worth more than the five names
+  // above it. A sixth key added next round — microphone, contacts, Face ID — would be
+  // written by some step and silently never verified, which is exactly today's failure in
+  // a new costume. Derived from the file rather than listed.
+  const written = new Set<string>();
+  for (const s of ios) {
+    if (s.name.includes('survived into the IPA')) continue;
+    for (const m of code(s).matchAll(/\bNS\w+UsageDescription\b/g)) written.add(m[0]);
+  }
+  assert.ok(written.size >= 5, `expected the five known purpose strings, found ${[...written]}`);
+  const verified = code(ios[find(ios, 'survived into the IPA')]);
+  for (const key of written) {
+    assert.ok(verified.includes(key), `${key} is written into Info.plist but never verified in the IPA`);
+  }
+});
+
+test('the IPA assertion runs AFTER the build, or it reads nothing', () => {
+  // The same property the Android billing test pins, for the same reason: the IPA is a
+  // build OUTPUT. Moved above the build it would hit the no-IPA branch every time — which
+  // fails correctly, but only by luck of that branch existing.
+  assert.ok(
+    find(ios, 'survived into the IPA') > find(ios, 'Build the IPA'),
+    'the IPA assertion must come after the build step',
+  );
+});
+
+test('the IPA assertion FAILS when it could not read anything', () => {
+  // "We could not look" must never read as "we looked and it was fine" — the rule this
+  // file already applies to the Android merged manifest. Three ways to read nothing here:
+  // no IPA produced, an IPA with no app plist inside it, and keys genuinely absent.
+  const body = code(ios[find(ios, 'survived into the IPA')]);
+  for (const cond of ['-z "$IPA"', '-z "$PLIST"', '-n "$MISSING"']) {
+    const at = body.indexOf(cond);
+    assert.notEqual(at, -1, `must handle ${cond}`);
+    const end = body.indexOf('\n          fi', at);
+    assert.notEqual(end, -1, `no closing fi for ${cond}`);
+    assert.match(body.slice(at, end), /exit 1/, `the \`${cond}\` branch must exit 1, not warn and continue`);
+  }
+});
+
+test('the IPA assertion does not hardcode the .app name', () => {
+  // capacitor.config.ts's `appName: 'CampHawk'` sets CFBundleDisplayName, NOT the product
+  // name — the bundle is App.app because the Xcode target is "App". Hardcoding either
+  // spelling makes this an assertion that stops matching instead of one that fails, which
+  // is the failure mode this whole file is written against.
+  const body = code(ios[find(ios, 'survived into the IPA')]);
+  assert.doesNotMatch(body, /Payload\/(App|CampHawk)\.app/, 'glob the bundle, do not name it');
+  // Single-level on purpose: Payload/*.app/Frameworks/*.framework/Info.plist must not be
+  // mistaken for the app's own plist. Verified by mutation against a built fixture.
+  assert.match(body, /-path '\*\/Payload\/\*\/Info\.plist'/, 'the app plist must be matched one level deep');
+});
+
+// ─── THE TWO WORKFLOWS, READ SIDE BY SIDE (2026-09-18) ────────────────────────────────
+//
+// This file has always checked each workflow ALONE and has never compared them, which is
+// how iOS went thirteen months with no build-output assertion while Android had one. The
+// comparison is now a test, so the next divergence is loud.
+
+test('every assertion step in EITHER workflow can actually fail', () => {
+  // A step named "Assert"/"Verify" that cannot exit non-zero is decoration, and it reads
+  // as proof. Both workflows, one rule — the point of comparing them.
+  const asserts = [
+    ...android.map((s) => ['android-release', s] as const),
+    ...ios.map((s) => ['ios-testflight', s] as const),
+  ].filter(([, s]) => /^(Assert|Verify)\b/.test(s.name));
+
+  assert.ok(asserts.length >= 7, `expected at least 7 assertion steps, found ${asserts.length}`);
+  for (const [wf, s] of asserts) {
+    assert.match(code(s), /exit 1/, `${wf} / "${s.name}" has no way to fail`);
+  }
+});
+
+// WHAT THAT TEST DOES NOT CLAIM, stated because a mutation run showed the gap rather than
+// leaving it to be discovered later. Deleting ONE of several `exit 1`s from a step — say the
+// `-z "$APK"` branch of "Verify the APK is actually signed" — leaves the step able to fail
+// and the test green. That is correct: the property asserted is "this step can fail at all",
+// which is the one that catches a step gutted into decoration. Pinning every individual
+// branch across both workflows generically is what the per-step tests above do by hand, with
+// the condition named, and a generic version would either miss them or fire on legitimate
+// edits until somebody deleted it.
+
+// THE OTHER ASYMMETRY, RECORDED RATHER THAN ENFORCED. `ios-testflight` injects five
+// Info.plist purpose strings; `android-release` injects no permissions at all, because on
+// Android they arrive by AAR manifest merge — which is precisely why its assertion reads the
+// MERGED manifest and iOS's (until 2026-09-18) read nothing. Android has no equivalent
+// exposure to this rejection either: a WebView file chooser routes the camera through an
+// Intent to the system camera app, so a missing declaration there is not a termination.
+// There is no test to write for that; it is a fact about the platforms.
