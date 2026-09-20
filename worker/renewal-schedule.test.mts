@@ -26,7 +26,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   planRenewal, recordRenewal, newRenewalState, makeSkipLogger,
-  RENEW_FLOOR_MS, RENEW_MIN_GAP_MS, RENEW_BACKOFF_GAP_MS, RENEW_BACKOFF_AFTER,
+  noteLiveToken, renewBackoffGapMs,
+  RENEW_FLOOR_MS, RENEW_MIN_GAP_MS, RENEW_BACKOFF_GAP_MS, RENEW_BACKOFF_MAX_MS,
+  RENEW_BACKOFF_AFTER,
 } from '../scripts/auto-cart-bot/renewal-schedule.mjs';
 
 const RENEW_BEFORE_S = 600;
@@ -141,6 +143,178 @@ test('repeated failures back off, and NEVER stop', () => {
   );
 });
 
+test('the backoff LADDER doubles per failure past the threshold', () => {
+  /**
+   * THE LEVER, AND IT IS ARITHMETIC (2026-09-20). Every Okta navigation is a chance at a
+   * ~32 GiB commit burst — established by 2026-08-18's controlled comparison, where three
+   * token-less renewals ten minutes apart cost nothing and the one that clicked through Okta
+   * cost 2,331 MB. Re-derived off `bot_events` over the 168h to 2026-09-20: 255 renewal trips
+   * = 36.4/day, of which 200 of 254 gaps sat in the flat 30-minute backoff band and the
+   * MEDIAN gap was 31.5m. The schedule was, in practice, the flat backoff and nothing else.
+   *
+   * Asserted as a RATIO against the previous rung rather than as four literals, because the
+   * rungs are tuneable and the DOUBLING is the property. Four literals would pin 2026-09-20's
+   * numbers and fail the next time somebody reasonably retunes the first rung.
+   */
+  const rung = (failures: number) => renewBackoffGapMs(failures);
+
+  assert.equal(rung(RENEW_BACKOFF_AFTER), RENEW_BACKOFF_GAP_MS,
+    'the FIRST rung is unchanged — the flat backoff is what this escalates FROM');
+  for (let n = RENEW_BACKOFF_AFTER; rung(n) < RENEW_BACKOFF_MAX_MS; n++) {
+    assert.equal(rung(n + 1), Math.min(rung(n) * 2, RENEW_BACKOFF_MAX_MS),
+      `failure ${n + 1} must be twice failure ${n}, capped`);
+  }
+  // And it really does climb — a ladder that is all cap is the flat backoff with extra words.
+  assert.ok(rung(RENEW_BACKOFF_AFTER + 1) > rung(RENEW_BACKOFF_AFTER),
+    'one more failure must actually be a longer wait');
+
+  // The named ladder from CLAUDE.md, at today's constants: 30 -> 60 -> 120 -> 240.
+  assert.deepEqual(
+    [0, 1, 2, 3].map((k) => rung(RENEW_BACKOFF_AFTER + k) / 60_000),
+    [30, 60, 120, 240],
+  );
+});
+
+test('the ladder is a CEILING and never a STOP, at any failure count', () => {
+  /**
+   * THE `.camphawk-ready` RULE, WHICH THIS MODULE'S OWN HEADER STATES: a gate that switches
+   * itself off permanently is the bug where one failure twelve days earlier meant the repair
+   * never ran again. An escalating backoff is exactly how that bug comes back as arithmetic
+   * rather than as a boolean, so the cap is asserted against a failure count no episode could
+   * reach — and against one that would overflow `2 ** n` to Infinity if the ladder were
+   * written as an exponent, which is why it is not.
+   */
+  for (const failures of [10, 100, 1_000, 10_000, Number.MAX_SAFE_INTEGER]) {
+    const gap = renewBackoffGapMs(failures);
+    assert.equal(gap, RENEW_BACKOFF_MAX_MS, `failures=${failures} must sit at the ceiling`);
+    assert.ok(Number.isFinite(gap), 'a non-finite gap compares false and is no backoff at all');
+  }
+
+  // AND THE SCHEDULE ITSELF MUST STILL SAY YES once the ceiling has been waited out. The
+  // ladder bounding the WAIT is worthless if some arm of planRenewal then refuses for ever.
+  const forever = {
+    lastAt: T0 - (RENEW_BACKOFF_MAX_MS + 1000), lastToken: null, failures: 50_000,
+  };
+  const r = planRenewal({ token: null, leftS: null, now: T0, state: forever });
+  assert.equal(r.go, true, 'fifty thousand failures deep, it must still try');
+  // ...and one tick earlier it must still be holding, or the cap is not being applied at all.
+  assert.equal(
+    planRenewal({ token: null, leftS: null, now: T0, state: { ...forever, lastAt: T0 - (RENEW_BACKOFF_MAX_MS - 60_000) } }).go,
+    false,
+    'inside the ceiling it waits — otherwise the escalation is inert',
+  );
+});
+
+test('the stand-down NAMES the rung, and says whether it is still climbing', () => {
+  // The caller collapses on the KEY, and every rung shares the key `backoff`, so this state
+  // prints once per episode. The sentence is therefore the only place the rung is legible to
+  // a human at 07:45 — and "still doubling" and "this is as slow as it gets, now waiting for
+  // a human" are different news, which a bare minute count cannot distinguish.
+  const at = (failures: number) => planRenewal({
+    token: null, leftS: null, now: T0,
+    state: { lastAt: T0 - (RENEW_MIN_GAP_MS + 1000), lastToken: null, failures },
+  });
+
+  const first = at(RENEW_BACKOFF_AFTER);
+  assert.equal(first.key, 'backoff', 'the key must not change with the rung, or the collapse breaks');
+  assert.match(first.reason, /30m apart/);
+  assert.match(first.reason, /doubling to 240m/, 'a climbing rung must say it is still climbing');
+
+  const capped = at(RENEW_BACKOFF_AFTER + 9);
+  assert.equal(capped.key, 'backoff');
+  assert.match(capped.reason, /240m apart/);
+  assert.match(capped.reason, /never stops entirely/, 'the ceiling must say it is not a stop');
+  assert.ok(!/doubling to/.test(capped.reason), 'and must not claim to still be climbing');
+});
+
+test('A LIVE TOKEN RESETS THE FAILURE COUNT — the one real cost of escalating', () => {
+  /**
+   * THE NAMED HAZARD (CLAUDE.md, "THE REAL LEVER"). `maybeAutoLogin` repairs the session at
+   * T−30 of a release and does NOT call `recordRenewal`, so `failures` survives the repair.
+   * Under a FLAT backoff that was harmless — the next episode's first attempt came 30 minutes
+   * in either way. Under an escalating one it is silent and backwards: the session that was
+   * just repaired is the one whose NEXT lapse waits four hours, on a counter belonging to the
+   * previous episode. That is worse than the ramps the escalation buys.
+   */
+  const spent = { lastAt: T0 - 5 * 60_000, lastToken: null, failures: 40 };
+  assert.equal(renewBackoffGapMs(spent.failures), RENEW_BACKOFF_MAX_MS, 'pinned at the ceiling');
+
+  const repaired = noteLiveToken(spent, { leftS: 3400 });
+  assert.equal(repaired.failures, 0, 'a working session is evidence the failing episode ended');
+
+  // AND THE RESET MUST NOT REACH THE OTHER TWO FIELDS.
+  assert.equal(repaired.lastAt, spent.lastAt,
+    'the FLOOR is request pacing from an IP-blocked address and is owed regardless');
+  assert.equal(repaired.lastToken, spent.lastToken,
+    'lastToken is the have-we-tried-this key; a live token is not an attempt');
+  assert.equal(spent.failures, 40, 'and it must not mutate the state it was handed');
+
+  // THE POINT OF ALL OF IT: the NEXT lapse starts at minGap, not at the ceiling.
+  const lapsed = { ...repaired, lastAt: T0 - (RENEW_MIN_GAP_MS + 1000) };
+  assert.equal(planRenewal({ token: null, leftS: null, now: T0, state: lapsed }).go, true,
+    'a fresh episode must not inherit the previous one\'s four-hour gap');
+  assert.equal(
+    planRenewal({ token: null, leftS: null, now: T0, state: { ...spent, lastAt: lapsed.lastAt } }).go,
+    false,
+    'and without the reset it would have waited — which is the bug this guards',
+  );
+});
+
+test('a DEAD token is not a live one, however well it decodes', () => {
+  // THE THREE-DAY-OLD CORPSE (2026-08-19): four consecutive renewals ended `none -> -267960s`,
+  // the same ancient token restored during every navigation. It decodes perfectly. Treating a
+  // decodable token as evidence of a working session would reset the counter on exactly the
+  // pathology the backoff exists for, and the escalation would never engage at all.
+  const spent = { lastAt: T0, lastToken: null, failures: 40 };
+  assert.equal(noteLiveToken(spent, { leftS: -267_960 }).failures, 40, 'a 74-hour corpse');
+  assert.equal(noteLiveToken(spent, { leftS: 0 }).failures, 40, 'zero is lapsed, not alive');
+  assert.equal(noteLiveToken(spent, { leftS: null }).failures, 40, 'no usable token at all');
+  assert.equal(noteLiveToken(spent, { leftS: undefined }).failures, 40, 'nor an absent reading');
+  // One second of life IS life — the same boundary planRenewal stands down on, deliberately.
+  assert.equal(noteLiveToken(spent, { leftS: 1 }).failures, 0);
+  // A state with nothing to clear comes back untouched, so the caller\'s assignment is a no-op.
+  const clean = { lastAt: T0, lastToken: null, failures: 0 };
+  assert.equal(noteLiveToken(clean, { leftS: 3400 }), clean, 'same object when there is no work');
+});
+
+test('the FLOOR, the MIN GAP and the ALIVE stand-down are unchanged by the escalation', () => {
+  // THE REGRESSION HALF. The escalation touches one branch; these are the three properties
+  // that cost this repo ninety dead minutes (2026-08-15) and five ramps (2026-08-18) to get
+  // right, and a change to the backoff must not have moved any of them. Asserted at a HIGH
+  // failure count, because that is where a mis-scoped ladder would leak into them.
+  const deep = 40;
+
+  // ALIVE still wins over everything, including a maxed-out backoff.
+  const alive = planRenewal({
+    token: 'eyJ.A.s', leftS: 300, now: T0,
+    state: { lastAt: T0 - 10 * RENEW_BACKOFF_MAX_MS, lastToken: null, failures: deep },
+  });
+  assert.equal(alive.key, 'alive', 'a live token is left to lapse whatever the counter says');
+
+  // THE FLOOR still outranks the backoff, in both directions.
+  const floored = planRenewal({
+    token: null, leftS: null, now: T0,
+    state: { lastAt: T0 - 60_000, lastToken: 'eyJ.OLD.s', failures: deep },
+  });
+  assert.equal(floored.key, 'floor', 'the floor is the tightest bound and answers first');
+
+  // `leftS == null` and `leftS <= 0` both still ACT — refusing them is the ninety minutes.
+  const ready = { lastAt: T0 - (RENEW_BACKOFF_MAX_MS + 1000), lastToken: 'eyJ.OLD.s', failures: deep };
+  assert.equal(planRenewal({ token: null, leftS: null, now: T0, state: ready }).go, true);
+  assert.equal(planRenewal({ token: 'eyJ.A.s', leftS: -240, now: T0, state: ready }).go, true);
+  assert.equal(planRenewal({ token: 'eyJ.A.s', leftS: 0, now: T0, state: ready }).go, true);
+
+  // AND A SUB-THRESHOLD FAILURE COUNT STILL GETS THE PLAIN MIN GAP, not a rung.
+  for (let n = 0; n < RENEW_BACKOFF_AFTER; n++) {
+    const r = planRenewal({
+      token: null, leftS: null, now: T0,
+      state: { lastAt: T0 - (RENEW_MIN_GAP_MS - 60_000), lastToken: null, failures: n },
+    });
+    assert.equal(r.key, 'unchanged', `failures=${n} is below the threshold — no backoff`);
+    assert.match(r.reason, /nothing has changed/);
+  }
+});
+
 test('recordRenewal keys on the token we attempted AGAINST, and resets on success', () => {
   // Storing the token we RECEIVED would make a successful renewal look like an untried state
   // the moment its own token neared expiry — the same class of error as measuring a renewal
@@ -163,6 +337,10 @@ test('the numbers are ordered floor < gap < backoff', () => {
   assert.ok(RENEW_FLOOR_MS < RENEW_MIN_GAP_MS, 'the floor is the tightest bound');
   assert.ok(RENEW_MIN_GAP_MS < RENEW_BACKOFF_GAP_MS, 'failing must slow down, not speed up');
   assert.ok(RENEW_BACKOFF_AFTER >= 2, 'one failure is a blip, not a pattern');
+  // ...and the ceiling is above the first rung, or the ladder has nowhere to climb and the
+  // escalation is decoration. It is a CEILING and never a stop — asserted on its own below.
+  assert.ok(RENEW_BACKOFF_GAP_MS < RENEW_BACKOFF_MAX_MS,
+    'the backoff must have room to escalate, or the doubling is inert');
 });
 
 /**
@@ -185,6 +363,32 @@ test('the outcome is recorded, so the ration can see the attempt', () => {
   // ration into no ration at all — from an address that has been IP-blocked before.
   assert.match(kwCode, /renewal = recordRenewal\(renewal, \{ token, now: Date\.now\(\), renewed: r\?\.renewed === true \}\)/,
     'and it must be assigned back, or the state never advances');
+});
+
+test('the keep-warm APPLIES the live-token reset, and assigns it back', () => {
+  /**
+   * THE STRUCTURAL HALF OF THE NAMED HAZARD, and it is the shape three of the 2026-08-15
+   * mutations had: the pure function can be perfect while nothing calls it. `noteLiveToken`
+   * returns a NEW state — a call whose result is thrown away is indistinguishable from no
+   * call at all, and the failure it causes (a repaired session waiting four hours for its
+   * next lapse) is silent, slow and would be blamed on anything but this line.
+   */
+  assert.match(kwCode, /renewal = noteLiveToken\(renewal, \{ leftS: left \}\)/,
+    'the reset must be applied AND assigned back, or the escalation outlives its episode');
+
+  // AND IT MUST COME BEFORE THE PLAN THAT READS IT. Called after `planRenewal`, the reset
+  // lands a whole tick late — harmless today, because the alive branch stands down anyway,
+  // and exactly the kind of ordering that stops being harmless when a branch is added.
+  const reset = kwCode.indexOf('renewal = noteLiveToken(renewal,');
+  const plan = kwCode.indexOf('const plan = planRenewal({');
+  assert.ok(reset > 0 && plan > 0, 'both lines must exist');
+  assert.ok(reset < plan, 'the observation must be applied before the plan that reads it');
+
+  // ...and from the SAME reading. Re-deriving the token life for the reset would let the two
+  // disagree, which is the class of bug that made a renewal get measured against the token it
+  // meant to replace.
+  assert.match(kwCode, /const left = tokenSecondsLeft\(token\);/,
+    'one reading of the token life, shared by the reset and the plan');
 });
 
 test('the ration state outlives a browser reopen', () => {
