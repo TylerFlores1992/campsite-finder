@@ -56,6 +56,38 @@ in a report — say "spawned at sonnet" and mean it.
 `effort_level` or gets a default. `get_session` on the first child answers it. Record the
 answer here rather than guessing at it.
 
+## When not to dispatch
+
+Sizing (below) answers "which model." This is the earlier question: whether to dispatch
+at all.
+
+A child costs a clone and an `npm install` before it types a single character, and it
+costs real money — an opus child runs several times what a sonnet one does. Dispatch is
+not free, and the default should not be to reach for it.
+
+**Do it in the orchestrator** when the work is one file or one line and you already know
+its shape; when writing the dispatch prompt would mean doing the thinking — at which point
+you have already done the work and a child only re-types it; or when the judgement needed
+is about the owner's own workflow, which a fresh child has no way to have.
+
+**Dispatch** when at least one of these holds:
+
+- **Context.** The work means reading a subsystem this session does not want to hold. This
+  is the main reason, and the one that compounds — it is what keeps the orchestrator's own
+  context on dispatch decisions rather than filling with implementation detail.
+- **Parallelism.** It genuinely runs alongside something else and is not itself waiting on
+  the one CI slot.
+- **Independence.** You want a reader who did not write the thing — the same argument as
+  handing verification to Fable, one step earlier in the pipeline.
+- **Rehearsal.** The harness has not been exercised lately and this is a safe, low-stakes
+  change to exercise it on.
+
+**This very change — closing six gaps in this file — was dispatched as a rehearsal rather
+than because it was economical.** It is documentation, one file, and the orchestrating
+session could plausibly have made these edits itself faster than spawning a child and
+waiting on it. A rule whose own first application is an exception to the "do it yourself"
+case above should say so rather than pretend it was dispatched for the reasons in the list.
+
 ## Sizing — one line, and it is a model
 
 State the band and the reason before spawning, so a wrong call is visible rather than
@@ -70,6 +102,10 @@ buried in a spawn.
 **When in doubt go up a band.** This repo's expensive failures are silent ones — a guard
 that inspects nothing, a fix present and inert — and those are not caught by a cheaper
 model working harder.
+
+**Cost is the hard number underneath "do not dispatch trivia."** Sessions in this repo
+have run into the hundreds of dollars. That is not a hypothetical to be weighed against
+convenience — it is why "when not to dispatch" above is a real gate and not a formality.
 
 ## The one CI slot
 
@@ -148,13 +184,46 @@ prompt that carries what the child must not discover for itself:
 - its branch name, and that it works only there;
 - its migration number, or that it takes none;
 - **do not write `CLAUDE.md` or the three other main-lane docs**;
-- **do not push, and do not open a PR, until told** — report ready and stop;
+- **never open a PR, under any circumstances** — that is the orchestrator's job, after
+  Fable has checked the claims that will go in it;
+- **push when done**, unless this child is queued behind another child that currently
+  holds the slot — in that case, report ready and wait instead (see below);
 - read `docs/LANES.md` and the parts of `CLAUDE.md` that bear on its files;
 - `NODE_USE_ENV_PROXY=1` is needed for anything reaching Supabase or a portal, **including
   every stage of `npm run verify`** — a bare `npm test` fails 190 suites with a message
   that impersonates an egress revocation.
 
+**Push is conditional; not opening a PR is absolute.** With the CI slot held from spawn —
+the single-child case, and the common one — the child should commit and push as soon as
+it is done. Holding it back buys nothing: a push to a branch with no PR open yet fires
+exactly one CI run, not the push/`pull_request` twin (that only appears once step 6 opens
+the PR). "Wait to push until told" earns its keep only when several children are queued
+behind one slot, which is rare enough that it should be named explicitly in the spawn
+prompt rather than assumed. **"Never open a PR" has no such exception** — that rule is
+about who is allowed to write the claims that go in front of the reader, not about CI
+load, and it holds whether the child is first in the queue or last.
+
+A cloud child cannot answer back (see "What the tools actually do" above), so wherever a
+child is told to wait, "until told" has to mean a fire-and-forget `SendMessage` followed
+by polling **origin for the branch** — `git fetch origin claude/<topic>` — never polling
+the child for a reply it cannot send.
+
+**Unmeasured, worth reading once:** whether a CCR child pushes its branch automatically at
+the end of its turn regardless of what the prompt said. `create_session` takes an
+`outcome_branch` parameter whose description says the session "pushes directly to this
+branch," and a session's `session_context.outcomes[].git_repository.git_info.branches`
+records what actually landed. If a child pushes either way, "wait to push until told" was
+never enforceable, and the slot has to be held from spawn in every case rather than relied
+on as a gate the child observes. Record the answer here once it's checked, rather than
+guessing at it.
+
 Omit `environment_id` to inherit this one. Never pass `permission_mode: 'plan'`.
+
+**Set `title` and `tags` on every spawn**, not just the model and branch. `title` should
+name the child's topic and `tags` should mark it as this orchestrator's own (e.g. one tag
+naming this dispatch cycle). This is what makes `list_sessions {mine: true}` in a *fresh*
+session able to reconstruct the fleet — see "Clearing the orchestrator" — and it costs
+nothing to set at spawn time versus everything to reconstruct later from memory.
 
 **4. Wait.** Poll `get_session`. The wire format is the prefixed enum, not the bare words:
 
@@ -169,11 +238,23 @@ SESSION_STATUS_BUCKET_FAILED        its turn errored (plain `status` reads idle 
 `post_turn_summary.status_category` (`completed`, `need_input`) and `needs_action` say
 more. `session_context.outcomes[].git_repository.git_info.branches` is the join key to git.
 
+**Children draw on the same five-hour and seven-day rate limit as the orchestrator** — a
+fan-out can starve the session that spawned it, not just each other. A child whose
+`post_turn_summary.status_category` reads `failed` with a rate-limit message in the detail
+is **not a defect in the work**; it is the quota, shared. The right response is to wait
+and resume it, not to re-dispatch the same task at another child and burn twice the quota.
+
 **A child that finishes cleanly does not report back** — you only get a
 `<child-session-event>` on failure or worker restart. So completion is polled, never
 waited on. Poll with `send_later` or a backgrounded sleep sized to the task; **never a busy
 loop**, and never a "are you done?" message. **`BLOCKED` is the state that never resolves
 itself**; treating it as "still working" waits forever.
+
+**Bound the wait on a child that is neither.** After roughly 45 minutes of `WORKING` with
+**no branch on origin** (`git fetch origin claude/<topic>` finds nothing), `interrupt_session`
+and inspect rather than continuing to poll. The branch is the evidence, not the bucket —
+`get_session` can report `WORKING` indefinitely on a wedged child, but a fetch that finds
+nothing means it has pushed nothing, whatever its status claims.
 
 **5. Verify — Fable, as a subagent.** Not another cloud session: `Agent` takes
 `model: "fable"`, runs in this checkout with fresh context, and costs no clone and no
@@ -267,4 +348,45 @@ events and are reported as such — not as a defect in the work.
 State what you left behind: children spawned and their state, which were archived and
 which are still live, branches pushed, PRs opened, worktrees removed, and whether the CI
 slot is free. If a child is still running or blocked,
-lead with that — a blocked child is invisible unless somebody says so.
+lead with that — a blocked child is invisible unless somebody says so. **This report is
+the handover** — see "Clearing the orchestrator" below for why it has to be, and not only
+at the end of a session.
+
+## Clearing the orchestrator
+
+This recurs, so it belongs here rather than being re-answered each time it comes up: the
+orchestrator holds no state that is not also in a file, a branch, a PR or a session id.
+That is what makes clearing it free at any moment, not just at the end of a cycle.
+
+| what looks like orchestrator state | where it actually lives |
+| --- | --- |
+| which children exist | `list_sessions {mine: true}` |
+| what each one produced | its branch on origin |
+| decisions and findings | the PR body, then `CLAUDE.md` |
+| whether the CI slot is free | visible from open PRs and pushed branches |
+
+Nothing here needs the orchestrator's own context to survive — which is exactly why the
+"state what you left behind" line in Reporting exists: **every report is already a
+handover**, whether or not a clear is imminent.
+
+**For this to hold, children have to be findable after a clear.** Give every spawned
+child a `title` naming its topic and a `tags` entry marking it as this orchestrator's
+(step 3). Without that, `list_sessions {mine: true}` in a fresh session cannot
+reconstruct the fleet, and the claim that the orchestrator is freely clearable is just a
+claim, not a mechanism anyone could rely on.
+
+**When to clear:**
+
+- **After a dispatch cycle closes** — the PR merged or abandoned, its findings folded into
+  `CLAUDE.md`. This is the natural seam and it costs nothing.
+- **At roughly 70% of context** (`get_session` → `external_metadata.context_usage`),
+  before the harness compacts for you. A compaction summary is lossier than a handover
+  written on purpose.
+- **Never mid-flight with a child unaccounted for.** Write the handover first, even if
+  that means reporting before the child has finished.
+
+**The owner's process:** take the handover from the end of a cycle (or ask for one if it
+wasn't given), check nothing is owed, clear, and open the new session by reading
+`CLAUDE.md`'s Open block and `list_sessions {mine: true}`. A correctly-run orchestrator can
+be reconstructed from the repo and the session list alone. If it cannot, something was
+held only in context, and that is the bug — not a reason to avoid clearing.
