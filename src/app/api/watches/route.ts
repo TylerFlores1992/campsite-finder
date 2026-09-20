@@ -7,6 +7,7 @@ import { getOpeningRate } from '@/lib/likelihood';
 import { manageTokenFor, manageLink } from '@/lib/notifications/actions';
 import { WATCH_LIMIT, MAX_DIVISIONS_PER_WATCH } from '@/lib/limits';
 import { cleanSiteIds } from '@/lib/watch-mutes';
+import { FIRST_COME_WHY } from '@/lib/booking-policy';
 import { currentUserIsAdmin } from '@/lib/admin';
 import type { CampflareDateRange } from '@/lib/campflare/types';
 
@@ -203,10 +204,62 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
+  /**
+   * A CAMPGROUND THAT TAKES NO RESERVATIONS CANNOT BE WATCHED, AND THIS IS WHERE IT IS
+   * ENFORCED (2026-09-20).
+   *
+   * A watch on a first-come campground can never fire: there is no booking, so there is
+   * no cancellation, and the poller would find nothing for the life of the watch with
+   * nothing anywhere saying why. The three client surfaces withhold the offer — see
+   * `@/lib/booking-policy` — but THE CLIENT SENDS THE POST, so a hidden offer is not a
+   * gate. Same argument the watch cap above makes for itself, and the same one the
+   * auto-cart entitlement makes six times over: check it where it would be spent.
+   *
+   * **97 watches already exist on non-reservable campgrounds, two of them ACTIVE**
+   * (measured 2026-09-20, all on one rec.gov campground). This is create-only and
+   * touches none of them.
+   *
+   * DROPS RATHER THAN REFUSES, WHEN ANYTHING SURVIVES. 33 parks are MIXED — a reservable
+   * division beside first-come ones — so refusing the whole request would withhold a
+   * watch somebody can really use. The unwatchable parts fall out and the rest proceeds,
+   * exactly as the `watch_campgrounds` insert below already drops hidden rows.
+   *
+   * ONLY A POSITIVE `NOT reservable` DROPS ANYTHING. An id the catalog has never heard
+   * of is left alone: it behaves as it did before this check existed, because "we could
+   * not find out" is not "it cannot be booked". A failed query does nothing at all for
+   * the same reason — a DB blip must not cost a user a watch on a real campground.
+   */
+  let watchableIds = requested;
+  try {
+    const fcfs = await query<{ id: string }>(
+      `SELECT id FROM campgrounds WHERE id = ANY($1::text[]) AND NOT reservable`,
+      [requested],
+    );
+    if (fcfs.length > 0) {
+      const blocked = new Set(fcfs.map((r) => r.id));
+      watchableIds = requested.filter((id) => !blocked.has(id));
+      if (watchableIds.length === 0) {
+        // 422 AND NOT 409, WHICH IS NOT A STYLE CHOICE. The client's 409 branch turns
+        // ANY 409 into the watch-limit sentence without reading the body, so a 409 here
+        // would tell someone they had hit a cap they are nowhere near — two different
+        // facts collapsed into one reading, which is this repo's most-repeated failure.
+        // 422 falls through to the generic handler, which already surfaces `message`,
+        // so the real sentence reaches the user with no client change at all.
+        return NextResponse.json(
+          { error: 'not_reservable', message: FIRST_COME_WHY },
+          { status: 422 },
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[watches] could not check the booking policy:', (err as Error).message);
+  }
+
   // The representative is the FIRST requested id, and it must be one of them — a
   // representative outside the set would name the watch after a campground it does not
-  // actually watch.
-  const primaryId: string = requested[0];
+  // actually watch. It is taken from the WATCHABLE set, or a mixed park would be named
+  // after a division the watch deliberately does not cover.
+  const primaryId: string = watchableIds[0];
 
   /**
    * SITES MUTED AT CREATION (2026-08-15).
@@ -341,13 +394,13 @@ export async function POST(request: NextRequest) {
   // instead of the four the user asked for, and nothing downstream could tell. Better to
   // fail the request and let them retry than to create a watch that quietly does less
   // than it says. The watch row is removed again so a retry is clean.
-  if (requested.length > 1) {
+  if (watchableIds.length > 1) {
     try {
       await mutate(
         `INSERT INTO watch_campgrounds (watch_id, campground_id)
          SELECT $1, c.id FROM campgrounds c WHERE c.id = ANY($2::text[]) AND NOT c.hidden
          ON CONFLICT DO NOTHING`,
-        [row.id, requested],
+        [row.id, watchableIds],
       );
     } catch (err) {
       await mutate(`DELETE FROM watches WHERE id = $1`, [row.id]).catch(() => {});

@@ -24,6 +24,22 @@ import { query } from '@/lib/db/client';
  * of the grouping work: 425 rows are hidden (183 shelters, 127 day-use areas, visitor
  * centres, a golf course), and the picker was offering them as campgrounds to watch.
  * `/api/search` already excludes them.
+ *
+ * ── EACH DIVISION CARRIES `reservable`, AND NOTHING IS FILTERED HERE (2026-09-20) ────
+ * A first-come campground cannot be watched — there is no booking, so there is no
+ * cancellation — and the New watch picker was offering 678 of them. It filters them out
+ * itself, using `watchable()` from `@/lib/booking-policy`, which is the one definition
+ * the three watch surfaces share.
+ *
+ * **THE FILTER IS DELIBERATELY NOT IN THIS QUERY**, because this route has two consumers
+ * and they want opposite things: `components/v2/geo.ts` feeds EXPLORE's location box,
+ * where a first-come campground must still be findable — it is a real place with a real
+ * page, and Explore's whole job this week is to badge it rather than hide it. A route
+ * that answered only one caller's question would have made the other one wrong silently.
+ *
+ * **PER DIVISION AND NOT PER PARK: 33 parks are MIXED** — a reservable division beside
+ * first-come ones (Williams Lake, Black Bear, McFarland …). A park-level flag would hide
+ * all 33 from the picker, taking a bookable campground with it.
  */
 
 /**
@@ -41,6 +57,8 @@ const PARK_EXPR = `CASE WHEN c.name ~ '[—–]'
 interface Division {
   id: string;
   name: string;
+  /** Does this division take reservations? Added 2026-09-20 — see the header. */
+  reservable: boolean;
 }
 
 interface ParkRow {
@@ -91,7 +109,8 @@ export async function GET(request: NextRequest) {
                 (array_agg(c2.address->>'state' ORDER BY c2.name))[1] AS state,
                 (array_agg(ST_Y(c2.location::geometry) ORDER BY c2.name))[1] AS latitude,
                 (array_agg(ST_X(c2.location::geometry) ORDER BY c2.name))[1] AS longitude,
-                json_agg(json_build_object('id', c2.id, 'name', c2.name) ORDER BY c2.name) AS divisions
+                json_agg(json_build_object('id', c2.id, 'name', c2.name, 'reservable', c2.reservable)
+                          ORDER BY c2.name) AS divisions
            FROM campgrounds c2
           WHERE NOT c2.hidden
             AND c2.source = h.source

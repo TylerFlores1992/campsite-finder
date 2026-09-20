@@ -398,8 +398,20 @@ test('the default selection is capped, and the cap is enforced before submit', (
     'the "All" button selects every division uncapped, so pressing it on a large park ' +
       'produces a selection the server will refuse',
   );
+  // ANCHORED ON THE RULE, NOT ON ADJACENCY (re-anchored 2026-09-20). This read
+  // `/tooManyDivisions \|\| gate/` — the two tokens side by side — and broke the day a THIRD
+  // term (`firstCome`) was added between them, over behaviour that had not moved at all. The
+  // property is "the flag gates the submit control", so that is what it asserts: the flag is
+  // computed, and it appears inside a `disabled={…}` expression. A missing anchor fails
+  // LOUDLY rather than passing vacuously, which is the half that makes a re-anchor safe.
+  assert.ok(/const tooManyDivisions =/.test(newWatch), 'the cap is never computed');
+  const disabledExprs = [...newWatch.matchAll(/disabled=\{([^}]*)\}/g)].map((m) => m[1]);
   assert.ok(
-    /const tooManyDivisions =/.test(newWatch) && /tooManyDivisions \|\| gate/.test(newWatch),
+    disabledExprs.length > 0,
+    'no disabled={…} expression in NewWatch — this guard is measuring nothing',
+  );
+  assert.ok(
+    disabledExprs.some((e) => /\btooManyDivisions\b/.test(e)),
     'nothing stops a submit over the cap client-side; a limit you can only discover by ' +
       'pressing the button reads as a bug',
   );
