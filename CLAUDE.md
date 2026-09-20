@@ -13136,6 +13136,57 @@ gap-bounded loop reinstated.
   `timeout` exits 124, which is a non-zero exit like any other failure; a suite that "fails" in
   60s and one that fails in 1s are different facts, and only the second is a guard.
 
+### A BETA TESTER'S "MANAGE BILLING" COULD NEVER WORK, ON BOTH SURFACES (#380, 2026-09-20)
+
+Reported by the owner: *"Manage billing on android app says we couldn't open the billing
+portal just now. Please try again shortly. Website does the same thing."* **Both, because
+both render the same decision** — one function, two callers, so a surface-by-surface hunt
+would have found the same bug twice.
+
+**THE CHAIN, READ IN SOURCE RATHER THAN GUESSED.** `users.is_beta` short-circuits
+`hasActiveSubscription` before any subscription row is read, so a beta tester reads as
+subscribed everywhere; `Settings.tsx` gates the manage control on `subscribed || unknown`
+and renders it; `manageDestination` saw `provider: null` and routed to the Stripe portal;
+`/api/stripe/portal` found no `stripe_customer_id` and 404'd; the client's only special
+case is `billing_profile_missing`, so everything else fell to the generic alert.
+**Confirmed against production:** `tylerflores1992@gmail.com` is `is_beta: true` with **no
+subscription row at all**. Five accounts carry `is_beta`.
+
+- **`provider` IS READ FROM THE LIVE ROW, SO `null` MEANS "NO ROW" AND NOT "THE WEB".** The
+  old reasoning was that migration 071 backfilled every pre-store row to `'stripe'` and
+  defaults the column to it, so a null must be a web subscriber. **The premise is true and
+  the conclusion does not follow:** a row always carries a provider, so a null is the
+  *absence of a row*, and a user with no row has no billing relationship to manage.
+- **IT WAS KNOWN AND FILED AS ACCEPTABLE, IN A COMMENT.** `/api/subscription/status` said
+  *"manageDestination treats a null provider as the web relationship, which is the
+  pre-existing behaviour for that user"*. **Pre-existing behaviour was a dead control** —
+  which is the shape this file records under every "fix present and inert" entry, inverted:
+  a defect present and documented.
+- **TWO PEOPLE ARE INSIDE THAT ARM AND THEY NEED OPPOSITE THINGS**, which is why the fix is
+  a new field rather than a flipped default. A **beta tester** has never paid us anything
+  and has no portal to open; a **lapsed web subscriber** still has a Stripe customer on
+  file, and `/api/stripe/portal` queries the newest row of any status, so the portal is
+  exactly right for them.
+- **`stripeProfile` IS THREE-VALUED AND ONLY AN EXPLICIT `false` MOVES ANYBODY.** `true` = a
+  Stripe customer exists somewhere; `false` = none anywhere; **`null` = NOT REPORTED, and
+  keeps the old behaviour.** Guessing `false` would tell a real paying subscriber their
+  subscription is not billed — the absent-reading-as-a-negative shape, on a billing screen.
+  Answered in the round trip the status route already made (one query, two `EXISTS`).
+- **`not-billed` IS DELIBERATELY NOT THE UNKNOWN ARM WITH DIFFERENT WORDS.** *Unknown* means
+  we could not look; *this* means we looked and there is nothing there. It says nobody is
+  billing them and offers support, and **must never claim the user has no subscription** —
+  it is reached BY a subscriber, and a guard bans that copy.
+- **THE TEST THAT PINNED THE BUG IS INVERTED WITH THE REASON WRITTEN IN**, not relaxed — it
+  required `provider: null` to route to the portal, which is the dead control. The
+  `held-offer-scope` shape for the fourth time. Added: both people inside the null arm, the
+  not-reported case keeping the old behaviour, and **a structural check that the field
+  survives the whole chain** (the route asks, the hook passes it through with `?? null` and
+  never `?? false`) — `manageDestination` can be perfect and never fire if the value never
+  arrives, with every behavioural test still green.
+- **NO POLLER RESTART.** `src/lib/subscription-management.ts`, `src/app/api/subscription/**`
+  and `src/components/**` are in NEITHER of `worker-deploy.yml`'s `paths:` lists — read, not
+  recalled.
+
 ### GOOGLE CLOUD CANNOT CHARGE US, AND THE HEALTH ROUTE HAD SAID SO ALL ALONG (2026-09-16, folded 2026-09-20)
 
 Folded from `docs/NOTES-claude-camphawk-side-lane-status-iij2xm.md`, which sat **four days
