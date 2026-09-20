@@ -13147,6 +13147,33 @@ in `docs/PLAY-STORE.md` §0e (the side lane's file); what belongs here is the sh
 
 ## Open / next session
 
+#### 2026-09-20 (evening) — THE OTHER SESSION DOES NOT HOLD THE APPLE REJECTION, AND IT CHECKED
+
+The owner's instruction was *"The other session already has the resolution center message and was
+working on the crashing app that caused the rejection. Find it."* **It was found, it was asked,
+and the answer is that it holds neither.** Its own words, published as an artifact rather than
+relayed:
+
+> I do not hold the Resolution Center message. This session has no prior record of it, of any
+> CampHawk repository, or of any crash diagnosis.
+
+- **IT GREPPED ITS OWN TRANSCRIPT RATHER THAN ANSWERING FROM MEMORY, which is what makes the
+  negative worth anything.** Every occurrence of `Resolution Center`, `Guideline`, `crash` and
+  `iPad` in its 38-line transcript traces to **the request text itself**, timestamped
+  `2026-09-20T20:48:06Z` — i.e. my own prompt arriving. `/home/user` is empty and not a git
+  repository; a filesystem-wide search for `*camphawk*` found nothing.
+- **SO THE REJECTION WORDING THIS REPO CARRIES CAME FROM A SPAWN PROMPT, NOT FROM APP STORE
+  CONNECT**, and nobody here has read the letter. **Do not quote a guideline number for this
+  round as if it were read off ASC** — the only authority is the console, and no session can
+  open it.
+- **THE CRASH HALF IS DONE ANYWAY AND DID NOT NEED THAT SESSION.** The iOS camera-termination
+  fix merged as **#378 (`35bed0d`)** — three purpose strings plus an IPA read — so "was working
+  on the crashing app" describes work that has already landed on master.
+- **AND IT IS THE HOUSE SHAPE AT THE SESSION LAYER: "another session has it" IS A CLAIM, AND A
+  FRESH CONTAINER ANSWERS IT INDISTINGUISHABLY FROM A SESSION THAT LOST IT.** Both produce "I
+  have nothing." The discriminator is the transcript grep it ran, which separates *never had it*
+  from *had it and cannot find it*. **Ask for that, not for the content.**
+
 #### 2026-09-20 (evening) — A CHILD CANNOT PUSH, THE FIX WORKS, AND PROVING IT COSTS A CI RUN
 
 Three children finished real work on 2026-09-20 and **not one line of it reached origin.** Each
@@ -13208,6 +13235,32 @@ Status: STOPPED — wrong machine · re-confirmed on a follow-up trigger, same s
   `trig_01EuXNJ1qVcSPzHA6VZ7mN12` fired at 06:37:56 into `cse_018gBCueqpd49GzNA8V4Y3QG`.
 - **THE OWNER ACTION IS ONE COMMAND, ON THE WINDOWS MACHINE, FROM A PLAIN FOLDER:**
   `claude --chrome --remote-control "camphawk-qa"`. Nothing in this repo can substitute for it.
+- **NARROWED THE SAME EVENING, AND IT IS THE SECOND READING: THE ROUTINE ANSWERED, THE BRIDGE
+  SESSION DID NOT.** The owner ran a fix on the machine and the routine was fired again; the
+  re-run is **byte-for-byte the first one** (`Unknown skill: chrome`, `uname: Linux vm
+  6.18.44-fc-v37`, `pwd: /home/user`, no Chrome binary), and it says so itself: *"re-run #2,
+  fired by scheduled trigger after owner reported a machine fix ... identical result to the
+  first run — confirms this is structural, not a transient glitch a restart would clear."*
+  **A fix applied to the box cannot change what a cloud container sees**, so an unchanged
+  reading after a real machine-side fix is evidence about WHICH MACHINE ANSWERED, not about
+  the fix.
+- **AND THE SESSION RECORD IS WHAT RETIRES THE FIRST READING, because it is not the session's
+  own claim about itself.** `get_session` on `session_018gBCueqpd49GzNA8V4Y3QG` reads
+  `environment_kind: "bridge"`, `connection_status: "connected"`, `origin: "claude_code_cli"`
+  — so a bridge session exists, is live, and was started from a CLI. **A bridge session is on
+  the owner's machine by definition**, so "the bridge session is not actually on the box" is
+  out, and what is left is that the routine's firing landed somewhere else.
+- **THE DISCRIMINATOR IS THE `cse_<suffix>`, AND IT IS FREE.** `fire_trigger` returns a
+  session id; a delivery into a bound session returns `cse_<the same suffix>` as the
+  `session_<suffix>` it was bound to. A mismatch means a FRESH cloud session was spawned and
+  the bound one never woke. **Read that suffix before believing a fired session is the one you
+  aimed at** — the artifact it publishes will describe a machine, and a fresh container
+  describes a real machine perfectly accurately while being the wrong one.
+- **DO NOT READ AN ARTIFACT'S `pwd` AND `uname` AS A FAULT ON THE BOX.** They are a correct
+  description of whatever answered. Two `qa-box-report-2026-09-20` artifacts now exist and
+  both describe a Firecracker cloud sandbox; neither is a reading about the Windows machine,
+  and quoting either as "the QA box has no Chrome" would be the absent-reading-as-a-negative
+  shape one layer out.
 - **AND UNTIL IT RUNS, "verified in the app" IS NOT AVAILABLE TO A SESSION.** Two items are
   waiting on exactly that — the Manage-billing fix and the Explore badges — and reporting either
   as checked without it would be the 2026-08-22 shape: the artefact correct and the thing handed
