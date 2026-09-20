@@ -16,8 +16,21 @@ export async function GET() {
   await syncUser(userId);
   const active = await hasActiveSubscription(userId);
   // everSubscribed drives trial vs "resubscribe" copy (returning users get no new trial).
-  const prior = await queryOne<{ id: string }>(
-    'SELECT id FROM subscriptions WHERE user_id = $1 LIMIT 1',
+  //
+  // AND `stripeProfile` RIDES THE SAME ROUND TRIP, because it answers a question
+  // `provider` (below) structurally cannot. `provider` comes from the ACTIVE/TRIALING row,
+  // so a null there covers both a beta tester who has never paid us anything and a lapsed
+  // web subscriber whose Stripe customer is still on file. `/api/stripe/portal` looks up
+  // the newest row of ANY status, so it opens for the second and 404s for the first — and
+  // until 2026-09-20 `manageDestination` sent both to it, which is how every beta account
+  // got a "Manage billing" button that answered with an error. One EXISTS per fact, one
+  // query, no extra hop.
+  const prior = await queryOne<{ ever: boolean; stripe_profile: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM subscriptions WHERE user_id = $1) AS ever,
+            EXISTS (
+              SELECT 1 FROM subscriptions
+               WHERE user_id = $1 AND stripe_customer_id IS NOT NULL
+            ) AS stripe_profile`,
     [userId]
   );
   // autocart = may this user use auto-cart (Auto-Cart tier, grandfathered, or beta).
@@ -49,10 +62,14 @@ export async function GET() {
   );
   return NextResponse.json({
     active,
-    everSubscribed: !!prior,
+    everSubscribed: prior?.ever === true,
     autocart,
     autocartPlanAvailable: autocartPlanConfigured(),
     provider: billing?.provider ?? null,
     tier: billing?.tier ?? null,
+    // NULL RATHER THAN false IF THE QUERY GAVE US NOTHING. `manageDestination` moves a
+    // user off the portal only on an explicit `false`, so an absent reading keeps the
+    // old destination instead of telling a real subscriber they are not billed.
+    stripeProfile: prior ? prior.stripe_profile === true : null,
   });
 }
