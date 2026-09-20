@@ -28,6 +28,22 @@
 // AND unless the address the fixture echoes back into a button label has been redacted out of
 // it.  Both directions: delete the census and it fails, delete the redaction and it fails.
 //
+// A THIRD ARM, ADDED LATER THE SAME DAY.  The census was aimed one step past the failure.
+// Watching the streamed window the owner reported "brings me to the home screen … Never
+// entering a email or password", which is not a second step and not a challenge: it is the
+// address going into recreation.gov's NEWSLETTER form, the Enter that follows submitting
+// THAT, and the page navigating away from the modal.  `newsletter` below is that shape, and
+// it is the case the fix is for — a VISIBLE `input[name=email]` before the modal, which
+// `:visible` alone cannot tell from the login box.  The control matters more here than
+// anywhere: `legacyFill` must FAIL on it, and it must fail for the NEW reason rather than the
+// hidden-input one, or the fixture is reproducing the bug that was already fixed.
+//
+// `plainModal` is the FALLBACK's arm.  Scoping the fields to `[role="dialog"]` is only safe
+// because a scope that matches nothing falls through to the page-wide selector, and a
+// fallback nothing exercises is a fallback that has never run.  `framed` is the other
+// reading — the form inside an iframe, which `page.locator()` cannot reach at all — and it
+// asserts the refusal NAMES the frame rather than reporting an empty page.
+//
 // IT TOUCHES NO CREDENTIAL AND NO REAL HOST.  A local http server, a synthetic email and a
 // synthetic password, and nothing is ever printed but a boolean for whether they arrived.
 //
@@ -50,22 +66,37 @@ const PASSWORD = 'probe-password-not-a-secret';
 // ---------------------------------------------------------------- the fixture
 // `hidden` places the trap: a hidden input[name=email] BEFORE the modal, which is the one
 // fact the production log establishes about rec.gov's markup.
-const page = ({ hidden = true, twoStep = false, opener = true, slowModal = 0, noPassword = false }) => `<!doctype html>
+const page = ({ hidden = true, twoStep = false, opener = true, slowModal = 0, noPassword = false,
+                newsletter = false, plainModal = false, framed = false }) => `<!doctype html>
 <meta charset="utf-8"><title>rec.gov fixture</title>
 <body>
 ${hidden ? '<form id="newsletter"><input type="hidden" name="email" value=""></form>' : ''}
+${newsletter ? `<form id="newsletter" action="/subscribe">
+  <input type="email" name="email" id="nl-email" placeholder="Get deals in your inbox">
+  <button type="submit">Sign up</button>
+</form>` : ''}
 <header>${opener ? '<button id="opener" type="button">Sign Up / Log In</button>' : '<span>no control here</span>'}</header>
+${framed ? '<iframe src="/frame" title="Sign in" width="400" height="300"></iframe>' : ''}
 <div id="modal"></div>
 <script>
-window.__got = { email: null, password: null, submitted: false };
+window.__got = { email: null, password: null, submitted: false, newsletter: null };
+${newsletter ? `document.getElementById('newsletter').addEventListener('submit', (e) => {
+  e.preventDefault();
+  // What the owner watched: the newsletter takes the address and the page goes back to the
+  // home screen, taking the modal — and the password field — with it.
+  window.__got.newsletter = document.getElementById('nl-email').value;
+  document.getElementById('modal').innerHTML = '';
+  document.body.insertAdjacentHTML('beforeend', '<p>Thanks for subscribing.</p>');
+});` : ''}
 function mountModal() {
   const m = document.getElementById('modal');
   if (m.firstChild) return;                       // a real modal toggles; ours opens once
-  m.innerHTML = \`<div role="dialog">
+  m.innerHTML = ${plainModal ? '\`<form id="loginform">' : '\`<div role="dialog">'}
       <input id="em" type="email" name="email" autocomplete="username">
       \${${twoStep || noPassword} ? '' : '<input id="pw" type="password" name="password" autocomplete="current-password">'}
-      <button id="go" type="button">Log In</button>
-    </div>\`;
+      ${plainModal ? '<button id="go" type="submit">Log In</button>' : '<button id="go" type="button">Log In</button>'}
+    ${plainModal ? '</form>' : '</div>'}\`;
+  ${plainModal ? `document.getElementById('loginform').addEventListener('submit', (e) => e.preventDefault());` : ''}
   document.getElementById('go').addEventListener('click', () => {
     window.__got.email = document.getElementById('em').value;
     const pw = document.getElementById('pw');
@@ -78,7 +109,7 @@ function mountModal() {
       // The step after the email, with NO password field anywhere — which is what the box
       // logged on 2026-09-20. The button label carries the address on purpose: the probe
       // asserts it does not survive into the refusal.
-      document.querySelector('[role=dialog]').innerHTML =
+      document.querySelector('[role=dialog], #loginform').innerHTML =
         '<div role="alert">We sent you something</div>'
         + '<input id="code" type="text" name="code" placeholder="Enter the code we sent">'
         + '<button type="button">Continue as ' + ${JSON.stringify(EMAIL)} + '</button>'
@@ -91,12 +122,22 @@ function mountModal() {
       if (document.getElementById('pw')) return;
       const pw = document.createElement('input');
       pw.id = 'pw'; pw.type = 'password'; pw.name = 'password'; pw.autocomplete = 'current-password';
-      document.querySelector('[role=dialog]').insertBefore(pw, document.getElementById('go'));
+      document.querySelector('[role=dialog], #loginform').insertBefore(pw, document.getElementById('go'));
     }, 400);
   });` : ''}
 }
 ${opener ? `document.getElementById('opener').addEventListener('click', () => ${slowModal ? `setTimeout(mountModal, ${slowModal})` : 'mountModal()'});` : ''}
 </script>`;
+
+// What `framed` puts INSIDE the iframe. Same-origin on purpose: Playwright does not pierce
+// an iframe whatever its origin, so a same-origin one reproduces (b) exactly while keeping
+// the fixture to one server.
+const FRAME_DOC = `<!doctype html><meta charset="utf-8"><body>
+<div role="dialog">
+  <input id="em" type="email" name="email" autocomplete="username">
+  <input id="pw" type="password" name="password" autocomplete="current-password">
+  <button id="go" type="button">Log In</button>
+</div>`;
 
 // `must` / `mustNot` are asserted against the REFUSAL, and they are the whole reason the
 // fifth case is worth running: a refusal that merely fails proves the field is absent, which
@@ -128,6 +169,39 @@ const CASES = [
       new RegExp(EMAIL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),  // the address itself
       /Enter the code we sent/,                        // the placeholder's TEXT
       /We sent you something/,                         // the page's own copy
+    ],
+  },
+  {
+    // THE CASE THE 2026-09-20 FIX IS FOR. A visible newsletter email box ahead of the modal,
+    // and `:visible` alone cannot tell it from the login box. `hidden: false` on purpose: the
+    // hidden input would make `legacyFill` fail for the OLD reason and the control would then
+    // prove nothing about this one.
+    name: 'a VISIBLE newsletter email box ahead of the modal (the 2026-09-20 report)',
+    opts: { newsletter: true, hidden: false },
+    expect: 'pass',
+    // The address must reach the LOGIN form and not the newsletter — a run that merely
+    // "passed" while also subscribing the user would be the bug half-fixed.
+    wrongForm: false,
+  },
+  {
+    // THE FALLBACK'S OWN ARM. A modal with no `role="dialog"` anywhere: the scoped selector
+    // matches nothing and the page-wide one has to carry it, which is what shipped before.
+    name: 'a modal with NO [role="dialog"] (the fallback has to carry it)',
+    opts: { plainModal: true },
+    expect: 'pass',
+  },
+  {
+    // (b): the form is in an iframe, where `page.locator()` cannot reach it. The refusal must
+    // NAME the frame — reporting an empty page here is what would send the next reader after
+    // a modal that was never going to open.
+    name: 'the login form is inside an IFRAME (page.locator cannot see it)',
+    opts: { framed: true, opener: false, hidden: false },
+    expect: 'fail',
+    must: [
+      /no VISIBLE recreation\.gov email field/,
+      /email inputs on the page: 0 match\(es\)/,
+      /frames: 1 — http:\/\/127\.0\.0\.1:\d+\/frame/,   // the reading that separates (b) from (a)
+      /NO \[role="dialog"\] on the page/,                 // …and the one that rules (a) out
     ],
   },
 ];
@@ -162,7 +236,7 @@ async function legacyFill(p, email, password) {
 let opts = {};
 const srv = http.createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(page(opts));
+  res.end(req.url?.startsWith('/frame') ? FRAME_DOC : page(opts));
 });
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -187,9 +261,13 @@ async function run(fill, caseOpts) {
   return {
     ok: !err && !!got?.submitted && got.email === EMAIL && got.password === PASSWORD,
     err,
+    // WHETHER THE WRONG FORM GOT IT, which is the whole of the 2026-09-20 reading and which
+    // a pass/fail cannot carry: a run can refuse AND have subscribed the user on the way.
+    wrongForm: !!got && got.newsletter !== null,
     // Booleans only. The values are synthetic, and printing them anyway would make this the
     // kind of diagnostic that has to be filtered later.
-    detail: got ? `submitted=${got.submitted} email=${got.email === EMAIL} password=${got.password === PASSWORD}` : 'no page state',
+    detail: got ? `submitted=${got.submitted} email=${got.email === EMAIL} password=${got.password === PASSWORD}`
+      + (got.newsletter !== null ? ' WRONG-FORM=the newsletter got it' : '') : 'no page state',
   };
 }
 
@@ -206,6 +284,9 @@ for (const c of CASES) {
   const bad = [];
   for (const re of c.must ?? []) if (!now.err || !re.test(now.err)) bad.push(`never says ${re}`);
   for (const re of c.mustNot ?? []) if (now.err && re.test(now.err)) bad.push(`LEAKS ${re}`);
+  // A pass that also subscribed the user is not a pass. Checked on every case, not only the
+  // one that asks for it — any fixture carrying a newsletter form is entitled to this.
+  if (c.wrongForm === false && now.wrongForm) bad.push('put the address in the WRONG FORM');
   const good = now.ok === want && bad.length === 0;
   if (!good) failures += (now.ok === want ? 0 : 1) + bad.length;
   console.log(`${good ? 'OK  ' : 'FAIL'} shipped   ${c.name}`);
@@ -214,19 +295,68 @@ for (const c of CASES) {
   if (!want && now.err) console.log(`         refusal reads: ${now.err}`);
 }
 
-console.log('\n--- CONTROL: the selector that shipped before 2026-09-18 ---');
-const legacy = await run(legacyFill, {});
-console.log(`${legacy.ok ? 'FAIL' : 'OK  '} legacy    one-step modal, hidden input[name=email] first`);
-console.log(`         ${legacy.ok ? 'it PASSED — the fixture does not reproduce the bug, so the run above proves nothing' : `refused: ${legacy.err}`}`);
-if (legacy.ok) failures++;
-// The exact production symptom, or the fixture is reproducing something else.
-if (!legacy.ok && !/resolved to hidden/.test(legacy.err ?? '')) {
-  failures++;
-  console.log('         FAIL — it refused for a DIFFERENT reason than the box logged');
+// ONE CONTROL PER BUG, and each must refuse for ITS OWN reason. A control that fails for the
+// previous bug's reason is a fixture reproducing something already fixed, which is the way a
+// rig comes to pass over the thing it was built for.
+const CONTROLS = [
+  {
+    name: 'one-step modal, hidden input[name=email] first',
+    opts: {},
+    // `legacyFill` is verbatim pre-2026-09-18. Against the hidden input it resolves to it.
+    reason: /resolved to hidden/,
+    because: 'the box logged "19 x locator resolved to hidden"',
+  },
+  {
+    name: 'a VISIBLE newsletter box ahead of the modal',
+    opts: { newsletter: true, hidden: false },
+    // With no hidden input, `legacyFill`'s RAW selector and the 2026-09-18 visible-only one
+    // pick the SAME element — the newsletter box — so this control speaks for both.
+    //
+    // NO `reason`, ON PURPOSE, and this is the finding the arm exists to pin: the old code
+    // does not throw here at all. It types the address into the newsletter, finds the
+    // modal's password (which IS visible), fills it, and then submits the NEWSLETTER —
+    // because `.first()` over a comma list resolves in document order and the old submit
+    // locator's third clause was an unscoped `form button[type="submit"]`. The user is
+    // returned to the home screen with nothing logged in and no error anywhere, which is
+    // the 2026-09-20 report word for word. So the evidence is `wrongForm`, below.
+    because: 'the address goes into the newsletter and the modal is navigated away',
+    notReason: /resolved to hidden/,
+    wrongForm: true,
+  },
+];
+
+console.log('\n--- CONTROLS: what shipped before each fix, against the bug it was for ---');
+for (const k of CONTROLS) {
+  const legacy = await run(legacyFill, k.opts);
+  console.log(`${legacy.ok ? 'FAIL' : 'OK  '} legacy    ${k.name}`);
+  if (legacy.ok) {
+    failures++;
+    console.log('         it PASSED — the fixture does not reproduce the bug, so the run above proves nothing');
+    continue;
+  }
+  // A CONTROL CAN FAIL WITHOUT THROWING, and the first version of this block could not say
+  // so: it printed `refused: null` and then complained the reason was wrong. The newsletter
+  // arm is exactly that shape — the old code completes, having typed into one form and
+  // submitted another — so the evidence there is the STATE, not a message.
+  console.log(`         ${legacy.err ? `refused: ${legacy.err}` : `did not throw — ${legacy.detail}`}`);
+  if (k.reason && !k.reason.test(legacy.err ?? '')) {
+    failures++;
+    console.log(`         FAIL — it refused for a DIFFERENT reason than ${k.because}`);
+  }
+  if (k.notReason && k.notReason.test(legacy.err ?? '')) {
+    failures++;
+    console.log(`         FAIL — it refused for the PREVIOUS bug's reason (${k.notReason}), so this fixture is not reproducing this one`);
+  }
+  // The positive half: the old code does not merely fail, it puts the address somewhere it
+  // does not belong. Without this the newsletter fixture would be satisfied by any refusal.
+  if (k.wrongForm && !legacy.wrongForm) {
+    failures++;
+    console.log('         FAIL — the address never reached the wrong form, so this fixture does not reproduce the report');
+  }
 }
 
 // A control that never reproduces the failure is the whole hazard, so say which way it went.
-console.log(`\n${failures ? `x ${failures} FAILURE(S)` : '+ the fix holds and the old selector still cannot'}`);
+console.log(`\n${failures ? `x ${failures} FAILURE(S)` : '+ the fix holds and neither old selector can'}`);
 await browser.close();
 srv.close();
 process.exit(failures ? 1 : 0);
