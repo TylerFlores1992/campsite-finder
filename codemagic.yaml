@@ -181,6 +181,95 @@ workflows:
               || /usr/libexec/PlistBuddy -c "Set :$KEY $DESC" ios/App/App/Info.plist
           done
           /usr/libexec/PlistBuddy -c "Print :NSLocationAlwaysAndWhenInUseUsageDescription" ios/App/App/Info.plist
+      - name: Add camera and photo library usage descriptions
+        # WHY THIS EXISTS: Apple rejected `1.0 (27)` on 2026-09-18 under Guideline 2.1(a)
+        # Performance, on submission e77ec119-c61f-4e2c-87d0-da4f98859958 — *"App crashed
+        # when we tapped on camera"*, iPad Air 11-inch (M3), iPadOS 27.0. iOS does not DENY
+        # a request made with no purpose string: it TERMINATES the process, with no dialog,
+        # no JS error and nothing on screen. To a reviewer that is a crash, and it is filed
+        # as one. Same TCC mechanism the location step above is written against.
+        #
+        # THE APP HAS NO CAMERA CODE AND STILL REACHES THE CAMERA, which is why this was
+        # missed for five submissions. There is no camera plugin in package.json, no
+        # getUserMedia / mediaDevices anywhere in src/, and exactly ONE `<input>` in the
+        # whole app — a hidden one. Every route below belongs to WKWebView and runs IN OUR
+        # PROCESS, so it is our Info.plist that is checked:
+        #
+        #   NSCameraUsageDescription           Clerk's account modal. V2Nav mounts
+        #     <UserButton> with custom <UserButton.MenuItems>, and Clerk still draws its own
+        #     "Manage account" beside them (see src/components/v2/SignOutConfirm.tsx's
+        #     header). That opens UserProfile -> profile image -> a file input, and iOS
+        #     offers "Take Photo" on it. `User.setProfileImage({ file: Blob | File })` is
+        #     first-class Clerk API. NOTE: clerk-js/@clerk/ui are fetched from Clerk's CDN
+        #     at RUNTIME (@clerk/shared/dist/loadClerkJsScript.mjs), so NOTHING IN THIS REPO
+        #     PINS what that modal renders — it can gain or lose controls with no commit
+        #     here. capacitor.config.ts also allowNavigation's *.clerk.accounts.dev and
+        #     accounts.camphawk.app, so the hosted account portal is in-webview too.
+        #
+        #   NSPhotoLibraryAddUsageDescription  Long-pressing a campground photo. WKWebView's
+        #     own image menu offers "Add to Photos", which writes to the library.
+        #     CampgroundDetail.tsx renders up to four <img> from the provider catalogs and
+        #     nothing sets -webkit-touch-callout: none, so this is live on every campground
+        #     page. A second, entirely separate termination route from the same family.
+        #
+        #   NSPhotoLibraryUsageDescription     The "Photo Library" branch of that same file
+        #     input. iOS 14+ serves it with PHPicker, which runs OUT of process and needs no
+        #     string — so this key is the one of the three that may never be read. It is set
+        #     anyway because WHICH picker appears is Apple's choice and not ours, and a
+        #     purpose string that is present and never read costs nothing. A guess about
+        #     Apple's picker internals that fails OPEN costs another rejection.
+        #
+        # ios/ is regenerated on every build (it is gitignored), so re-add them here —
+        # exactly the reason the location step above exists.
+        #
+        # THE STRINGS DESCRIBE WHAT THE APP ACTUALLY DOES. The location step makes this
+        # argument and it applies unchanged: nothing here opens the camera on its own, takes
+        # a picture in the background, or reads your library. Each one is reached only from a
+        # picker you opened yourself. Writing a broader justification would describe
+        # behaviour this app does not have.
+        #
+        # CONSIDERED AND REJECTED: hiding the Clerk avatar upload with an `appearance`
+        # element key (`avatarImageActionsUpload` IS typed in @clerk/react). It fails OPEN —
+        # a selector that stops matching on a Clerk release silently restores the crash,
+        # and Clerk's UI is CDN-loaded so that release needs no commit here. CSS also would
+        # not remove the file input from the DOM, and it does nothing about the long-press
+        # "Add to Photos" route. A string that is present and unused is harmless; a guarded
+        # selector that quietly stops matching is the next 2.1(a).
+        script: |
+          set -e
+          CAMERA="CampHawk opens the camera only when you choose to take a photo for your profile picture."
+          LIBRARY="CampHawk opens your photo library only when you choose a photo for your profile picture."
+          SAVE="CampHawk saves a photo to your library only when you ask to save a campground photo."
+
+          set_desc() {
+            # Add-or-Set, the location step's idiom. A failure HERE is deliberately not
+            # fatal on its own: under `set -e` it would abort the script before the
+            # verification loop below ever ran, and the build would go red with a bare
+            # non-zero from PlistBuddy and nothing saying which key or why. Verified by
+            # running this script body against a PlistBuddy stub told to refuse one key —
+            # it failed, correctly, and printed no explanation at all. The loop below is
+            # the single gate, so the red build always carries its cause.
+            /usr/libexec/PlistBuddy -c "Add :$1 string $2" ios/App/App/Info.plist \
+              || /usr/libexec/PlistBuddy -c "Set :$1 $2" ios/App/App/Info.plist \
+              || echo "could not write $1 here — the verification below decides"
+          }
+          set_desc NSCameraUsageDescription "$CAMERA"
+          set_desc NSPhotoLibraryUsageDescription "$LIBRARY"
+          set_desc NSPhotoLibraryAddUsageDescription "$SAVE"
+
+          # FAIL LOUDLY IF A KEY DID NOT LAND — and do it with an explicit `if`, not by
+          # relying on the shell aborting on a bare `Print` the way the location step does.
+          # Whether Codemagic runs these scripts under `set -e` by itself has never been
+          # read off a build log here (docs.codemagic.io is 403 at the agent proxy — the
+          # same honest limit the Android billing step writes down about `publishing:`).
+          # `set -e` is declared above AND the check does not depend on it.
+          for KEY in NSCameraUsageDescription NSPhotoLibraryUsageDescription NSPhotoLibraryAddUsageDescription; do
+            if ! /usr/libexec/PlistBuddy -c "Print :$KEY" ios/App/App/Info.plist; then
+              echo "FATAL: $KEY is not in ios/App/App/Info.plist after writing it."
+              echo "Shipping without it is the 2026-09-18 2.1(a) crash, again."
+              exit 1
+            fi
+          done
       - name: Enable Push Notifications capability
         # ios/ is regenerated each build, so the aps-environment entitlement must be
         # re-applied here. Write the entitlements file and point the App target's
@@ -269,6 +358,78 @@ workflows:
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
+      - name: Assert the purpose strings survived into the IPA
+        # THE ONLY STEP IN THIS WORKFLOW THAT READS WHAT APPLE ACTUALLY RECEIVES.
+        #
+        # Every plist step above verifies the file it just wrote. That is the WRITE half,
+        # and this repo has paid for the difference twice already: the demo password was
+        # verified POPULATED and never verified to WORK (08-14, Guideline 2.1), and the
+        # site-mute bug had its write half checked and its read half never exercised.
+        # What ships is the Info.plist Xcode copied into App.app, and until this step
+        # nothing had ever read it. That gap is what would let the camera fix be a SILENT
+        # NO-OP: a green build, an upload, and a sixth rejection for the identical reason.
+        #
+        # This is android-release's merged-manifest assertion one platform along. Same
+        # reasoning, same placement rule: the artifact is a BUILD OUTPUT, so this cannot
+        # run before the build.
+        #
+        # THE LOCATION KEYS ARE CHECKED TOO, ON PURPOSE. They have been written by the step
+        # above since build 15 (added for ITMS-90683) and NO BUILD LOG HERE HAS EVER
+        # CONFIRMED THEY REACH THE BINARY. If the PlistBuddy mechanism does not work, the
+        # camera keys do not work either — so this answers both questions in one build, and
+        # a red build now is cheaper than a sixth rejection.
+        #
+        # EXPECTED, NOT READ — the same honest limit the Android billing step states: that a
+        # failing script skips `publishing:`. This step does not need that to be true. If
+        # the upload happens anyway the build is still RED, which is the whole job: make a
+        # missing purpose string impossible to miss BEFORE a human presses Update Review.
+        script: |
+          set -e
+          cd ios/App
+          IPA=$(ls build/ios/ipa/*.ipa 2>/dev/null | head -1 || true)
+          if [ -z "$IPA" ]; then
+            echo "FATAL: no IPA under build/ios/ipa — this check could not read ANYTHING,"
+            echo "and 'we could not look' must never pass as 'we looked and it was fine'."
+            echo "Every .ipa the build did produce:"
+            find build -name '*.ipa' 2>/dev/null | head -20
+            exit 1
+          fi
+          WORK=$(mktemp -d)
+          # Single-level glob on purpose: Payload/App.app/Info.plist, never a framework's
+          # Payload/App.app/Frameworks/*.framework/Info.plist. The .app name is NOT
+          # hardcoded — capacitor.config.ts's appName sets CFBundleDisplayName, not the
+          # product name, and a hardcoded "App.app" would be an assertion that silently
+          # stops matching rather than one that fails.
+          unzip -o -q "$IPA" 'Payload/*/Info.plist' -d "$WORK" || true
+          PLIST=$(find "$WORK" -maxdepth 3 -path '*/Payload/*/Info.plist' 2>/dev/null | head -1)
+          if [ -z "$PLIST" ]; then
+            echo "FATAL: no Payload/*.app/Info.plist inside $IPA. Again: could not read,"
+            echo "not 'read and fine'. First 20 entries in the archive:"
+            unzip -l "$IPA" | head -20
+            exit 1
+          fi
+          echo "Reading the SHIPPED plist: $PLIST  (from $IPA)"
+          MISSING=""
+          for KEY in NSCameraUsageDescription \
+                     NSPhotoLibraryUsageDescription \
+                     NSPhotoLibraryAddUsageDescription \
+                     NSLocationWhenInUseUsageDescription \
+                     NSLocationAlwaysAndWhenInUseUsageDescription; do
+            if VALUE=$(/usr/libexec/PlistBuddy -c "Print :$KEY" "$PLIST" 2>/dev/null); then
+              echo "  ok       $KEY = $VALUE"
+            else
+              echo "  MISSING  $KEY"
+              MISSING="$MISSING $KEY"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "FATAL: the shipped Info.plist is missing:$MISSING"
+            echo "iOS TERMINATES the app the moment it touches one of these with no string."
+            echo "That is the 2026-09-18 Guideline 2.1(a) rejection — 'App crashed when we"
+            echo "tapped on camera'. DO NOT SUBMIT THIS BUILD."
+            exit 1
+          fi
+          echo "All five purpose strings are in the binary Apple will receive."
     artifacts:
       - ios/App/build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
