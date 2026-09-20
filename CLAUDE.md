@@ -13027,6 +13027,58 @@ gap-bounded loop reinstated.
   `timeout` exits 124, which is a non-zero exit like any other failure; a suite that "fails" in
   60s and one that fails in 1s are different facts, and only the second is a guard.
 
+### GOOGLE CLOUD CANNOT CHARGE US, AND THE HEALTH ROUTE HAD SAID SO ALL ALONG (2026-09-16, folded 2026-09-20)
+
+Folded from `docs/NOTES-claude-camphawk-side-lane-status-iij2xm.md`, which sat **four days
+unreferenced** — the fold-in obligation with no trigger, one more time. The console state is
+in `docs/PLAY-STORE.md` §0e (the side lane's file); what belongs here is the shape.
+
+- **WE USE GOOGLE CLOUD FOR EXACTLY TWO THINGS, both service accounts.** Firebase Cloud
+  Messaging (`src/lib/notifications/push.ts` → `fcm.googleapis.com/v1/projects/<id>/messages:send`,
+  minting an OAuth token from `FCM_SERVICE_ACCOUNT`), and the **Play Developer API** (a second
+  key in Codemagic as `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`, uploading every green
+  `android-release` AAB). **Play Console, Play Billing and Search Console are Google and are
+  NOT Cloud billing surfaces** — reaching for one of those consoles to answer a Cloud billing
+  question is the wrong console.
+- **THREE PROJECTS SHARE NEARLY ONE NAME AND THE LOAD-BEARING ONE IS THE UNBILLED ONE.** One
+  `curl` settles which: `/api/health/status` prints `sa.project_id` out of the live credential
+  — *"FCM credential valid — access token minted for project `campapp-39c4b`"* — and that
+  project reads **"Billing is disabled"** / Firebase **Spark**. **The instrument was running
+  and unread**, which is this file's most-repeated shape.
+- **AN ACCOUNT TYPE BEATS A COST FIGURE, AND THAT IS THE REUSABLE RULE.** *"Billing is
+  disabled"* means it **cannot** charge; `$0.00 for September 1-16` means it **did not, in one
+  month**. The one billing account that exists is a **free trial**, and a trial cannot charge a
+  card without an explicit *Upgrade*. Same family as `status = 'sent'` meaning only "Twilio
+  returned 2xx": the number is accurate and it is not the question. **Read the billing column
+  before reading the cost.**
+- **THE RECOMMENDATION IS TO DO NOTHING — the trial lapses ~2026-09-28** (arithmetic off a
+  *"12 days left"* banner read 09-16, not a stated date) and unlinks the two stray projects by
+  itself. **Upgrading is the act that CREATES the ability to be charged**, and nothing we run
+  needs a billing account. **Prefer unlinking billing to deleting a project**: deleting takes
+  any service account inside it, surfacing weeks later as a broken publish with no obvious
+  cause.
+- **ONE THING TO WATCH AFTER THE LAPSE, AND IT IS NOT ESTABLISHED.** If the Play publisher
+  service account lives in one of the two billing-attached projects, the first
+  `android-release` after the lapse is the test. **Service accounts and no-charge APIs are
+  EXPECTED to survive a billing account closing — general Google behaviour, NOT tested on this
+  setup, so do not record it as established.** The failure mode is a red CI step reading *"The
+  caller does not have permission"*, which `docs/PLAY-STORE.md` §0b already warns reads like a
+  Play problem and sends you to the wrong console. Re-enabling billing on that one project is a
+  minutes-long fix.
+- **`FCM_SERVICE_ACCOUNT` IS NOT IN AN AGENT SESSION'S ENV — it is a Vercel variable**, so
+  `printenv` finds nothing and the standing rule *"the credentials are process env vars, there
+  is no `.env` file"* does **not** cover it. Absence there reads as a missing credential and is
+  not one; ask PRODUCTION for the project id instead.
+- **THE BILLING ACCOUNT ID IS DELIBERATELY NOT WRITTEN DOWN.** It is an identifier rather than
+  a credential — and **this repository is public**. A Firebase project id ships inside
+  `google-services.json` in the app binary and is public by construction, which is exactly why
+  the project ids above are safe here and the billing account id is not.
+- **NOT INVESTIGATED, and named rather than guessed:** what is in `camp-hawk` and
+  `camp-501802` (only the current month was read — an all-time *Billing → Reports, grouped by
+  Project* would settle whether either ever accrued anything); whether more than one FIREBASE
+  project exists; and the **$25 Play developer registration has no row in the admin Costs tab**,
+  which is a real gap (Cloud having none is expected at $0).
+
 ## Open / next session
 
 #### 2026-09-20 — ONE SESSION CAN DISPATCH ANOTHER, AND IT COSTS MORE TO ARRIVE THAN TO WORK
@@ -13750,7 +13802,7 @@ we navigate to Okta, and that is measured:
   comment: *"when that cookie is gone every attempt will fail identically"* — is retried ~28
   times a day indefinitely. Escalating 30 -> 60 -> 120 -> 240 takes that to **10/day**, i.e.
   total trips 33.4 -> ~15/day and ramps **2.62 -> ~1.2/day**.
-- ~~**NOT BUILT, AND IT IS NOT A DRIVE-BY.**~~ **BUILT 2026-09-20, PR #371 — open, not merged.**
+- ~~**NOT BUILT, AND IT IS NOT A DRIVE-BY.**~~ **BUILT AND MERGED 2026-09-20 (PR #371, `f6e74c4`).**
   Struck rather than deleted: "not built" on the one lever this entry identifies is exactly the
   sentence a later reader quotes as a task. The reasoning for the caution still stands and was
   obeyed — `planRenewal` is bot-side, it repairs a session between releases, and the SPA's
@@ -13769,6 +13821,21 @@ we navigate to Okta, and that is measured:
     reading above says 33.4/day and 84%; a reading taken six hours before this one said 255 /
     36.4 / 93%. **The ladder's shape does not depend on the number; the ~16/day projection
     does**, and that projection is arithmetic on the observed mix rather than a measurement.
+  - **MERGED IS NOT LIVE, AND THE TWO ARE A DAY APART HERE.** `scripts/auto-cart-bot/**` is
+    bot-side, so the ladder changes nothing about the running keep-warm until the mini-PC takes
+    an update — **confirm arrival with `bot-ask git-status`, never `autocart.bot_version`**
+    (it COALESCEs, so a stale sha can sit beside a live heartbeat). The merge DID fire a worker
+    deploy, because `worker/**` is the first entry in `worker-deploy.yml`'s `paths:` and the
+    branch carries two files under it: `Deploy worker (push)` and `Verify` both completed
+    **success** on `d337e61`, and the fleet read **3/3 shards held**, heartbeat 1s, capacity
+    8/12 — off `/api/health/status`, which is the authority rather than the deploy tick.
+  - **AND THIS BULLET READ "open, not merged" FROM THE MOMENT IT LANDED.** It arrived on master
+    inside **#372 at 15:53 UTC**; **#371 merged at 16:31**, thirty-eight minutes later, and the
+    line was not corrected until ~17:10. It was accurate when written and wrong for most of its
+    life — the same shape as every struck-through "NOT BUILT" above it, arriving inside the
+    correction written to prevent one. **A state claim about a PR has a shelf life of minutes;
+    read `pull_request_read` before quoting one** — this one was quoted out of a compaction
+    summary and would have been re-reported as outstanding work.
 - **AND EVEN THAT IS A REDUCTION IN FREQUENCY, NOT A CURE.** Every remaining ramp still charges
   the full 32 GiB in <=34 s. There is no lever on our side of the allocation; the only thing that
   changes per-event cost is Chromium's, and it is compile-time.
