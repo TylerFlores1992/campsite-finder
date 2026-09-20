@@ -13093,6 +13093,35 @@ installed on the server as a personal skill so the QA session never loads this f
   `list_triggers` for its id rather than this line.
 - **`/loop 24h /browser-qa` on the server is the suggested cadence and is UNTESTED.**
 
+##### A CLOUD SESSION CANNOT REACH THE SERVER'S CHROME WITH `SendMessage` — USE A BOUND ROUTINE (2026-09-20)
+The QA session is `environment_kind: "bridge"` — it runs on the Windows home server. **This
+matters the first time a cloud session tries to use it**, because the obvious route does not
+work and the failure is not informative:
+```
+SendMessage to "camphawk-qa"  ->  No agent named 'camphawk-qa' is reachable.
+ListAgents                    ->  No reachable agents — no other Claude session is
+                                  running on this machine right now.
+```
+- **`ListAgents` IS MACHINE-LOCAL AND SAYS SO.** It lists in-process subagents and sessions on
+  THIS machine, plus other-account sessions only *"when Remote Control is connected here"* — and
+  a cloud container has no Remote Control connection. `SendMessage` addresses by a name from that
+  listing, so with an empty listing there is no address to send to. **The QA session is alive and
+  connected throughout** (`list_sessions` shows it `connection_status: connected`, tagged
+  `remote-control-repl`); it is the ADDRESSING that is missing, not the session.
+- **THE ROUTE THAT WORKS IS A ROUTINE BOUND TO ITS SESSION ID.** `create_trigger` with
+  `persistent_session_id` and no schedule (a poke-only Routine), then `fire_trigger`. Verified
+  2026-09-20 against both a cloud child and the bridge session: the call returns a
+  `session_id` and the prompt lands as an ordinary user turn in that session. `list_sessions`
+  is where the id comes from.
+- **IT IS ONE-WAY, AND THAT IS THE COST TO PLAN AROUND.** Nothing comes back — a fired session
+  cannot message a cloud session, so the answer has to reach you some other way: the owner
+  relays it, or the fired session writes it somewhere readable (a branch, a row, a doc). **Write
+  the prompt to say so**, or it replies into its own transcript and nobody reads it.
+- **Do not fabricate the reply while waiting.** Silence from a bound session is silence, and it
+  is indistinguishable from a session that never ran the turn.
+- **THE TRIGGERS ACCUMULATE.** They are poke-only so they never fire on their own, but they sit
+  in `list_triggers` for ever. Delete one once its question is answered.
+
 #### 2026-09-18 — THE rec.gov RECONNECT IS FIXED, MERGED, AND LIVE ON BOTH HALVES
 
 **Read the "RECONNECT AUTO-CART FOR REC.GOV WAS ONE HIDDEN INPUT" entry above.** Merged as #363
@@ -13124,6 +13153,34 @@ requested from a session rather than waiting for the quiet window. Confirmed wit
 - **AND THE PROBES RUN HERE, WITH NO PHONE AND NO BOX:** `node scripts/recgov-login-probe.mjs`
   and `npx tsx scripts/connect-keys-probe.mts`. Each refuses a verdict unless its control
   reproduces the pre-fix failure, so a green run is worth something.
+
+##### THE PREDICTION WAS RIGHT AND THE FAILURE MOVED ONE STEP (2026-09-20)
+The bullet above says *"`tail-log broker` should no longer carry `locator.waitFor: Timeout …
+resolved to hidden <input … type="hidden"/>`"*. **Read on 2026-09-20 and it does not** — the
+hidden-input timeout is gone from every attempt after the box updated. What replaced it is a
+different refusal at the NEXT step, and the box update sits cleanly between the two:
+```
+11:47:27  couldn't fill the login form …: locator.waitFor: Timeout 8000ms exceeded.
+          19 × locator resolved to hidden <input value="" name="email" type="hidden"/>
+15:19:03  Remote sign-in broker listening …            <- the box is now on 2e49994
+15:51:29  couldn't fill the login form …: no VISIBLE recreation.gov password field
+          after submitting the email. password inputs on the page: 0 match(es), 0 visible
+```
+- **SO #363 DID WHAT IT CLAIMED, AND THE OWNER'S "still failing" IS A DIFFERENT FAULT.** The
+  email field is found and submitted now; rec.gov then renders no password input at all. Both
+  halves are measured off one log with the restart line between them — **that ordering is the
+  evidence**, and without it the second message reads as the first fix not working.
+- **THE NEW MESSAGE IS THE CENSUS EARNING ITS KEEP ON ITS FIRST OUTING.** *"0 match(es), 0
+  visible"* is exactly the distinction #363 added: *"the modal never opened"* and *"the modal
+  opened and every field is hidden"* used to print the same eight-second timeout. Here it says
+  neither — it says the field is not in the DOM, which is a third state and a real reading.
+- **WHAT IT IS NOT ESTABLISHED TO MEAN.** Zero password inputs after a submitted email is
+  consistent with rec.gov having moved to a second step we do not wait for, with a challenge
+  interposed, and with the submit not having taken at all. **Do not write one in.** The one thing
+  it rules out is the hidden-input bug, because that bug could not produce this message.
+- **READ THE BROKER LOG EITHER SIDE OF A BOX UPDATE, NOT JUST THE TAIL.** The whole diagnosis is
+  one `bot-ask tail-log broker:150` and the `Remote sign-in broker listening` line; the tail alone
+  shows only the new failure and reads as no progress.
 
 #### 2026-09-18 — THE DELIVERY CANARY HAS BEEN QUIET FOR ~35 HOURS — WARN, UNCHASED
 
@@ -18915,6 +18972,37 @@ already live in production.
   before (`REVENUECAT_SANDBOX_USER_IDS` must still contain the demo account's Clerk id through
   review, or their purchase unlocks nothing).
 
+##### AND IT CAME BACK — THE DEMO ACCOUNT WAS A SUBSCRIBER AGAIN ON 2026-09-20
+The entry above closes with *"the delete at that point was permanent (`apple rows = 0`, pre-check
+CLEAN)"*. **Five days later the same account held an Apple row again**, found while checking an
+unrelated item:
+```
+iamtylerflores12345@yahoo.com | provider=apple | store_transaction_id=2000001235755873
+  created_at 2026-09-16 03:27     <- the plan-change moment the entry above records
+  updated_at 2026-09-20 03:28     <- four days later
+```
+- **SO THE ACCOUNT WAS NOT CLEAN THROUGH A SUBMISSION**, and nothing anywhere would have said so.
+  A subscriber sees no paywall and no way to buy, which is the **2026-08-22 rejection cause
+  exactly** — the fix live in production and invisible to the one account Apple uses.
+- **THE MECHANISM IS NOT ESTABLISHED AND MUST NOT BE WRITTEN IN.** `UPSERT_STORE_SUBSCRIPTION`
+  never sets `created_at` and migration 004 defaults it to `NOW()`, so a re-INSERT would carry a
+  FRESH `created_at` — and this one predates the recorded delete by about ten minutes. That is
+  inconsistent with a simple re-insert and equally inconsistent with the delete having taken.
+  **I deleted the row before noticing the discrepancy, so the evidence is gone** and the two
+  readings cannot now be separated. Do not fit a story to it.
+- **WHAT IS ROBUST WHATEVER THE CAUSE: a previous session's read-back is not evidence about
+  today.** `scripts/app-review-precheck.mts <sign-in-email>` costs one command and must be run
+  **immediately before each submission**, never quoted from a file. The row was deleted again on
+  2026-09-20 and the pre-check read **CLEAN** — which is a statement about that minute only.
+- **PASS THE EMAIL EXPLICITLY.** With no argument the script defaults to
+  `tylerflores1992@yahoo.com` — the OLD demo account, which is `active base stripe grandfathered`
+  and reads NOT CLEAN for a reason that must **not** be "fixed": that is a real paying
+  subscription and deleting it to pass a check is worse than the check failing.
+- **AND THE TWO DOCS DISAGREE ABOUT WHICH ACCOUNT APPLE ACTUALLY HAS.** `docs/APP-STORE.md:120`
+  names `tylerflores1992@yahoo.com`; the 09-14 entry above names `iamtylerflores12345@yahoo.com`
+  as the swapped-in one. **Only App Store Connect settles it**, nobody here can read it, and
+  running the pre-check against the wrong one is a green that proves nothing.
+
 ##### "ADD FOR REVIEW" PUTS A SUBSCRIPTION IN A DRAFT THAT NEEDS ITS OWN APP VERSION (2026-09-15)
 The four subscriptions read **"This item has been added for review"** on the Subscriptions page and
 every one of them showed *Ready for Review*. **They were in a separate draft submission that App
@@ -19192,6 +19280,37 @@ already on this plan"**.
 - **Sandbox-only rough edge, recorded so it is not filed as a hang:** after a successful purchase
   the paywall shows *"Confirming your subscription…"* and waits for a server change that
   deliberately never comes. A production purchase flips it.
+
+#### THE FIRST REAL PRODUCTION STORE PURCHASE IS ON THE BOOKS (2026-09-19)
+Every store row before this was sandbox or a licence tester, and `ignoreReason` drops every
+non-PRODUCTION event — so a stored row is itself the proof that a PRODUCTION event got through.
+Read back off `subscriptions` on 2026-09-20:
+```
+riveraandrew750@gmail.com | provider=google | tier=autocart | status=trialing
+  store_transaction_id=GPA.3333-1457-6604-68400   created 2026-09-19 19:11:18 UTC
+```
+- **SO THE WHOLE PLAY CHAIN IS PROVEN IN ANGER, NOT IN SANDBOX**: purchase -> RevenueCat ->
+  webhook auth -> `ignoreReason` -> the partial-index upsert -> a row -> `hasActiveSubscription`.
+  The 08-30 licence-tester run proved everything up to the guard and stopped there, and this
+  file recorded that gap in as many words (*"Still unproven: webhook -> row ->
+  hasAutocartEntitlement, which only a REAL production purchase exercises"*). It is closed.
+- **HE BOUGHT AUTO-CART, WHICH IS THE $11.99 TIER**, so `tierForStoreProductId` mapped a real
+  Play product id correctly on its first production event — the mapping that must never fall
+  back to `base` silently, and never did.
+- **AND HE IS `is_beta = true` NOW, WHICH MAKES THE ROW NON-LOAD-BEARING FOR HIM.** `is_beta`
+  short-circuits `hasActiveSubscription` before any subscription row is read, so from this point
+  his access does NOT depend on the store row and a lapse, refund or cancellation will not show
+  up as a loss of access. **Do not read his continued access as evidence the chain still works**;
+  the row is the evidence, and it is a different question from the flag.
+- **THE REFUND IS A GOOGLE PLAY ACTION AND NOT A STRIPE ONE.** `provider = 'google'` means the
+  money is Google's to return — order `GPA.3333-1457-6604-68400`, Play Console -> Order
+  management. `api.stripe.com` is 403 at the agent proxy anyway, and it is the wrong system: no
+  Stripe row exists for him. He is `trialing`, so **check whether anything was ever charged
+  before refunding** — a trial that has not billed has nothing to return.
+- **A REFUND OR CANCELLATION WILL EXERCISE A SECOND UNTESTED PATH.** `statusForEvent` reads the
+  expiry timestamp rather than the event name, and no production `CANCELLATION`/`EXPIRATION` has
+  ever reached it. Watch this row after the refund: it is the cheapest possible test of the
+  downgrade half, and it costs nothing to look.
 
 ### THE REVENUECAT WEBHOOK HAS 401'd EVERY EVENT IT HAS EVER RECEIVED (2026-09-14)
 
