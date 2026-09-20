@@ -12990,6 +12990,43 @@ one and skip the selector entirely — and it has never been observed, because
 the login rehearsal passes on it, and widening a fix past its evidence is how the 08-22 round was
 spent.
 
+### A HANG MAKES EVERY ASSERTION IN ITS FILE SILENT, WHATEVER THE ORDER (2026-09-20)
+
+`renewBackoffGapMs` doubles a gap in a loop, so its failure mode is not a red — it is a run
+that never finishes. The branch adding it therefore put a structural scan beside the behaviour,
+on the recorded rule that a guard whose failure mode is a test run nobody reads is a guard
+somebody deletes. **The scan could not report, and it took two attempts to find out why — the
+second is the finding.**
+
+1. **Placed at the top of the termination test, it never ran.** The CEILING test two tests
+   ABOVE it already calls `renewBackoffGapMs(Number.MAX_SAFE_INTEGER)`, so the hang happened
+   first and the scan was never reached. Killed at 60s having asserted nothing. That is the
+   ordinary "a guard placed after the thing it guards against" shape, and the obvious repair is
+   to move it up.
+2. **Moved to the FIRST test in the file, it still could not report.** **node:test buffers a
+   file's output until the file COMPLETES** — measured both with `--test` and by running the
+   file directly, and both produce `TAP version 13` and not one line more. An assertion that
+   throws in test 1 is recorded and never printed.
+
+**SO ORDERING IS NOT THE REMEDY, AND NO POSITION INSIDE A HANGING FILE IS.** The reporter cannot
+speak through a hang, so a guard against one has to live in a file that cannot hang —
+`worker/renewal-ladder-shape.test.mts` never calls the ladder, reports on its own, and fails in
+**1 second** naming the offending line where the in-file versions hung for 60s asserting
+nothing. Verified against two mutations: the step clamp's `MAX_DOUBLINGS` deleted, and the
+gap-bounded loop reinstated.
+- **THE FIRST ATTEMPT'S OWN COMMENT CLAIMED THE FIX IT HAD NOT MADE** — *"the shape is asserted
+  BEFORE the behaviour … a reinstated exit condition fails in milliseconds with a message that
+  names the line"* — written from the right instinct, measured at 45s, and false for two
+  independent reasons. Same family as `6006428` claiming an RC URL fix it never made.
+- **TWO ASSERTIONS, BECAUSE NEITHER CATCHES THE OTHER'S MUTATION.** The loop may not be bounded
+  by the gap it is doubling (doubling zero never reaches the cap), AND the step count may not be
+  bounded by `failures` (which has no upper bound). Deleting `MAX_DOUBLINGS` leaves the loop
+  header reading `n < steps` and sails straight past the first check — which is exactly how that
+  mutation survived the verification round.
+- **AND IT IS WHY A MUTATION RUN MUST READ THE CLOCK, NOT ONLY THE EXIT CODE.** A hang under
+  `timeout` exits 124, which is a non-zero exit like any other failure; a suite that "fails" in
+  60s and one that fails in 1s are different facts, and only the second is a guard.
+
 ## Open / next session
 
 #### 2026-09-20 — ONE SESSION CAN DISPATCH ANOTHER, AND IT COSTS MORE TO ARRIVE THAN TO WORK
@@ -13093,6 +13130,35 @@ installed on the server as a personal skill so the QA session never loads this f
   `list_triggers` for its id rather than this line.
 - **`/loop 24h /browser-qa` on the server is the suggested cadence and is UNTESTED.**
 
+##### A CLOUD SESSION CANNOT REACH THE SERVER'S CHROME WITH `SendMessage` — USE A BOUND ROUTINE (2026-09-20)
+The QA session is `environment_kind: "bridge"` — it runs on the Windows home server. **This
+matters the first time a cloud session tries to use it**, because the obvious route does not
+work and the failure is not informative:
+```
+SendMessage to "camphawk-qa"  ->  No agent named 'camphawk-qa' is reachable.
+ListAgents                    ->  No reachable agents — no other Claude session is
+                                  running on this machine right now.
+```
+- **`ListAgents` IS MACHINE-LOCAL AND SAYS SO.** It lists in-process subagents and sessions on
+  THIS machine, plus other-account sessions only *"when Remote Control is connected here"* — and
+  a cloud container has no Remote Control connection. `SendMessage` addresses by a name from that
+  listing, so with an empty listing there is no address to send to. **The QA session is alive and
+  connected throughout** (`list_sessions` shows it `connection_status: connected`, tagged
+  `remote-control-repl`); it is the ADDRESSING that is missing, not the session.
+- **THE ROUTE THAT WORKS IS A ROUTINE BOUND TO ITS SESSION ID.** `create_trigger` with
+  `persistent_session_id` and no schedule (a poke-only Routine), then `fire_trigger`. Verified
+  2026-09-20 against both a cloud child and the bridge session: the call returns a
+  `session_id` and the prompt lands as an ordinary user turn in that session. `list_sessions`
+  is where the id comes from.
+- **IT IS ONE-WAY, AND THAT IS THE COST TO PLAN AROUND.** Nothing comes back — a fired session
+  cannot message a cloud session, so the answer has to reach you some other way: the owner
+  relays it, or the fired session writes it somewhere readable (a branch, a row, a doc). **Write
+  the prompt to say so**, or it replies into its own transcript and nobody reads it.
+- **Do not fabricate the reply while waiting.** Silence from a bound session is silence, and it
+  is indistinguishable from a session that never ran the turn.
+- **THE TRIGGERS ACCUMULATE.** They are poke-only so they never fire on their own, but they sit
+  in `list_triggers` for ever. Delete one once its question is answered.
+
 #### 2026-09-18 — THE rec.gov RECONNECT IS FIXED, MERGED, AND LIVE ON BOTH HALVES
 
 **Read the "RECONNECT AUTO-CART FOR REC.GOV WAS ONE HIDDEN INPUT" entry above.** Merged as #363
@@ -13124,6 +13190,34 @@ requested from a session rather than waiting for the quiet window. Confirmed wit
 - **AND THE PROBES RUN HERE, WITH NO PHONE AND NO BOX:** `node scripts/recgov-login-probe.mjs`
   and `npx tsx scripts/connect-keys-probe.mts`. Each refuses a verdict unless its control
   reproduces the pre-fix failure, so a green run is worth something.
+
+##### THE PREDICTION WAS RIGHT AND THE FAILURE MOVED ONE STEP (2026-09-20)
+The bullet above says *"`tail-log broker` should no longer carry `locator.waitFor: Timeout …
+resolved to hidden <input … type="hidden"/>`"*. **Read on 2026-09-20 and it does not** — the
+hidden-input timeout is gone from every attempt after the box updated. What replaced it is a
+different refusal at the NEXT step, and the box update sits cleanly between the two:
+```
+11:47:27  couldn't fill the login form …: locator.waitFor: Timeout 8000ms exceeded.
+          19 × locator resolved to hidden <input value="" name="email" type="hidden"/>
+15:19:03  Remote sign-in broker listening …            <- the box is now on 2e49994
+15:51:29  couldn't fill the login form …: no VISIBLE recreation.gov password field
+          after submitting the email. password inputs on the page: 0 match(es), 0 visible
+```
+- **SO #363 DID WHAT IT CLAIMED, AND THE OWNER'S "still failing" IS A DIFFERENT FAULT.** The
+  email field is found and submitted now; rec.gov then renders no password input at all. Both
+  halves are measured off one log with the restart line between them — **that ordering is the
+  evidence**, and without it the second message reads as the first fix not working.
+- **THE NEW MESSAGE IS THE CENSUS EARNING ITS KEEP ON ITS FIRST OUTING.** *"0 match(es), 0
+  visible"* is exactly the distinction #363 added: *"the modal never opened"* and *"the modal
+  opened and every field is hidden"* used to print the same eight-second timeout. Here it says
+  neither — it says the field is not in the DOM, which is a third state and a real reading.
+- **WHAT IT IS NOT ESTABLISHED TO MEAN.** Zero password inputs after a submitted email is
+  consistent with rec.gov having moved to a second step we do not wait for, with a challenge
+  interposed, and with the submit not having taken at all. **Do not write one in.** The one thing
+  it rules out is the hidden-input bug, because that bug could not produce this message.
+- **READ THE BROKER LOG EITHER SIDE OF A BOX UPDATE, NOT JUST THE TAIL.** The whole diagnosis is
+  one `bot-ask tail-log broker:150` and the `Remote sign-in broker listening` line; the tail alone
+  shows only the new failure and reads as no progress.
 
 #### 2026-09-18 — THE DELIVERY CANARY HAS BEEN QUIET FOR ~35 HOURS — WARN, UNCHASED
 
@@ -13604,12 +13698,25 @@ we navigate to Okta, and that is measured:
   comment: *"when that cookie is gone every attempt will fail identically"* — is retried ~28
   times a day indefinitely. Escalating 30 -> 60 -> 120 -> 240 takes that to **10/day**, i.e.
   total trips 33.4 -> ~15/day and ramps **2.62 -> ~1.2/day**.
-- **NOT BUILT, AND IT IS NOT A DRIVE-BY.** `planRenewal` is bot-side, it is what repairs a
-  session between releases, and the SPA's silent re-mint is an OBSERVATION of RC's behaviour
-  rather than a guarantee. **One real cost to design around:** a `maybeAutoLogin` success does
-  not call `recordRenewal`, so `failures` stays high — a fresh lapse would then start at the
-  escalated gap rather than at `minGap`. The counter needs resetting when a live token is
-  observed, or the escalation quietly delays the first attempt of a new episode.
+- ~~**NOT BUILT, AND IT IS NOT A DRIVE-BY.**~~ **BUILT 2026-09-20, PR #371 — open, not merged.**
+  Struck rather than deleted: "not built" on the one lever this entry identifies is exactly the
+  sentence a later reader quotes as a task. The reasoning for the caution still stands and was
+  obeyed — `planRenewal` is bot-side, it repairs a session between releases, and the SPA's
+  silent re-mint is an OBSERVATION of RC's behaviour rather than a guarantee, so the ladder
+  **holds at a 4h ceiling for ever rather than stopping**: six discoveries a day at the very
+  worst, never zero.
+  - **THE COST THIS BULLET NAMED IS WHAT `noteLiveToken` CLOSES.** A `maybeAutoLogin` success
+    does not call `recordRenewal`, so `failures` stayed high and a fresh lapse would start at
+    the escalated gap rather than at `minGap` — harmless under a flat backoff and silent and
+    backwards under an escalating one. The keep-warm now resets the counter on a positively
+    live token, **before** `planRenewal` reads it. `leftS <= 0` is deliberately NOT live: a
+    three-day-old corpse decodes fine and keeps coming back (2026-08-19), so treating it as
+    evidence would reset the counter on exactly the pathology the backoff exists for.
+  - **RE-MEASURED 2026-09-20, AND THE REGIME HAD MOVED AGAIN:** 252 renewal trips over 167.5h
+    = **36.1/day**, backoff band 190, failure-band **90%**, median gap **31.5m**. The 09-11
+    reading above says 33.4/day and 84%; a reading taken six hours before this one said 255 /
+    36.4 / 93%. **The ladder's shape does not depend on the number; the ~16/day projection
+    does**, and that projection is arithmetic on the observed mix rather than a measurement.
 - **AND EVEN THAT IS A REDUCTION IN FREQUENCY, NOT A CURE.** Every remaining ramp still charges
   the full 32 GiB in <=34 s. There is no lever on our side of the allocation; the only thing that
   changes per-event cost is Chromium's, and it is compile-time.
@@ -18915,6 +19022,37 @@ already live in production.
   before (`REVENUECAT_SANDBOX_USER_IDS` must still contain the demo account's Clerk id through
   review, or their purchase unlocks nothing).
 
+##### AND IT CAME BACK — THE DEMO ACCOUNT WAS A SUBSCRIBER AGAIN ON 2026-09-20
+The entry above closes with *"the delete at that point was permanent (`apple rows = 0`, pre-check
+CLEAN)"*. **Five days later the same account held an Apple row again**, found while checking an
+unrelated item:
+```
+iamtylerflores12345@yahoo.com | provider=apple | store_transaction_id=2000001235755873
+  created_at 2026-09-16 03:27     <- the plan-change moment the entry above records
+  updated_at 2026-09-20 03:28     <- four days later
+```
+- **SO THE ACCOUNT WAS NOT CLEAN THROUGH A SUBMISSION**, and nothing anywhere would have said so.
+  A subscriber sees no paywall and no way to buy, which is the **2026-08-22 rejection cause
+  exactly** — the fix live in production and invisible to the one account Apple uses.
+- **THE MECHANISM IS NOT ESTABLISHED AND MUST NOT BE WRITTEN IN.** `UPSERT_STORE_SUBSCRIPTION`
+  never sets `created_at` and migration 004 defaults it to `NOW()`, so a re-INSERT would carry a
+  FRESH `created_at` — and this one predates the recorded delete by about ten minutes. That is
+  inconsistent with a simple re-insert and equally inconsistent with the delete having taken.
+  **I deleted the row before noticing the discrepancy, so the evidence is gone** and the two
+  readings cannot now be separated. Do not fit a story to it.
+- **WHAT IS ROBUST WHATEVER THE CAUSE: a previous session's read-back is not evidence about
+  today.** `scripts/app-review-precheck.mts <sign-in-email>` costs one command and must be run
+  **immediately before each submission**, never quoted from a file. The row was deleted again on
+  2026-09-20 and the pre-check read **CLEAN** — which is a statement about that minute only.
+- **PASS THE EMAIL EXPLICITLY.** With no argument the script defaults to
+  `tylerflores1992@yahoo.com` — the OLD demo account, which is `active base stripe grandfathered`
+  and reads NOT CLEAN for a reason that must **not** be "fixed": that is a real paying
+  subscription and deleting it to pass a check is worse than the check failing.
+- **AND THE TWO DOCS DISAGREE ABOUT WHICH ACCOUNT APPLE ACTUALLY HAS.** `docs/APP-STORE.md:120`
+  names `tylerflores1992@yahoo.com`; the 09-14 entry above names `iamtylerflores12345@yahoo.com`
+  as the swapped-in one. **Only App Store Connect settles it**, nobody here can read it, and
+  running the pre-check against the wrong one is a green that proves nothing.
+
 ##### "ADD FOR REVIEW" PUTS A SUBSCRIPTION IN A DRAFT THAT NEEDS ITS OWN APP VERSION (2026-09-15)
 The four subscriptions read **"This item has been added for review"** on the Subscriptions page and
 every one of them showed *Ready for Review*. **They were in a separate draft submission that App
@@ -19192,6 +19330,37 @@ already on this plan"**.
 - **Sandbox-only rough edge, recorded so it is not filed as a hang:** after a successful purchase
   the paywall shows *"Confirming your subscription…"* and waits for a server change that
   deliberately never comes. A production purchase flips it.
+
+#### THE FIRST REAL PRODUCTION STORE PURCHASE IS ON THE BOOKS (2026-09-19)
+Every store row before this was sandbox or a licence tester, and `ignoreReason` drops every
+non-PRODUCTION event — so a stored row is itself the proof that a PRODUCTION event got through.
+Read back off `subscriptions` on 2026-09-20:
+```
+riveraandrew750@gmail.com | provider=google | tier=autocart | status=trialing
+  store_transaction_id=GPA.3333-1457-6604-68400   created 2026-09-19 19:11:18 UTC
+```
+- **SO THE WHOLE PLAY CHAIN IS PROVEN IN ANGER, NOT IN SANDBOX**: purchase -> RevenueCat ->
+  webhook auth -> `ignoreReason` -> the partial-index upsert -> a row -> `hasActiveSubscription`.
+  The 08-30 licence-tester run proved everything up to the guard and stopped there, and this
+  file recorded that gap in as many words (*"Still unproven: webhook -> row ->
+  hasAutocartEntitlement, which only a REAL production purchase exercises"*). It is closed.
+- **HE BOUGHT AUTO-CART, WHICH IS THE $11.99 TIER**, so `tierForStoreProductId` mapped a real
+  Play product id correctly on its first production event — the mapping that must never fall
+  back to `base` silently, and never did.
+- **AND HE IS `is_beta = true` NOW, WHICH MAKES THE ROW NON-LOAD-BEARING FOR HIM.** `is_beta`
+  short-circuits `hasActiveSubscription` before any subscription row is read, so from this point
+  his access does NOT depend on the store row and a lapse, refund or cancellation will not show
+  up as a loss of access. **Do not read his continued access as evidence the chain still works**;
+  the row is the evidence, and it is a different question from the flag.
+- **THE REFUND IS A GOOGLE PLAY ACTION AND NOT A STRIPE ONE.** `provider = 'google'` means the
+  money is Google's to return — order `GPA.3333-1457-6604-68400`, Play Console -> Order
+  management. `api.stripe.com` is 403 at the agent proxy anyway, and it is the wrong system: no
+  Stripe row exists for him. He is `trialing`, so **check whether anything was ever charged
+  before refunding** — a trial that has not billed has nothing to return.
+- **A REFUND OR CANCELLATION WILL EXERCISE A SECOND UNTESTED PATH.** `statusForEvent` reads the
+  expiry timestamp rather than the event name, and no production `CANCELLATION`/`EXPIRATION` has
+  ever reached it. Watch this row after the refund: it is the cheapest possible test of the
+  downgrade half, and it costs nothing to look.
 
 ### THE REVENUECAT WEBHOOK HAS 401'd EVERY EVENT IT HAS EVER RECEIVED (2026-09-14)
 
