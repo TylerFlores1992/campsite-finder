@@ -12990,6 +12990,43 @@ one and skip the selector entirely — and it has never been observed, because
 the login rehearsal passes on it, and widening a fix past its evidence is how the 08-22 round was
 spent.
 
+### A HANG MAKES EVERY ASSERTION IN ITS FILE SILENT, WHATEVER THE ORDER (2026-09-20)
+
+`renewBackoffGapMs` doubles a gap in a loop, so its failure mode is not a red — it is a run
+that never finishes. The branch adding it therefore put a structural scan beside the behaviour,
+on the recorded rule that a guard whose failure mode is a test run nobody reads is a guard
+somebody deletes. **The scan could not report, and it took two attempts to find out why — the
+second is the finding.**
+
+1. **Placed at the top of the termination test, it never ran.** The CEILING test two tests
+   ABOVE it already calls `renewBackoffGapMs(Number.MAX_SAFE_INTEGER)`, so the hang happened
+   first and the scan was never reached. Killed at 60s having asserted nothing. That is the
+   ordinary "a guard placed after the thing it guards against" shape, and the obvious repair is
+   to move it up.
+2. **Moved to the FIRST test in the file, it still could not report.** **node:test buffers a
+   file's output until the file COMPLETES** — measured both with `--test` and by running the
+   file directly, and both produce `TAP version 13` and not one line more. An assertion that
+   throws in test 1 is recorded and never printed.
+
+**SO ORDERING IS NOT THE REMEDY, AND NO POSITION INSIDE A HANGING FILE IS.** The reporter cannot
+speak through a hang, so a guard against one has to live in a file that cannot hang —
+`worker/renewal-ladder-shape.test.mts` never calls the ladder, reports on its own, and fails in
+**1 second** naming the offending line where the in-file versions hung for 60s asserting
+nothing. Verified against two mutations: the step clamp's `MAX_DOUBLINGS` deleted, and the
+gap-bounded loop reinstated.
+- **THE FIRST ATTEMPT'S OWN COMMENT CLAIMED THE FIX IT HAD NOT MADE** — *"the shape is asserted
+  BEFORE the behaviour … a reinstated exit condition fails in milliseconds with a message that
+  names the line"* — written from the right instinct, measured at 45s, and false for two
+  independent reasons. Same family as `6006428` claiming an RC URL fix it never made.
+- **TWO ASSERTIONS, BECAUSE NEITHER CATCHES THE OTHER'S MUTATION.** The loop may not be bounded
+  by the gap it is doubling (doubling zero never reaches the cap), AND the step count may not be
+  bounded by `failures` (which has no upper bound). Deleting `MAX_DOUBLINGS` leaves the loop
+  header reading `n < steps` and sails straight past the first check — which is exactly how that
+  mutation survived the verification round.
+- **AND IT IS WHY A MUTATION RUN MUST READ THE CLOCK, NOT ONLY THE EXIT CODE.** A hang under
+  `timeout` exits 124, which is a non-zero exit like any other failure; a suite that "fails" in
+  60s and one that fails in 1s are different facts, and only the second is a guard.
+
 ## Open / next session
 
 #### 2026-09-20 — ONE SESSION CAN DISPATCH ANOTHER, AND IT COSTS MORE TO ARRIVE THAN TO WORK
@@ -13661,12 +13698,25 @@ we navigate to Okta, and that is measured:
   comment: *"when that cookie is gone every attempt will fail identically"* — is retried ~28
   times a day indefinitely. Escalating 30 -> 60 -> 120 -> 240 takes that to **10/day**, i.e.
   total trips 33.4 -> ~15/day and ramps **2.62 -> ~1.2/day**.
-- **NOT BUILT, AND IT IS NOT A DRIVE-BY.** `planRenewal` is bot-side, it is what repairs a
-  session between releases, and the SPA's silent re-mint is an OBSERVATION of RC's behaviour
-  rather than a guarantee. **One real cost to design around:** a `maybeAutoLogin` success does
-  not call `recordRenewal`, so `failures` stays high — a fresh lapse would then start at the
-  escalated gap rather than at `minGap`. The counter needs resetting when a live token is
-  observed, or the escalation quietly delays the first attempt of a new episode.
+- ~~**NOT BUILT, AND IT IS NOT A DRIVE-BY.**~~ **BUILT 2026-09-20, PR #371 — open, not merged.**
+  Struck rather than deleted: "not built" on the one lever this entry identifies is exactly the
+  sentence a later reader quotes as a task. The reasoning for the caution still stands and was
+  obeyed — `planRenewal` is bot-side, it repairs a session between releases, and the SPA's
+  silent re-mint is an OBSERVATION of RC's behaviour rather than a guarantee, so the ladder
+  **holds at a 4h ceiling for ever rather than stopping**: six discoveries a day at the very
+  worst, never zero.
+  - **THE COST THIS BULLET NAMED IS WHAT `noteLiveToken` CLOSES.** A `maybeAutoLogin` success
+    does not call `recordRenewal`, so `failures` stayed high and a fresh lapse would start at
+    the escalated gap rather than at `minGap` — harmless under a flat backoff and silent and
+    backwards under an escalating one. The keep-warm now resets the counter on a positively
+    live token, **before** `planRenewal` reads it. `leftS <= 0` is deliberately NOT live: a
+    three-day-old corpse decodes fine and keeps coming back (2026-08-19), so treating it as
+    evidence would reset the counter on exactly the pathology the backoff exists for.
+  - **RE-MEASURED 2026-09-20, AND THE REGIME HAD MOVED AGAIN:** 252 renewal trips over 167.5h
+    = **36.1/day**, backoff band 190, failure-band **90%**, median gap **31.5m**. The 09-11
+    reading above says 33.4/day and 84%; a reading taken six hours before this one said 255 /
+    36.4 / 93%. **The ladder's shape does not depend on the number; the ~16/day projection
+    does**, and that projection is arithmetic on the observed mix rather than a measurement.
 - **AND EVEN THAT IS A REDUCTION IN FREQUENCY, NOT A CURE.** Every remaining ramp still charges
   the full 32 GiB in <=34 s. There is no lever on our side of the allocation; the only thing that
   changes per-event cost is Chromium's, and it is compile-time.
