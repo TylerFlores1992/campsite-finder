@@ -77,7 +77,7 @@ export const APPLE_SUBSCRIPTIONS_URL = 'https://apps.apple.com/account/subscript
  *  design (its own header says so), so it is safe to reach from inside the shell. */
 export const SUPPORT_HREF = '/support';
 
-export type ManageKind = 'play' | 'app-store' | 'stripe-portal' | 'unknown';
+export type ManageKind = 'play' | 'app-store' | 'stripe-portal' | 'not-billed' | 'unknown';
 
 export interface ManageDestination {
   kind: ManageKind;
@@ -109,6 +109,27 @@ export type BillingReading =
       provider: string | null;
       /** `subscriptions.tier`, verbatim. Null when unknown; only used to deep-link Play. */
       tier: string | null;
+      /**
+       * DOES A STRIPE BILLING PROFILE EXIST ON ANY ROW — live, lapsed or canceled?
+       *
+       * `provider` CANNOT ANSWER THIS AND THAT IS THE WHOLE REASON THIS FIELD EXISTS.
+       * `provider` is read from the user's ACTIVE/TRIALING row, so `null` means "no live
+       * row" — which covers two people with opposite needs: a beta tester who has never
+       * paid us anything and has no portal to open, and a lapsed web subscriber whose
+       * Stripe customer is still there and for whom the portal is exactly right.
+       * `/api/stripe/portal` looks up the newest row of ANY status, so it answers for the
+       * second and 404s for the first.
+       *
+       *   true      a Stripe customer exists somewhere — the portal will open
+       *   false     none anywhere — there is nothing for the portal to show
+       *   null      NOT REPORTED (a payload older than this field, or a partial read)
+       *
+       * `null` KEEPS THE OLD BEHAVIOUR rather than inventing a verdict. An absent reading
+       * is not a negative — the house rule — and here the failure direction of guessing
+       * `false` would be telling a real paying subscriber their subscription is not
+       * billed, which is strictly worse than the dead button this field exists to remove.
+       */
+      stripeProfile: boolean | null;
     };
 
 /** The Play subscription id for a tier, or null for a tier we do not recognize.
@@ -181,8 +202,35 @@ export function manageDestination(reading: BillingReading): ManageDestination {
     };
   }
 
-  // 'stripe' is what migration 071 backfilled every pre-store row with, and null is a
-  // user with no subscription row at all. Both are the web's billing relationship.
+  // NO LIVE ROW. NOT THE SAME AS "BILLED BY US", AND THIS ARM IS THE 2026-09-20 REPORT.
+  //
+  // This used to fall straight through to the portal, on the reasoning that migration 071
+  // backfilled every pre-store row to 'stripe' and defaults the column to it, so `null`
+  // must mean "the web". The first half is true and the conclusion does not follow: a row
+  // always carries a provider, so `null` is not a WEB row — it is NO ROW, and a user with
+  // no row has no billing relationship to manage.
+  //
+  // The owner hit it on 2026-09-20 on both the Android app and the website, with the same
+  // sentence: "we couldn't open the billing portal just now." `users.is_beta` short-
+  // circuits `hasActiveSubscription`, so a beta tester reads as subscribed everywhere, the
+  // control renders, `/api/stripe/portal` finds no `stripe_customer_id` and returns 404,
+  // and the client's only special case is `billing_profile_missing` — so every beta
+  // account got a button that could not work. Five accounts carry `is_beta`.
+  //
+  // IT WAS KNOWN AND FILED AS ACCEPTABLE. `/api/subscription/status` says so in its own
+  // comment: "NULL WHEN THERE IS NO LIVE ROW, which includes a beta tester ...
+  // `manageDestination` treats a null provider as the web relationship, which is the
+  // pre-existing behaviour for that user." Pre-existing behaviour was a dead control.
+  //
+  // `stripeProfile` IS WHAT SEPARATES THE TWO PEOPLE INSIDE THIS ARM, and only an explicit
+  // `false` moves anybody: a lapsed web subscriber still has a Stripe customer and still
+  // wants the portal, and an unreported reading keeps what it always did.
+  if (provider === null && reading.stripeProfile === false) {
+    return notBilledDestination();
+  }
+
+  // 'stripe' is what migration 071 backfilled every pre-store row with, and a null
+  // provider that still has a Stripe customer behind it is a lapsed web subscriber.
   //
   // AN EMPTY STRING IS NOT EITHER OF THOSE and falls through to `unknown`. The column is
   // NOT NULL DEFAULT 'stripe', so '' can only be corrupt data — and corrupt data is a
@@ -200,6 +248,31 @@ export function manageDestination(reading: BillingReading): ManageDestination {
   }
 
   return unknownDestination();
+}
+
+/**
+ * NOBODY IS BILLING THEM, AND SAYING SO IS THE WHOLE POINT.
+ *
+ * It must not read as a fault and must not read as "your subscription is gone": both are
+ * false, and this user's access is working perfectly. It offers support because that is a
+ * destination that actually resolves — `/support` is same-origin, in `isPublicRoute` and
+ * price-free, so it is safe from inside the shell — and because a person who reaches this
+ * screen expecting a bill has a question worth answering.
+ *
+ * It is NOT the unknown arm with different words. Unknown means we could not look; this
+ * means we looked and there is nothing there, which is a fact rather than a failure.
+ */
+function notBilledDestination(): ManageDestination {
+  return {
+    kind: 'not-billed',
+    href: SUPPORT_HREF,
+    external: false,
+    label: 'Contact support',
+    detail:
+      "Your CampHawk access isn't billed through a card or an app store, so there's " +
+      'nothing to manage here. If you expected to be paying for this, get in touch and ' +
+      "we'll sort it out.",
+  };
 }
 
 /**

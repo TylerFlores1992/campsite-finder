@@ -42,10 +42,19 @@ import {
 } from './subscription-management';
 import { PLAY_SUBSCRIPTION_ID } from './store-plans';
 
-const known = (provider: string | null, tier: string | null = null): BillingReading => ({
+// `stripeProfile` defaults to `null` — NOT REPORTED — so every test written before that
+// field existed still describes the behaviour it was written for. A default of `false`
+// would silently re-point the `provider: null` cases at the not-billed arm and make those
+// assertions about a different branch than their names claim.
+const known = (
+  provider: string | null,
+  tier: string | null = null,
+  stripeProfile: boolean | null = null,
+): BillingReading => ({
   known: true,
   provider,
   tier,
+  stripeProfile,
 });
 
 // ─────────────────────────────────────────────────────────── the routing decision
@@ -84,10 +93,60 @@ test('a Stripe subscriber goes to the portal, which is a POST and so has no href
   assert.equal(d.href, null, 'the portal session is minted per click; an anchor would be stale');
 });
 
-test('no subscription row is the web relationship, not an unknown one', () => {
-  // migration 071 backfilled every pre-store row to 'stripe' and defaults the column to
-  // it, so `null` here means "no row", which is the web's shape.
-  assert.equal(manageDestination(known(null)).kind, 'stripe-portal');
+// ─────────────────────────────── no live row: two people, and they need opposite things
+
+test('a null provider with NO Stripe customer anywhere is not billed by anyone', () => {
+  // INVERTED ON 2026-09-20, AND THE OLD ASSERTION WAS THE BUG.
+  //
+  // It read `assert.equal(manageDestination(known(null)).kind, 'stripe-portal')` under
+  // the comment *"migration 071 backfilled every pre-store row to 'stripe' and defaults
+  // the column to it, so `null` here means 'no row', which is the web's shape."* The
+  // premise is true and the conclusion does not follow: a row always carries a provider,
+  // so `null` is not a web row, it is NO ROW — and the test REQUIRED the dead control the
+  // owner reported on both the app and the website. The `held-offer-scope` shape, so it
+  // is inverted with the reason written in rather than relaxed.
+  assert.equal(manageDestination(known(null, null, false)).kind, 'not-billed');
+});
+
+test('a null provider WITH a Stripe customer is a lapsed web subscriber, and keeps the portal', () => {
+  // The other person inside the same arm, and the reason `stripeProfile` is three-valued
+  // rather than a flipped default. `/api/stripe/portal` queries the newest row of ANY
+  // status, so it opens for them — sending them to support instead would be the same
+  // dead-end in the other direction.
+  assert.equal(manageDestination(known(null, null, true)).kind, 'stripe-portal');
+});
+
+test('a null provider with NO REPORTED profile keeps the old behaviour', () => {
+  // An absent reading is not a negative — the house rule. A payload from before this
+  // field existed, or a partial read, must not start telling people they are not billed.
+  // Only an explicit `false` moves anybody.
+  assert.equal(manageDestination(known(null, null, null)).kind, 'stripe-portal');
+});
+
+test('the not-billed arm never claims the user has no subscription', () => {
+  // It is reached BY a subscriber — `users.is_beta` short-circuits
+  // `hasActiveSubscription`, so their access is real and working. "You have no
+  // subscription" would be false, and it is the single most tempting rewrite of this
+  // copy. Same ban as the unknown arm below, for a different reason: there we could not
+  // look, here we looked and the answer is about BILLING, not about access.
+  const d = manageDestination(known(null, null, false));
+  for (const claim of [/no subscription/i, /not subscribed/i, /subscription has ended/i]) {
+    assert.doesNotMatch(d.detail, claim);
+    assert.doesNotMatch(d.label, claim);
+  }
+});
+
+test('a stripe provider reaches the portal whatever the profile flag says', () => {
+  // `stripeProfile` narrows the NULL arm and nothing else. A row that names Stripe is a
+  // Stripe relationship by construction, so a false flag there is a contradiction we do
+  // not resolve by rerouting — the guard is scoped to `provider === null` for that reason.
+  assert.equal(manageDestination(known('stripe', 'base', false)).kind, 'stripe-portal');
+});
+
+test('a store provider is never diverted by the profile flag', () => {
+  for (const p of ['google', 'apple']) {
+    assert.notEqual(manageDestination(known(p, 'base', false)).kind, 'not-billed', p);
+  }
 });
 
 test('case and surrounding whitespace do not change the answer', () => {
@@ -180,6 +239,7 @@ test('every destination carries copy — a control with no words is a control no
     known('apple', 'base'),
     known('stripe'),
     known(null),
+    known(null, null, false),
     known('amazon'),
   ];
   const kinds = new Set<string>();
@@ -189,8 +249,11 @@ test('every destination carries copy — a control with no words is a control no
     assert.ok(d.label.length > 0, `empty label for ${JSON.stringify(r)}`);
     assert.ok(d.detail.length > 20, `thin detail for ${JSON.stringify(r)}`);
   }
-  // A scanner that inspects nothing approves everything: prove all four arms were hit.
-  assert.deepEqual([...kinds].sort(), ['app-store', 'play', 'stripe-portal', 'unknown']);
+  // A scanner that inspects nothing approves everything: prove all five arms were hit.
+  assert.deepEqual(
+    [...kinds].sort(),
+    ['app-store', 'not-billed', 'play', 'stripe-portal', 'unknown'],
+  );
 });
 
 // ──────────────────────────────────────────── no price, and no checkout, in the app
@@ -205,6 +268,7 @@ test('nothing here renders a price or points at a checkout route', () => {
     known('google', 'autocart'),
     known('apple', 'base'),
     known('stripe'),
+    known(null, null, false),
   ];
   for (const r of readings) {
     const { label, detail, href } = manageDestination(r);
@@ -215,4 +279,32 @@ test('nothing here renders a price or points at a checkout route', () => {
     // What must not appear is an INVITATION to buy.
     assert.doesNotMatch(text, /\/pricing|\bsubscribe\b|free trial|resubscribe/i, 'no checkout route');
   }
+});
+
+// ────────────────────────────── the field has to actually arrive, or the arm is unreachable
+
+test('the whole chain carries stripeProfile, so the not-billed arm is reachable', () => {
+  // THE FIX-PRESENT-AND-INERT SHAPE, WHICH THIS REPO HAS SHIPPED ROUGHLY NINE TIMES.
+  // `manageDestination` can be perfect and never fire: the guard is `stripeProfile ===
+  // false`, so if the status route stops emitting the field, or `useSubscription` stops
+  // passing it on, the value is `undefined` at every call site, `?? null` makes it the
+  // NOT-REPORTED case, and every beta account silently gets the dead button back — with
+  // every behavioural test in this file still green, because they call the function
+  // directly. Structural, because the defect is invisible from a passing run.
+  const route = readFileSync('src/app/api/subscription/status/route.ts', 'utf8');
+  const strip = (x: string) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  // The route asks the question ...
+  assert.match(strip(route), /stripe_customer_id IS NOT NULL/);
+  // ... and puts the answer in the payload.
+  assert.match(strip(route), /stripeProfile:/);
+
+  const hook = readFileSync('src/components/v2/useSubscription.ts', 'utf8');
+  const hookCode = strip(hook);
+  assert.match(hookCode, /stripeProfile:\s*j\.stripeProfile\s*\?\?\s*null/);
+  // `?? false` IS THE DANGEROUS TYPO AND IT TYPECHECKS. It would turn every payload that
+  // does not carry the field — an older build, a partial read — into a positive claim
+  // that the user is not billed, which is the absent-reading-as-a-negative failure this
+  // file's three-valued contract exists to prevent.
+  assert.doesNotMatch(hookCode, /stripeProfile[^;\n]*\?\?\s*false/);
 });

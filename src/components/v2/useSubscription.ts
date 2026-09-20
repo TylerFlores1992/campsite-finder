@@ -81,6 +81,7 @@ export function useSubscription(): SubscriptionState {
         autocartPlanAvailable?: boolean;
         provider?: string | null;
         tier?: string | null;
+        stripeProfile?: boolean | null;
       }) => {
         if (cancelled) return;
         setState({
@@ -93,7 +94,14 @@ export function useSubscription(): SubscriptionState {
           // constraint (migration 071), so an unrecognized value is a thing that can
           // really arrive, and the one place that decides what to do about it is the
           // pure function — not this hook and not a component.
-          billing: { known: true, provider: j.provider ?? null, tier: j.tier ?? null },
+          billing: {
+            known: true,
+            provider: j.provider ?? null,
+            tier: j.tier ?? null,
+            // `?? null` AND NEVER `?? false`: a payload that does not carry the field is
+            // an absent reading, and `manageDestination` only acts on an explicit false.
+            stripeProfile: j.stripeProfile ?? null,
+          },
         });
       })
       .catch(() => {
