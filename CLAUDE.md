@@ -1340,9 +1340,15 @@ Verify                19:52:50 -> 20:02:09   FAILURE
 POLLERS** — which write the production database the suite is running against. This is the
 test-versus-production class, but unlike the other four it is **self-inflicted, predictable and
 schedulable**: any merge touching `worker-deploy.yml`'s `paths:` fires both workflows off the
-same push, so the restart is GUARANTEED to land inside that run's test window. **Expect a red
-master Verify on any such merge and check the deploy's window before reading it as a
-regression.**
+same push, so the restart is GUARANTEED to land inside that run's test window.
+- **BUT THE OVERLAP IS NOT THE FAILURE, AND THIS ENTRY SAID IT WAS FOR ABOUT AN HOUR.** As
+  first written it read *"expect a red master Verify on any such merge"*. The very next merge
+  (#386, `483601d`) reproduced the overlap exactly — Deploy 20:48:40→20:53:19 inside Verify
+  20:48:40→20:58:29, all three pollers restarted — and **Verify passed**. So the overlap is
+  guaranteed and the disturbance is a RACE: this is a candidate to CHECK before reading a red
+  as a regression, never a prediction. Struck rather than deleted because it is a tidy story
+  recorded as fact, by the session that had just written the shape-#5 warning two screens
+  above, inside the entry documenting its own mechanism.
 - **PROVED BY TREE HASH, NOT BY READING A FILE LIST.** `git rev-parse be34ac5^{tree}
   b6506d9^{tree}` returned the SAME hash (`47cb9653`), and `git diff be34ac5 b6506d9 -- worker/
   src/ scripts/ .github/` was empty. The squash commit is byte-identical to the branch head that
