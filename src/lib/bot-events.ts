@@ -104,16 +104,42 @@ export async function recordBotEvent(input: BotEventInput, source: string | null
   ).catch((e) => console.error('[bot-events] recordBotEvent failed:', (e as Error).message));
 }
 
+/**
+ * FIXTURE ROWS ARE EXCLUDED, BECAUSE THIS IS A READOUT AND THEY ARE NOT READINGS.
+ *
+ * `npm test` writes real `bot_events` rows against the production database on purpose, and
+ * every suite that does so names itself with a `__`-prefixed sentinel (`__tbe-<pid>-<ts>`,
+ * `__camphawk-verify-DO-NOT-USE__`, …) so its own cleanup can find them. This query had no
+ * source filter at all, so a suite that was KILLED before its cleanup ran — a cancelled CI
+ * twin, which happens on every push to a branch with a PR open — left rows that render in
+ * the readout as real bot behaviour.
+ *
+ * That matters more here than it looks: `bot-events-readout.mts` is the leak
+ * investigation's primary instrument, and a fabricated `ramp-scan` or `cart-burst` row is
+ * indistinguishable from a measurement. The suites already filter on `source === SENTINEL`
+ * themselves, which is what kept this invisible — they were never reading the unfiltered
+ * result.
+ *
+ * `includeFixtures` exists for those suites, which must still be able to read their own
+ * rows back. Default false: a readout should have to ASK for test data.
+ */
 export async function recentBotEvents(
   kind: BotEventKind, hours: number, limit = 50,
+  { includeFixtures = false }: { includeFixtures?: boolean } = {},
 ): Promise<BotEventRow[]> {
   return await query<BotEventRow>(
     `SELECT id, at::text, source, kind, detail, text
        FROM bot_events
       WHERE kind = $1 AND at > NOW() - ($2 || ' hours')::interval
+        -- The escape is LITERAL: underscore is a single-character wildcard in LIKE, so
+        -- an unescaped '__%' also matches every two-character source. ESCAPE names the
+        -- character rather than relying on the backslash default, which is not portable.
+        -- NO BACKTICKS IN THIS COMMENT -- the query is a template literal, so one ends
+        -- the string and the parse error surfaces on an unrelated line. It did, here.
+        AND ($4 OR source NOT LIKE '\_\_%' ESCAPE '\')
       ORDER BY at DESC
       LIMIT $3`,
-    [kind, String(Math.max(1, Math.floor(hours))), limit],
+    [kind, String(Math.max(1, Math.floor(hours))), limit, includeFixtures],
   );
 }
 

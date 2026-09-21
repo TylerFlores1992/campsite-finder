@@ -1327,6 +1327,35 @@ with `npm test > log 2>&1` and grep `^not ok`); lower a fixture sweep's 10-minut
 (that reinstates issue #76); "fix" a real-DB flake by loosening an assertion that covers a
 real bug.
 
+**A SIXTH, AND IT IS THE ONLY ONE YOU CAUSE ON PURPOSE: YOUR OWN WORKER DEPLOY (2026-09-21).**
+Merging `#385` — a tree that had passed **2,388/2,388 locally and green TWICE on CI** — went
+**`# fail 1` of 2,388 on master**, and the two workflows the one push started were:
+
+```
+Deploy worker (push)  19:52:51 -> 19:56:59   success
+Verify                19:52:50 -> 20:02:09   FAILURE
+```
+
+**The deploy ran entirely inside the test window, and a worker deploy RESTARTS ALL THREE
+POLLERS** — which write the production database the suite is running against. This is the
+test-versus-production class, but unlike the other four it is **self-inflicted, predictable and
+schedulable**: any merge touching `worker-deploy.yml`'s `paths:` fires both workflows off the
+same push, so the restart is GUARANTEED to land inside that run's test window. **Expect a red
+master Verify on any such merge and check the deploy's window before reading it as a
+regression.**
+- **PROVED BY TREE HASH, NOT BY READING A FILE LIST.** `git rev-parse be34ac5^{tree}
+  b6506d9^{tree}` returned the SAME hash (`47cb9653`), and `git diff be34ac5 b6506d9 -- worker/
+  src/ scripts/ .github/` was empty. The squash commit is byte-identical to the branch head that
+  had already gone green twice. That is the strongest available form of condition one — the
+  tree that failed IS the tree that passed.
+- **THE NAME WAS UNREACHABLE, EXACTLY AS THIS FILE PREDICTS.** `# fail 1`, `not ok` appears
+  **zero** times in 281,003 characters, and the visible `ok` runs were **1-11 and 1641-2355**, so
+  the failure sat in the hidden range **12..1640**. The window method works and still cannot
+  name it; the local full-suite pass is the substitute.
+- **THE DEPLOY ITSELF WAS GREEN AND THE FLEET WAS FINE** — `poller.shards` 3/3 held, heartbeat
+  4s. So this is the cry-wolf shape once more: the red tick is on the workflow that was
+  CORRECT, about a run it disturbed.
+
 **A HANG MAKES EVERY ASSERTION IN ITS FILE SILENT, WHATEVER THE ORDER (2026-09-20).** A guard
 whose subject can loop for ever cannot live in the same file as the loop. Two attempts, and
 **the second is the finding**: (1) placed at the top of the termination test it never ran,
