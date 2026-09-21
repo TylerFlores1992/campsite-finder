@@ -9,7 +9,10 @@ import { buttonClasses } from '@/components/ui/Button';
 import { useIsNativeApp } from '@/lib/native/context';
 import { stayLabel } from '@/lib/hold-labels';
 import { handoffCopy } from '@/lib/claim-copy';
-import { rcHandoffStep, type RcCheck } from '@/lib/claim-gate';
+import {
+  rcHandoffStep, mayReleaseHold, rcTokenLifeFromReport,
+  type RcCheck, type RcTokenLife,
+} from '@/lib/claim-gate';
 import { loginInvocation } from '@/lib/rc-login-script';
 import { RC_CART_URL } from '@/lib/booking-url';
 import RcSignInForm from './RcSignInForm';
@@ -163,6 +166,18 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    */
   const [tokenDeadline, setTokenDeadline] = useState<number | null>(null);
   /**
+   * WHAT WE LAST LEARNED ABOUT THE TOKEN'S LIFE, as opposed to its existence.
+   *
+   * Held as state rather than derived per-report because the two facts the gate needs —
+   * RC's `customerId` and the token's expiry — arrive on SEPARATE stages, in an order
+   * nothing guarantees. Letting whichever landed last decide is how a dead token sat
+   * beside a live `loggedIn` on 2026-09-21 and the release went through anyway.
+   *
+   * Starts `'unknown'`, which proceeds: a client that reports no expiry at all must behave
+   * exactly as it did before this existed.
+   */
+  const [tokenLife, setTokenLife] = useState<RcTokenLife>('unknown');
+  /**
    * What the injected sign-in last said about itself, and RC's own words when it failed.
    *
    * `loginStage` is the raw stage name so the form can act on `captcha` — the one report the
@@ -247,6 +262,12 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     pending.current.push(r);
     if (flushTimer.current) clearTimeout(flushTimer.current);
     flushTimer.current = setTimeout(flushReports, 1500);
+
+    // TOKEN LIFE, FROM WHICHEVER STAGE HAPPENS TO CARRY IT. `null` means this report said
+    // nothing about it and must leave the last reading alone — an absent reading is not a
+    // dead session, which is the mistake this whole gate is a correction for.
+    const life = rcTokenLifeFromReport(r.stage, r.detail);
+    if (life) setTokenLife(life);
 
     /**
      * THE VERIFICATION IS THE REPORT, not a second probe. `token captured` is the injected
@@ -641,7 +662,12 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * as `unknown` never being reported as a dead RC session, and as the availability read
    * returning null instead of "fully booked".
    */
-  const mayRelease = rcCheck === 'verified' || signedIn;
+  /**
+   * MAY THE BOT LET GO? See `mayReleaseHold` for the 2026-09-21 loss this composition
+   * exists for. `rcCheck` alone used to decide, and `rcCheck === 'verified'` is RC's own
+   * `customerId` — a PERSISTED key that reads "signed in" over a token weeks dead.
+   */
+  const mayRelease = mayReleaseHold(rcCheck, tokenLife, signedIn);
 
   async function claim() {
     // Defensive: the button is disabled, but nothing else stops a stray call, and this
@@ -785,7 +811,11 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           the decision.
         */}
         <div className="mt-4">
-          {rcCheck === 'verified' || signedIn ? (
+          {/* THE SAME QUESTION AS THE BUTTON BELOW, asked once. These were two copies of
+              `rcCheck === 'verified' || signedIn`, so a dead token made the screen say
+              READY over a session that could not cart — the 2026-09-21 loss, showing up in
+              the copy as well as in the gate. */}
+          {mayRelease ? (
             <Step tone="done" title={copy.readyTitle} />
           ) : rcCheck === 'opening' && !canInject ? (
             /*
@@ -863,7 +893,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
 
               On the plain-browser path there is nothing to observe, so it is the only gate
               there is and shows from the start. */}
-          {(rcCheck === 'unconfirmed' || !canInject) && !signedIn && (
+          {(rcCheck === 'unconfirmed' || !canInject || tokenLife === 'dead') && !signedIn && (
             <label className="mt-3 flex w-full cursor-pointer items-start gap-3 rounded-ch-card border border-ch-line bg-ch-card p-4 text-left">
               <input
                 type="checkbox"
@@ -872,9 +902,15 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
                 className="mt-0.5 size-5 shrink-0 accent-ch-green"
               />
               <span className="text-ch-body leading-normal text-ch-ink">
-                {canInject
-                  ? "We couldn't confirm your ReserveCalifornia sign-in. Tick this if you're signed in and we'll hand over anyway."
-                  : `I'm signed in to ReserveCalifornia and looking at ${site}`}
+                {!canInject
+                  ? `I'm signed in to ReserveCalifornia and looking at ${site}`
+                  : tokenLife === 'dead'
+                    /* POSITIVE EVIDENCE, SO IT GETS ITS OWN SENTENCE. "We couldn't confirm"
+                       and "it has expired" are different facts, and only the second tells
+                       the user the thing they can act on. The tick still goes through —
+                       nothing here locks anyone out of a site that is already theirs. */
+                    ? "Your ReserveCalifornia sign-in has expired. Sign in again above, or tick this to hand over anyway — the site goes back on the open market while you sign in."
+                    : "We couldn't confirm your ReserveCalifornia sign-in. Tick this if you're signed in and we'll hand over anyway."}
               </span>
             </label>
           )}
