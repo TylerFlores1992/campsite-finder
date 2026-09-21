@@ -979,6 +979,42 @@ of the second condition. The names are unreachable: the log's visible window is 
   `src/lib/native/context.tsx`). Corollary: **`next build` passing is NOT enough** for
   layout/rendering changes — dynamic segments aren't executed at build, so the throw only
   surfaces at runtime. Smoke-test a real page after deploying (`curl -sI camphawk.app/`).
+- **A COLUMN ALIASED `t` SILENTLY COLLAPSES A `query()` RESULT TO A BARE ARRAY.**
+  `exec_select` is `SELECT json_agg(t) FROM (%s) t`, so a caller's own column aliased `t`
+  makes `json_agg(t)` resolve to that **column** rather than the row — the result is an array
+  of that column's values and every field reads `undefined`, while the ROW COUNT looks right.
+  `exec_dml`'s `RETURNING` path has the identical shape, which is the sharper exposure since
+  that one writes. **The alias being `t` is everything; `AS` is irrelevant in both
+  directions.** Guarded by a tree scan in `src/lib/sql-row-alias.test.mts`, which also asserts
+  the trap is still live so it deletes itself if the wrapper is ever fixed.
+- **`git checkout -- <file>` REVERTS TO HEAD AND DESTROYS UNCOMMITTED WORK — SEVEN RECORDED
+  TIMES.** Mostly mid-mutation-run, where it deletes the fix under test and the next mutations
+  then report `DID NOT APPLY` against a file that no longer contains the code they target —
+  i.e. **the harness reports its own damage as a result about the guards.** The tell is
+  `git status --short` after the run. **Commit before mutating**, and revert a mutation by
+  EDIT, never by checkout.
+- **NEVER READ AN EXIT CODE THROUGH A PIPE.** `npm run verify 2>&1 | tail -25` reports
+  **`tail`'s** status, which is always 0 — *and* the tail cuts every `^not ok` line, so one
+  command produces two independent false greens. `... > log 2>&1; echo "EXIT=$?"` has the same
+  defect one step along (it reports `echo`'s status). Redirect to a file, then check `# fail`
+  and `grep '^not ok'` in the log — never the wrapper's exit.
+- **`sqlit` INTERPOLATES, IT DOES NOT BIND.** A plain object used to become the literal
+  `'[object Object]'`, which Postgres rejected and a `.catch` swallowed — that switched off the
+  memory series entirely for ten minutes with nothing reporting it. It **throws** on a plain
+  object now; pass `JSON.stringify(x)` with an explicit `::jsonb` cast. It also means every SQL
+  string carries real values spliced into it, so **never return a DB error message to a
+  caller** — log it.
+- **A BACKTICK IN A SQL COMMENT TERMINATES THE TEMPLATE LITERAL.** These queries are template
+  literals, so a backtick inside a `--` comment ends the string and the parse error surfaces on
+  an unrelated line well below the cause. `tsc` catches it; nothing else does. Same family:
+  **a semicolon inside a SQL string literal breaks a naive `;` splitter**, which is how
+  migrations are applied by hand.
+- **`npm run verify` GATES ON TWO SOURCE SCANS THAT `tsc` AND THE SUITE CANNOT SEE.**
+  `jsx-spacing` (an HTML entity in a JSX text node makes SWC drop that node's leading
+  whitespace) and `us-spelling` (British spellings in user-visible copy; **comments are
+  stripped on purpose** — this repo's comments are British by convention, and a guard that
+  flagged them would produce four hundred hits and be deleted). Neither can fail a typecheck
+  or a test, which is exactly why they are gates.
 
 ## The house failure shapes — stated once, so they are not re-derived
 
