@@ -1070,6 +1070,30 @@ has one row per moved block and the reassembly proof.
 prohibitions, so a reader who never opens the archive still cannot re-run a dead experiment.
 Open the archive when you are about to CHANGE the thing, not to find out what it concluded.
 
+### Domain knowledge lives in SKILLS now — the only genuine progressive disclosure here
+
+Three skills sit beside the archives and carry the working knowledge for the subsystems most
+likely to be CHANGED rather than merely read: `.claude/skills/poller/`,
+`.claude/skills/rc-autocart/` and `.claude/skills/store-release/` — **912 lines, none of them
+resident.** A skill is loaded when the task matches its one-line `description`, so nobody has
+to invoke one; `/poller` and friends force it if a session is being stubborn. **Write the
+`description` as a TRIGGER** — the file paths and the symptoms — not as a summary, because it
+is the only part of the skill that is always in context and it is the whole matching surface.
+
+**`@imports` DEFER NOTHING — they are INLINED.** Lines 1-2 of this file are `@AGENTS.md` and
+`@docs/LANES.md`, and both arrive in full on every turn. So "split the big file into imports"
+is the obvious first idea and saves **exactly zero** tokens. A skill's body is the only thing
+in this repo that is genuinely fetched on demand.
+
+**The resident block, measured 2026-09-21:** `CLAUDE.md` + `AGENTS.md` + `docs/LANES.md` =
+**1,653 lines / 121,901 bytes**, against **1,623,625 bytes** before — a 13.3x reduction. The
+four archives and the three skills are ~21,000 further lines that cost nothing at all until
+something asks for them.
+
+**DO NOT** move a subsystem's detail back into this file to make it findable — that is what the
+router entries above are for, and resident text is paid for on every turn of every session
+whether or not anybody reads it.
+
 ---
 
 ### The Chromium / RC memory leak — DIAGNOSED, CONTAINED, **NOT FIXED**
@@ -1249,6 +1273,19 @@ mechanisms: two concurrent runs; a **cancelled CI twin's litter** (one push fire
 `push` and a `pull_request` run, overlapping **3-301 seconds**); the **Nightly RIDB Sync**,
 a third writer no lane starts; and **test-versus-PRODUCTION** — the Fly poller runs the same
 sweeps every 60s against the same rows, which serializing the lanes cannot prevent.
+
+**A FIFTH, AND IT IS THE EASIEST TO TELL APART: the RUNNER'S NETWORK.** 2026-09-21, master at
+`93e56d4`: **50 of 2,377** failed in one block, the only error in the log being
+`DB mutate error: TypeError: fetch failed` on a Supabase INSERT. `client.ts` retries
+DNS/`ECONNREFUSED`-class errors for reads AND writes, and `fetch failed` for **reads only** —
+it may have executed — so a write hit by a blip is not retried, by design. **Dozens of
+failures at once is this; ONE is the other four.** Every other mechanism was excluded by
+arithmetic rather than argument: the previous run ended 3 minutes earlier (no overlap), the
+Nightly Sync ran 14 hours before, and `git diff 07dcd41 93e56d4 -- worker/ src/ scripts/` was
+**empty** — the code was byte-identical to a tree that had passed on master 20 minutes
+earlier. The suite then passed **2,376/2,376 locally at the failing SHA**, and the re-run was
+green. **Prove the diff cannot reach the code with a path-scoped `git diff`, not by reading
+the file list.**
 
 **DO NOT:** push again while your own CI is running (**a merge IS a test run**); read a
 `get_job_logs` with zero `not ok` as "no failure" (it caps at ~5,000 lines — reproduce locally
