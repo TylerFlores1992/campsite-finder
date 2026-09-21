@@ -115,10 +115,19 @@ test('the token stage still decides, and both directions are pinned', () => {
   assert.equal(rcTokenLifeFromReport('token', { captured: false, expiresInSec: -5 }), null);
 });
 
-/** Zero is dead, not "unknown". An off-by-one here is a release over an expiring session. */
-test('the boundary is > 0', () => {
+/**
+ * Zero is dead, not "unknown". An off-by-one here is a release over an expiring session.
+ *
+ * BOTH BRANCHES, BECAUSE ONE DOES NOT COVER THE OTHER. The first version of this test
+ * asserted the `session` branch only; flipping the TOKEN branch's `> 0` to `>= 0` was then
+ * a mutation that survived the whole file. Two carriers of one fact need two boundaries
+ * pinned, which is the same lesson that produced the function in the first place.
+ */
+test('the boundary is > 0, on every stage that carries an expiry', () => {
   assert.equal(rcTokenLifeFromReport('session', { storedToken: 'jwt', storedExpiresInSec: 0 }), 'dead');
   assert.equal(rcTokenLifeFromReport('session', { storedToken: 'jwt', storedExpiresInSec: 1 }), 'alive');
+  assert.equal(rcTokenLifeFromReport('token', { captured: true, expiresInSec: 0 }), 'dead');
+  assert.equal(rcTokenLifeFromReport('token', { captured: true, expiresInSec: 1 }), 'alive');
 });
 
 /**
