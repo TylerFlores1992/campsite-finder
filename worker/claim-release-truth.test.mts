@@ -155,6 +155,30 @@ test('nothing here can lock a user out of a hold', () => {
   // than refusing, because "we could not confirm" and "there is no session" are different
   // facts and only the second would justify blocking — and a wrong read costs somebody the
   // hold they waited all morning for.
-  assert.match(code, /const mayRelease = rcCheck === 'verified' \|\| signedIn;/,
-    'the checkbox must remain an independent route to release');
+  //
+  // RE-ANCHORED 2026-09-21, AND THE ORIGINAL FIRING WAS CORRECT. This asserted the literal
+  // `const mayRelease = rcCheck === 'verified' || signedIn;`. That is the EXPRESSION, not
+  // the property — so it failed the moment the gate moved into `lib/claim-gate` to stop
+  // authorising a release over a dead token, while the property it names was preserved
+  // exactly. A guard pinned to a spelling reports every rewrite as a regression and cannot
+  // tell one from a real one; this repo's most-repeated guard defect, arriving here.
+  //
+  // What is pinned now is the PROPERTY: the component must not re-implement the decision,
+  // and the user's own confirmation must still reach it. The behaviour — that the checkbox
+  // overrides every refusal the gate can produce, across all twelve combinations — is
+  // asserted directly in `src/lib/claim-gate.test.mts`, which is where it can be called.
+  assert.match(code, /const mayRelease = mayReleaseHold\(rcCheck, tokenLife, signedIn\);/,
+    'the gate must delegate to the tested function, with the checkbox passed through');
+  assert.ok(!/const mayRelease = [^;]*\|\|[^;]*;/.test(code),
+    'and must not go back to deciding it inline, which is what let the two facts disagree');
+});
+
+test('the READY step and the release button ask ONE question', () => {
+  // They were two copies of `rcCheck === 'verified' || signedIn`, so a dead token made the
+  // screen say READY over a session that could not cart — the 2026-09-21 loss showing up in
+  // the copy as well as in the gate. A second copy is how they drift apart again.
+  assert.equal((code.match(/mayReleaseHold\(/g) ?? []).length, 1,
+    'the decision may be computed exactly once');
+  assert.ok(!/rcCheck === 'verified' \|\| signedIn/.test(code),
+    'no screen may re-derive readiness from the raw check');
 });

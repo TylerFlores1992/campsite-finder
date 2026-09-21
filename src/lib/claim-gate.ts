@@ -96,3 +96,96 @@ export function rcHandoffStep(
   if (rcCheck === 'verified' || rcCheck === 'unconfirmed') return 'finish';
   return 'sign-in';
 }
+
+/**
+ * What the webview's reports say about the LIFE of the RC token behind the sign-in.
+ *
+ * ## The bug this exists for (2026-09-21)
+ *
+ * `mayRelease` flipped on `rcCheck === 'verified'` alone, and since #249 the only thing
+ * that sets `verified` is `rc-session { loggedIn: true }` — RC's own `customerId` in
+ * localStorage. That key is PERSISTED: RC's SPA boots `isLoggedIn` from
+ * `!!localStorage.getItem("customerId")`, so it reads "signed in" over a token that died
+ * weeks ago. On 2026-09-21 hold `#R359` reported, in one pre-release pass:
+ *
+ *     rc-session { loggedIn: true }
+ *     session    { storedToken: 'jwt', storedExpiresInSec: -1466016 }
+ *
+ * — a token seventeen days dead sitting beside RC's own "signed in". The gate read the
+ * first line, authorised the release, and the user then had to walk the whole Okta sign-in
+ * AFTER the bot had let go. The campsite was booked by somebody else before their precart
+ * fired.
+ *
+ * ## Why this is not the 2026-08-21 fix again
+ *
+ * That one reads `expiresInSec` off the **`token`** stage, and it still does. The pass
+ * above never emitted a `token` stage — the expiry was in the **`session`** stage, which
+ * nothing looked at. One fact, two carriers, and the gate was wired to one of them.
+ * `classifyRcAppSession` in `lib/rc-session-verdict` has read this field correctly since it
+ * was written; it is called only by the admin probe route, so the knowledge existed and was
+ * nowhere near the decision.
+ *
+ * ## `prevTokenExpiresInSec` IS DELIBERATELY NOT READ HERE
+ *
+ * It means "life left in the token we ARRIVED holding", so a negative value is the normal
+ * opening of a healthy silent re-mint — the `renewed` verdict. Treating it as death would
+ * refuse the release on exactly the sessions that work.
+ */
+export type RcTokenLife = 'alive' | 'dead' | 'unknown';
+
+/**
+ * One report's worth of evidence about token life, or `null` for "this stage says nothing".
+ *
+ * `null` is not `'unknown'`: the caller keeps the last thing it was told, and a stage
+ * carrying no expiry must not erase a reading taken a moment ago. Only a POSITIVE reading —
+ * a token that exists and whose expiry we could parse — moves the verdict in either
+ * direction, so an unreadable report can never be rendered as a dead session.
+ */
+export function rcTokenLifeFromReport(
+  stage: string,
+  detail: Record<string, unknown> | null,
+): RcTokenLife | null {
+  if (!detail) return null;
+  const secs = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+  // A LIVE CAPTURE IS THE STRONGEST EVIDENCE — a token caught off RC's own authenticated
+  // request. Unchanged in meaning from the 08-21 fix; restated here so both carriers of the
+  // same fact are read in one place rather than in two that can drift.
+  if (stage === 'token' && detail.captured === true) {
+    const left = secs(detail.expiresInSec);
+    return left === null ? null : left > 0 ? 'alive' : 'dead';
+  }
+
+  // THE STORED COPY, AND ONLY WHEN ONE ACTUALLY EXISTS. `storedToken: 'none'` is NOT read as
+  // death: RC mints on demand, so "nothing in storage yet" is an absence, and this file's
+  // whole subject is absences that were read as negatives. A token that is PRESENT and past
+  // its expiry is positive evidence, and it is the #R359 reading above.
+  if (stage === 'session' && typeof detail.storedToken === 'string' && detail.storedToken !== 'none') {
+    const left = secs(detail.storedExpiresInSec);
+    return left === null ? null : left > 0 ? 'alive' : 'dead';
+  }
+
+  return null;
+}
+
+/**
+ * May the bot let go? The pre-release twin of `rcHandoffStep`.
+ *
+ * ORDER IS THE WHOLE POINT. `userConfirmed` is checked FIRST and unconditionally, because
+ * the checkbox has always been the way past a gate that cannot see: a wrong reading must
+ * cost a sentence, never a hold somebody waited all morning for. Then positive evidence of
+ * a dead token refuses — and only then does RC's own `loggedIn` decide, which is what the
+ * gate used to consult on its own.
+ *
+ * `'unknown'` proceeds, for the same reason `unconfirmed` does in `rcHandoffStep`: we could
+ * not tell, and that is not the same as having looked and found nothing.
+ */
+export function mayReleaseHold(
+  rcCheck: RcCheck,
+  tokenLife: RcTokenLife,
+  userConfirmed: boolean,
+): boolean {
+  if (userConfirmed) return true;
+  if (tokenLife === 'dead') return false;
+  return rcCheck === 'verified';
+}
