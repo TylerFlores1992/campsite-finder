@@ -811,10 +811,14 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           the decision.
         */}
         <div className="mt-4">
-          {/* THE SAME QUESTION AS THE BUTTON BELOW, asked once. These were two copies of
-              `rcCheck === 'verified' || signedIn`, so a dead token made the screen say
-              READY over a session that could not cart — the 2026-09-21 loss, showing up in
-              the copy as well as in the gate. */}
+          {/* THE SAME QUESTION AS THE BUTTON BELOW, asked once. This and the release button
+              were two separate copies of the old inline gate, so a dead token made the
+              screen say READY over a session that could not cart — the 2026-09-21 loss,
+              showing up in the copy as well as in the gate.
+
+              The old expression is deliberately NOT quoted here: this file's structural
+              guard strips only line comments, so a JSX comment reciting a forbidden shape
+              defeats the assertion that forbids it. (It did, once, in this very edit.) */}
           {mayRelease ? (
             <Step tone="done" title={copy.readyTitle} />
           ) : rcCheck === 'opening' && !canInject ? (

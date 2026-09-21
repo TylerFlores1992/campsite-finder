@@ -191,8 +191,12 @@ workflows:
         #
         # THE APP HAS NO CAMERA CODE AND STILL REACHES THE CAMERA, which is why this was
         # missed for five submissions. There is no camera plugin in package.json, no
-        # getUserMedia / mediaDevices anywhere in src/, and exactly ONE `<input>` in the
-        # whole app — a hidden one. Every route below belongs to WKWebView and runs IN OUR
+        # getUserMedia / mediaDevices anywhere in src/, and — the load-bearing count —
+        # ZERO `type="file"` inputs, so nothing we author opens a picker. (An earlier
+        # version of this comment said "exactly ONE `<input>` in the whole app". That is
+        # wrong and was corrected in #378's own merge message but never here: there are
+        # ~25 `<input>`s, one of them hidden. The diagnosis rests on the file-input count,
+        # which is zero.) Every route below belongs to WKWebView and runs IN OUR
         # PROCESS, so it is our Info.plist that is checked:
         #
         #   NSCameraUsageDescription           Clerk's account modal. V2Nav mounts

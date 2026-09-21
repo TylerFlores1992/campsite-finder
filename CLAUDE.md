@@ -1190,6 +1190,40 @@ times); widen `supportsRcHold` past ReserveCalifornia (the bot holds ONE account
 watch would be offered a hold nothing on earth can perform); "fix" a stranded hold by
 loosening a test assertion.
 
+**RC'S `customerId` IS PERSISTED, SO "SIGNED IN" OUTLIVES THE SESSION BY WEEKS (2026-09-21).**
+Two Carpinteria holds carted and **both hand-offs were declined** — *"The unit is not available
+for the date(s) specified"* — and RC's grid now shows both units booked under fresh reservation
+ids. `#R359`'s pre-release pass reported `rc-session { loggedIn: true }` **beside**
+`session { storedToken: 'jwt', storedExpiresInSec: -1466016 }`: a token **seventeen days dead**
+under RC's own "signed in", because its SPA boots `isLoggedIn` from
+`!!localStorage.getItem("customerId")` and that key survives expiry. Since #249 `loggedIn` is
+the ONLY thing that sets `rcCheck = 'verified'`, and `mayRelease` was `verified || signedIn` —
+so the gate let the bot go, and the user then walked the **whole Okta sign-in after the release**
+with the site back on the open market.
+- **IT IS NOT THE 2026-08-21 FIX RECURRING.** That one reads `expiresInSec` off the **`token`**
+  stage and still works. This pass emitted **no `token` stage at all** — the expiry rode the
+  **`session`** stage, which nothing read. **One fact, two carriers, and the gate was wired to
+  one of them.** `classifyRcAppSession` has read the field correctly since it was written and is
+  called only by `/api/admin/rc-session-probe`, so the knowledge existed nowhere near the
+  decision. Fixed in `lib/claim-gate` (`rcTokenLifeFromReport` + `mayReleaseHold`), guarded by
+  `src/lib/claim-gate.test.mts`, five mutations, **one of which survived the first round**: the
+  boundary test pinned the `session` branch only, so flipping the `token` branch's `> 0` to
+  `>= 0` went unnoticed. **Two carriers need two boundaries pinned.**
+- **`prevTokenExpiresInSec` IS THE TRAP AND IS DELIBERATELY NOT READ.** It is negative on every
+  healthy silent re-mint (the `renewed` verdict), so reading it refuses the sessions that work.
+  `#R359` had BOTH fields negative, so a test built from that row alone cannot tell which field
+  the code reads — the guard carries a separate renewal row for exactly that.
+- **`#M450` IS NOT EXPLAINED BY ANY OF THIS AND IS STILL OPEN.** Its session was healthy
+  (`storedExpiresInSec: 3482`), it was carted at **T+0.1s** by the burst, and its precart was
+  declined anyway — claimed at **minute 27.5**, past the point where the screen already warns
+  the site may be gone. Whether RC had dropped our entry or a competitor took it inside the
+  exposure window **is not determinable from what we recorded**, and the two live figures for
+  RC's cart lapse are a bundle-read **15 minutes** and a single observation of **45**.
+- **`released` IS REPORTED AS SUCCESS WHEN IT IS NOT.** Both rows read `released` with
+  `claimed_at` NULL, and the state table calls that *"the bot let go; the user's own session has
+  it"*. There is **no terminal state for "handed off and the user lost the race"**, so the
+  readout renders two lost campsites as the happy path.
+
 ### The mini-PC — supervision, updates, the watchdog, remote control
 **Full record: `docs/ARCHIVE-RC-AUTOCART.md`.**
 
@@ -1292,6 +1326,32 @@ the file list.**
 with `npm test > log 2>&1` and grep `^not ok`); lower a fixture sweep's 10-minute age gate
 (that reinstates issue #76); "fix" a real-DB flake by loosening an assertion that covers a
 real bug.
+
+**A HANG MAKES EVERY ASSERTION IN ITS FILE SILENT, WHATEVER THE ORDER (2026-09-20).** A guard
+whose subject can loop for ever cannot live in the same file as the loop. Two attempts, and
+**the second is the finding**: (1) placed at the top of the termination test it never ran,
+because a CEILING test two tests above already calls the ladder with `MAX_SAFE_INTEGER` — the
+ordinary guard-after-the-thing shape, whose obvious repair is to move it up; (2) moved to the
+**first test in the file** it still could not report, because **node:test buffers a file's
+output until the file COMPLETES**, so a hang anywhere in it yields `TAP version 13` and not one
+line more. Measured both with `--test` and by running the file directly. An assertion that
+throws in test 1 is recorded and never printed. **So ordering is not the remedy and no position
+inside a hanging file is one** — `worker/renewal-ladder-shape.test.mts` never calls the ladder,
+so it cannot hang, and it fails in **1 second** naming the line where the in-file versions hung
+for 60s asserting nothing.
+- **AND IT IS WHY A MUTATION RUN MUST READ THE CLOCK, NOT ONLY THE EXIT CODE.** A hang under
+  `timeout` exits 124, a non-zero exit like any other failure; a suite that "fails" in 60s and
+  one that fails in 1s are different facts, and only the second is a guard.
+- **TWO ASSERTIONS, BECAUSE NEITHER CATCHES THE OTHER'S MUTATION.** The loop may not be bounded
+  by the gap it is doubling (doubling zero never reaches the cap), AND the step count may not be
+  bounded by `failures` (which has no upper bound). Deleting `MAX_DOUBLINGS` leaves the header
+  reading `n < steps` and sails past the first check — which is how that mutation survived a
+  verification round.
+- **THIS ENTRY WAS ITSELF STRANDED FOR A DAY AND NEARLY LOST.** It was written on 2026-09-20
+  onto a branch whose PR never opened, so the 09-21 prune — which read master — could not carry
+  it, and `git grep` on master found it nowhere. Recovered from the branch before restarting it.
+  **`docs/LANES.md`'s rule is not only about the side lane's notes file**: an unmerged commit on
+  your own lane's branch is the same hazard, and a prune is exactly when it bites.
 
 ### The web app, watches, Explore and SEO
 **Full record: `docs/ARCHIVE-PRODUCT-AND-PLATFORM.md`.**
