@@ -1931,6 +1931,33 @@ windowStart 2 · windowEnd 5 · minHoursToRelease 6      RC releases at 08:00 PT
   lead leave a usable overlap against an 08:00 release. That is why three constants could be
   individually correct and jointly useless.
 
+#### AND IT BIT THE SAME EVENING, WITH THE OWNER'S OWN HOLDS ON THE OTHER SIDE OF IT (2026-09-20)
+The arithmetic above was walked against a hypothetical release. Hours later it was the live
+state, and it is worth recording as an observation rather than a derivation:
+```
+box HEAD   db08b9b   11 commits behind master
+in the gap scripts/auto-cart-bot/recgov-login.mjs   +423  <- #379, the fix for the
+           scripts/auto-cart-bot/renewal-schedule.mjs +140     owner's own reported bug
+           scripts/auto-cart-bot/rc-keepwarm.mjs      +9
+holds      #M450 and #R359, both `requested` by the owner, releasing 2026-09-21 08:00 PT
+session    DEAD 2h43m, okta GONE(404)
+```
+- **SO THE UNATTENDED PATH IS SHUT TONIGHT, BY THE ARITHMETIC ABOVE AND NOT BY A FAULT.**
+  `nextHoldRelease` returns 08:00 PT, the quiet window is 02:00-05:00, and the 6h gate covers
+  all of it.
+- **"UPDATE NOW" IS OPEN AND HAS A DEADLINE OF 02:00 PT.** A request lifts the window and not
+  the release check, so it passes while the lead exceeds 6h — verified against the real
+  function at 17.7h — and is refused from 02:00 onward.
+- **AND THE USUAL COST OF PRESSING IT IS ZERO RIGHT NOW, WHICH IS THE PART THAT IS EASY TO GET
+  BACKWARDS.** The standing objection is that an update ends the RC session, because
+  `stop-all` closes the Chromium the token lives in. **The session is already dead** — so at
+  this moment the destructive half costs nothing, and `maybeAutoLogin` at T-30 (07:30 PT) is
+  the designed repair either way, with the login rehearsal having PASSED at 03:01 the same
+  morning. **A dead session is the CHEAPEST moment to update, not a reason to wait.**
+- **THERE IS NO SCRIPTED PATH: `requestBotUpdate` has exactly one caller**, the Clerk-authed
+  `/api/admin/bot-update` route, so no session can press it. Checked rather than assumed —
+  this is the owner's action by construction, not by policy.
+
 ### "UPDATE NOW" IS FAST NOW (2026-08-19) — and the ~20-minute note below is superseded
 - **THE CLAIM WAS THE STALL.** A poller claims within 15s and spawns the updater; when the
   GUARD refuses (release within 6h, feed unreachable) the run ENDS — but the claim sat until
