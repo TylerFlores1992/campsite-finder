@@ -59,7 +59,10 @@ test('round trip: a ramp-scan event with a NUL in its text is stored and read ba
     { kind: 'ramp-scan', detail: { rcMb: 3500, complete: true }, text: 'OS commitUsedMB=46000\u0000\nEND' },
     SENTINEL,
   );
-  const rows = (await recentBotEvents('ramp-scan', 1, 200)).filter((r) => r.source === SENTINEL);
+  // `includeFixtures` because this suite's own rows ARE fixtures — the sentinel is
+  // `__`-prefixed, which is exactly what the readout now excludes.
+  const rows = (await recentBotEvents('ramp-scan', 1, 200, { includeFixtures: true }))
+    .filter((r) => r.source === SENTINEL);
   assert.equal(rows.length, 1, 'stored — a NUL that reached Postgres would have thrown and stored nothing');
   assert.equal(rows[0].kind, 'ramp-scan');
   assert.deepEqual(rows[0].detail, { rcMb: 3500, complete: true }, 'jsonb came back as an object, not "[object Object]"');
@@ -71,7 +74,8 @@ test('round trip: a tab-close event with no text stores NULL text and its detail
     { kind: 'tab-close', detail: { label: 'renewal', tripMs: 61000, closeMs: 40, hung: false } },
     SENTINEL,
   );
-  const rows = (await recentBotEvents('tab-close', 1, 500)).filter((r) => r.source === SENTINEL);
+  const rows = (await recentBotEvents('tab-close', 1, 500, { includeFixtures: true }))
+    .filter((r) => r.source === SENTINEL);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].text, null);
   assert.equal((rows[0].detail as Record<string, unknown>).hung, false);
@@ -99,4 +103,75 @@ test('the rc-holds route records body.event BEFORE the hold work, like the memor
   assert.match(block, /state: 'event-recorded'/);
   const claim = code.indexOf("if (typeof body?.updateClaim === 'string') {");
   assert.ok(claim > ev, 'returns before the update claim and the hold work — at 08:00:00 nothing goes in front of a cart');
+});
+
+/**
+ * THE READOUT MUST NOT SHOW TEST ROWS — and until 2026-09-21 it did.
+ *
+ * `npm test` writes real `bot_events` rows against the production database on purpose.
+ * Every suite that does names itself with a `__`-prefixed sentinel so its cleanup can find
+ * them again, and a suite KILLED before that cleanup runs — a cancelled CI twin, which
+ * happens on every push to a branch with a PR open — leaves them behind for ever.
+ *
+ * `bot-events-readout.mts` is the leak investigation's primary instrument, so a stray
+ * `ramp-scan` or `cart-burst` row there is indistinguishable from a measurement. The
+ * suites above never noticed because they filter on their own sentinel and so were never
+ * reading the unfiltered result.
+ */
+test('a fixture row is invisible to the readout and visible to its own suite', async () => {
+  const kind = 'ramp-scan';
+  await recordBotEvent({ kind, detail: { probe: 'source-filter' } }, SENTINEL);
+
+  const asReadout = await recentBotEvents(kind, 1, 500);
+  assert.equal(asReadout.filter((r) => r.source === SENTINEL).length, 0,
+    'the default read must not carry a __-prefixed fixture row');
+
+  const asSuite = await recentBotEvents(kind, 1, 500, { includeFixtures: true });
+  assert.ok(asSuite.some((r) => r.source === SENTINEL),
+    'and a suite asking for its own rows must still get them');
+});
+
+/**
+ * THE UNDERSCORE IS A WILDCARD, WHICH IS THE WHOLE REASON FOR THE `ESCAPE` CLAUSE.
+ *
+ * Unescaped, `'__%'` matches ANY source of two or more characters — i.e. every real bot
+ * row — and the readout would come back empty. An empty readout reads as "the bot did
+ * nothing", which is this file's own subject: an absence rendered as a fact.
+ *
+ * ASSERTED AGAINST POSTGRES, WITHOUT WRITING A ROW. The obvious version of this test
+ * inserts an event with a short real-looking source like 'rc' and reads it back — and that
+ * row is indistinguishable from a real bot event in the very readout this change exists to
+ * clean up, for ever if the suite is killed before its cleanup (which is the exact scenario
+ * being guarded). A test for "fixtures must not pollute the readout" must not pollute the
+ * readout. The predicate is what matters and Postgres can be asked about it directly.
+ */
+test('a real two-character source is not swallowed by the wildcard', async () => {
+  // TWO HALVES, AND THE FIRST ONE ALONE PROVED NOTHING. This test originally asserted the
+  // semantics with LITERALS — `'rc' NOT LIKE '__%'` — which is a true statement about
+  // Postgres and says nothing whatever about OUR query. Deleting the ESCAPE clause from
+  // `recentBotEvents` was a mutation that survived it completely. Verified, then fixed.
+  //
+  // So: assert the semantics (why it matters) AND the source (that we actually do it).
+  const [row] = await query<{ escaped: boolean; unescaped: boolean }>(
+    `SELECT ('rc' NOT LIKE '\\_\\_%' ESCAPE '\\') AS escaped,
+            ('rc' NOT LIKE '__%')                   AS unescaped`,
+  );
+  assert.equal(row.escaped, true, "'rc' must survive the escaped predicate");
+  assert.equal(row.unescaped, false,
+    'and the unescaped form must be shown to swallow it, or this proves nothing');
+
+  // THE QUERY ITSELF. Read from source because `recentBotEvents` cannot be asked what SQL
+  // it ran, and a behavioural check would have to INSERT a short real-looking source — a
+  // row indistinguishable from a real bot event in the very readout this change cleans up,
+  // permanently if the suite is killed before cleanup. That is the scenario being guarded,
+  // so the test must not create one.
+  const src = readFileSync('src/lib/bot-events.ts', 'utf8');
+  const fn = src.slice(src.indexOf('export async function recentBotEvents'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.ok(!/^\s*(\/\/|\*|\/\*)/m.test(body.split('\n').find((l) => l.includes('NOT LIKE')) ?? ''),
+    'the predicate must be live code, not a commented-out line');
+  assert.match(body, /source NOT LIKE '\\_\\_%' ESCAPE '\\'/,
+    'the query must escape both underscores AND name the escape character — without it, '
+    + "'__%' matches every source of two or more characters and the readout comes back "
+    + 'empty, which reads as "the bot did nothing"');
 });

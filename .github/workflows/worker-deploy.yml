@@ -112,6 +112,11 @@ jobs:
             | jq -r '[.[] | select(.state == "started") | .id] | join(" ")')
           echo "started before deploy: ${running:-<none>}"
           echo "running=$running" >> "$GITHUB_OUTPUT"
+          # HOW MANY, not just which. Fly REPLACES a machine it could not reach at deploy
+          # time, so the ids can all be stale afterwards while the fleet is perfectly
+          # healthy (issue #243). The count survives a replacement; the ids do not, so it
+          # is the count that can still answer "is the fleet as up as it was?".
+          echo "count=$(printf '%s\n' $running | grep -c . || true)" >> "$GITHUB_OUTPUT"
 
       - name: Deploy
         # --local-only builds with the runner's own Docker and pushes straight to
@@ -139,11 +144,38 @@ jobs:
           for id in $running; do
             state=$(flyctl machines list --config "$FLY_CONFIG" --json \
               | jq -r --arg id "$id" '.[] | select(.id == $id) | .state')
+            # AN EMPTY STATE MEANS GONE, NOT STOPPED — issue #243, and the shape this repo
+            # has paid for more than any other. `select(.id == $id)` matches nothing when
+            # Fly REPLACED the machine (it does that to any machine unreachable at deploy
+            # time), so `$state` is the empty string, `"" != "started"` is true, and the
+            # step tried to start a machine that does not exist:
+            #   Error: failed to obtain lease: machine not found
+            # The deploy itself was completely fine every time this fired. That is the
+            # INVERSE of the trap this workflow exists for, and its cost is that the next
+            # genuinely red worker deploy gets skimmed.
+            if [ -z "$state" ]; then
+              echo "machine $id: gone — Fly replaced it during this deploy, nothing to start"
+              continue
+            fi
             echo "machine $id: $state"
             if [ "$state" != "started" ]; then
               flyctl machine start "$id" --config "$FLY_CONFIG"
             fi
           done
+
+          # AND THE COUNT IS WHAT THE STEP IS ACTUALLY FOR. Skipping a replaced id is only
+          # safe if something still checks the fleet came back up — otherwise this fix
+          # turns a false alarm into a silent one, which is strictly worse. Fly's
+          # replacement normally starts on its own; if it did not, this is the failure the
+          # step exists to catch, and it is a real one.
+          before="${{ steps.pre.outputs.count }}"
+          after=$(flyctl machines list --config "$FLY_CONFIG" --json \
+            | jq -r '[.[] | select(.state == "started")] | length')
+          echo "started machines: $before before, $after after"
+          if [ -n "$before" ] && [ "$after" -lt "$before" ]; then
+            echo "::error::Fleet came back smaller than it went in ($after < $before)."
+            exit 1
+          fi
 
       - name: Verify the poller is actually alive
         # The deploy exiting 0 says nothing about whether detection resumed. The
