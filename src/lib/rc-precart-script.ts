@@ -765,6 +765,11 @@ export function buildPrecartScript(): string {
   const dir = join(process.cwd(), 'extension');
   const inject = readFileSync(join(dir, 'rc-inject.js'), 'utf8');
   const content = readFileSync(join(dir, 'content-rc.js'), 'utf8');
+  // THE HAND-OFF RETRY RULES, and they must precede `content`. `content-rc.js` reads
+  // `window.__chHandoffRetry` at the top of its submit path; a decision module
+  // concatenated after its consumer is the fix-present-and-inert shape, and the fallback
+  // it degrades to is a single attempt — i.e. silently the old behaviour.
+  const retry = readFileSync(join(dir, 'rc-retry.js'), 'utf8');
 
   // ORDER MATTERS: the capture has to be installed before the page script that waits on
   // it, or the token arrives before anyone is listening. Same reasoning as
@@ -791,6 +796,7 @@ export function buildPrecartScript(): string {
     '  }',
     '})();',
     inject,
+    retry,
     content,
     // AFTER the precart, because it reads the marker that a successful cart writes and the
     // key that same path adopts. On the page where it matters this is a fresh document and

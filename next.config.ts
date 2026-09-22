@@ -73,7 +73,12 @@ const nextConfig: NextConfig = {
   // path is invisible to tracing — without this the route 500s in production while
   // working perfectly in dev, which is the worst shape of deploy bug.
   outputFileTracingIncludes: {
-    '/api/rc-precart': ['./extension/rc-inject.js', './extension/content-rc.js'],
+    // EVERY FILE `buildPrecartScript` READS MUST BE LISTED. A file missing here is not a
+    // degraded bundle — the route reads it with readFileSync and returns a 500, so the
+    // hand-off has no script at all. rc-retry.js was added 2026-09-21 with the retry loop.
+    '/api/rc-precart': [
+      './extension/rc-inject.js', './extension/rc-retry.js', './extension/content-rc.js',
+    ],
   },
 };
 
