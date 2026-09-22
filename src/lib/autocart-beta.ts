@@ -66,3 +66,69 @@ export const AUTOCART_BETA_NOTE_SHORT =
  */
 export const AUTOCART_BETA_SCOPE =
   'This is about ReserveCalifornia holds only — Recreation.gov auto-cart is not affected.';
+
+/**
+ * ── THE BETA IS CLOSED (2026-09-22, owner's call) ───────────────────────────────────
+ *
+ * `hasAutocartEntitlement` is `is_beta OR autocart_trial_until OR (a live
+ * autocart/grandfathered subscription)`, and on 2026-09-22 that was **16 people**: 11
+ * beta flags, 1 comped trial, 3 paying Auto-Cart subscribers and 1 grandfathered row.
+ * Every one of them was being offered a button that promises to take a real campsite off
+ * the market on their behalf.
+ *
+ * That morning it did not work, twice over. `#M421` carted at 15:00:01Z, the hand-off
+ * webview reported `storedToken: 'none'`, `oktaKeys: 0`, `rcLoggedIn: false` on FIVE
+ * consecutive injections, the precart could only ask the user to sign in, and the row
+ * ended `released` with `claimed_at` NULL — the bot let go and nobody caught it. The site
+ * went back on the open market.
+ *
+ * ## Why this is a SECOND gate and not a narrowing of the entitlement
+ *
+ * Entitlement answers "has this person paid for the feature?" and three people have. The
+ * answer to that question must not change, because it is also what the billing, the
+ * upgrade flow and the Stripe tier mapping mean by it — narrowing it here would make a
+ * paying subscriber read as base tier in six other places (see `lib/auth`, "one
+ * definition, SIX enforcers"). This answers a different question — "is the RC hold path
+ * working well enough to point at anybody yet?" — and the honest answer today is no.
+ *
+ * **THE THREE PAYING SUBSCRIBERS ARE A BILLING DECISION THIS FLAG DOES NOT TAKE.** They
+ * keep their entitlement, their Recreation.gov auto-cart (which is not in beta and has
+ * been carting live sites for weeks) and every other thing the plan buys. What they stop
+ * getting is the ReserveCalifornia hold offer. Whether that warrants a refund or a
+ * downgrade is the owner's call and is deliberately not encoded here.
+ *
+ * ## Fails CLOSED
+ *
+ * A missing user id returns false. An absent reading is not an allowance — the whole
+ * point of the flag is that nobody is promised something we cannot perform, and "we could
+ * not tell who this is" is not evidence that we can.
+ *
+ * ## To reopen
+ *
+ * Set `RC_HOLD_BETA_OPEN = true`. Everyone entitled is offered holds again and the
+ * allowlist stops being consulted. To widen it without opening it, add an id. Both are a
+ * code change ON PURPOSE rather than an env var: this file is in `worker-deploy.yml`'s
+ * `paths:`, so editing it deploys the poller in the same push that changes the website,
+ * and the two can never disagree about who is being promised what. An env var on Fly
+ * would change the poller alone and leave the site still advertising it.
+ */
+export const RC_HOLD_BETA_OPEN = false;
+
+/**
+ * Who may still be offered a ReserveCalifornia hold while the beta is closed.
+ *
+ * Clerk user ids, not emails: the email on a Clerk account can be changed by its owner and
+ * an allowlist that a user can edit themselves is not one. Both of the owner's accounts are
+ * here so a test hold can be driven from either.
+ */
+export const RC_HOLD_BETA_USER_IDS: readonly string[] = [
+  'user_3GCYFCr7hUXt5L9p99JbcnNecWC', // tylerflores1992@gmail.com — owner
+  'user_3HBcmS0I88qrnnSrXTIL02fQAPW', // tylerflores1992@yahoo.com — owner, second account
+];
+
+/** May this user be offered an RC hold at all? Fails closed on an absent id. */
+export function rcHoldBetaAllows(userId: string | null | undefined): boolean {
+  if (RC_HOLD_BETA_OPEN) return true;
+  if (!userId) return false;
+  return RC_HOLD_BETA_USER_IDS.includes(userId);
+}

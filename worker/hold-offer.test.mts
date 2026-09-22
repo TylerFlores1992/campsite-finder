@@ -28,11 +28,12 @@ const POLLER = () => code('worker/poller.ts');
 
 const OK: HoldOfferFacts = {
   hasUnit: true, entitled: true, botOk: true, roomToHold: true, portalOk: true,
+  betaAllowed: true,
 };
 
 // ── the decision ────────────────────────────────────────────────────────────────────
 
-test('all five facts good is the only way to may-offer', () => {
+test('all six facts good is the only way to may-offer', () => {
   assert.deepEqual(holdOfferDecision(OK), { mayOffer: true, blockedBy: null });
 });
 

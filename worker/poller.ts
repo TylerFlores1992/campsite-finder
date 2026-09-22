@@ -56,6 +56,7 @@ import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, supportsRcHold, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
 import { bookingLink } from '../src/lib/booking-url';
+import { rcHoldBetaAllows, RC_HOLD_BETA_OPEN, RC_HOLD_BETA_USER_IDS } from '../src/lib/autocart-beta';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
 import { offerHold, rcBotUsable, holdWindowLoad } from '../src/lib/rc-holds';
@@ -1201,6 +1202,10 @@ async function cycle(): Promise<void> {
     // same question once per held unit.
     const portalOk = supportsRcHold(w.campground_source);
     const entitled = await hasAutocartEntitlement(w.user_id).catch(() => false);
+    // THE CLOSED BETA (2026-09-22). Separate from `entitled` on purpose — see
+    // `src/lib/autocart-beta`. Pure and local, so no `.catch` and no failure mode: a list
+    // membership cannot throw, which is the point of not making this a query.
+    const betaAllowed = rcHoldBetaAllows(w.user_id);
 
     /**
      * OFFER ONE HELD UNIT. Used by BOTH the extras loop and the primary unit, which is the
@@ -1227,6 +1232,7 @@ async function cycle(): Promise<void> {
         botOk: bot.ok,
         roomToHold: load < RC_HOLD_CAPACITY,
         portalOk,
+        betaAllowed,
       });
       if (!decision.mayOffer || unit.unitId == null) {
         return { offeredId: null as string | null, blockedBy: decision.blockedBy, load };
@@ -1737,6 +1743,15 @@ async function main() {
     setInterval(probeRosterIfDue, PROBE_INTERVAL_MS);
   } else {
     console.log('[poller] probe roster OFF (PROBE_ENABLED != true) — feature E accrual stopped');
+  }
+  // THE ROLLOUT'S ONLY VISIBILITY, and it is at STARTUP by design. `describeHoldBlocker`
+  // returns null for `beta-restricted` because that blocker is re-read on every held check
+  // of every held unit and would bury the three that mean something. A flag that changes
+  // only when a human edits a file deserves one line per boot, not one per cycle.
+  if (RC_HOLD_BETA_OPEN) {
+    console.log('[poller] RC hold beta OPEN — every entitled user may be offered a hold');
+  } else {
+    console.log(`[poller] RC hold beta CLOSED — holds offered to ${RC_HOLD_BETA_USER_IDS.length} allowlisted user(s) only`);
   }
 
   // Alert-health canary — non-overlapping, best-effort (never throws into the loop).
