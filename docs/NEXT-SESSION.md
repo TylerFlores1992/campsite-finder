@@ -802,14 +802,76 @@ elevated sample or none. So the series is the *corroborating* instrument here an
   later updated the SAME row (Apple keeps `original_transaction_id` stable inside a subscription
   group). docs/ARCHIVE-PRODUCT-AND-PLATFORM.md → "THE APPLE PURCHASE CHAIN IS PROVEN". **What is still unexercised is a REAL
   `PRODUCTION` purchase**, carrying the two known gaps below.
-- **iOS `1.0 (27)` IS BACK IN THE QUEUE — RESUBMITTED 2026-09-15, SIX ITEMS, NOTHING OUTSTANDING.**
-  Apple rejected it that morning on **3.1.2**, no Terms of Use (EULA) link in the App Store
-  metadata — an AUTOMATED pre-check, so **nothing about the app was adjudicated** for the third
-  submission running. The description genuinely carried no ToU, EULA or Privacy link at all
-  (checked, not conceded), and the requirement did not exist before the four IAP products joined a
-  submission, so nothing regressed. Fixed with two lines in one field; `src/lib/store-listing.test.mts`
-  guards it. Submission `e77ec119-c61f-4e2c-87d0-da4f98859958`, all six **Waiting for Review**,
-  same binary. **There is no console work pending — do not go looking for any.**
+- **iOS — A SIXTH REJECTION LANDED 2026-09-18 (2.1(a), the camera crash). THE FIX IS BUILT,
+  SHIPPED TO APP STORE CONNECT AND CONFIRMED ON A DEVICE; THE RESUBMISSION IS THE ONLY THING
+  LEFT.** This block said *"nothing outstanding — do not go looking for any"* until 2026-09-22
+  and had been wrong for four days; the rejection was recorded in **no doc at all**, only in
+  `35bed0d`'s commit message and `codemagic.yaml`'s comments. Corrected rather than struck,
+  per this file's own rule.
+  - **THE REJECTION.** *"App crashed when we tapped on camera"* — **iPad Air 11-inch (M3),
+    iPadOS 27.0**, against submission `e77ec119-c61f-4e2c-87d0-da4f98859958`. There was **no
+    `NSCameraUsageDescription` anywhere in the repo**, and iOS terminates a process that
+    touches the camera without one: no dialog, no JS error, a crash to the reviewer and filed
+    as one.
+  - **WE HAVE NO CAMERA CODE AND STILL REACHED THE CAMERA.** No camera plugin, no
+    `getUserMedia`, no `type="file"` input in `src/`. Both routes are WKWebView's, inside our
+    process: Clerk's "Manage account" → `UserProfile` renders a profile-image file input and
+    iOS offers **Take Photo** on it (clerk-js is fetched from Clerk's CDN at runtime, so
+    nothing in this repo controls it), and long-pressing a campground photo.
+  - **FIXED IN `35bed0d` (#378)**: `codemagic.yaml` writes three purpose strings into
+    `Info.plist` at build time, **plus a step that unzips the built IPA and reads the SHIPPED
+    `Payload/*.app/Info.plist` back**, failing on any of five missing keys. A build-time write
+    nobody reads back is the fix-present-and-inert shape; this one is read back.
+  - **BUILT AND DISTRIBUTED.** Codemagic **index 13**, workflow `iOS · TestFlight`, commit
+    **`2b47138`** — which **contains** `35bed0d` (verified with `git merge-base --is-ancestor`,
+    eight hours later) — finished in 5m 40s, `App.ipa` 12.22 MB, and its post-processing step
+    **App Store Connect distribution** ran 3m 40s. Both purpose-string steps are visible in the
+    build log and passed.
+  - **AND THE OWNER TESTED THE CAMERA ON A DEVICE (2026-09-22): it worked.** Code → build →
+    binary assertion → device. That is the full chain for this defect.
+  - **ANSWERED FROM THE CONSOLE 2026-09-22 (owner screenshots), AND THE BUILD NUMBER IS `28`.**
+    **Not** the Codemagic index — that was **13** — which is the `PROJECT_BUILD_NUMBER` trap
+    this file warns about. Matched on **upload date**, and the arithmetic closes:
+    ```
+    2b47138 committed              2026-09-20 21:56:34 PT
+    build 5m40s + post 3m40s        ~14 min
+    ASC Upload Date                 Sep 20, 2026 at 10:10 PM   <- lands exactly there
+    ```
+    Binary State **Validated**, `aps-environment: production`, arm64, iPhone + iPad, min iOS
+    15.0. **Build 28 IS attached to version 1.0.**
+  - **IT HAS NOT BEEN RESUBMITTED.** The version reads **`1.0 Prepare for Submission`**, not
+    *Waiting for Review*, so **`Update Review` is still unpressed** — and that button is a
+    ONE-SHOT (*"you can edit items in a submission only once before resubmission"*).
+  - **THE PRECHECK IS CLEAN, run 2026-09-22 against the email actually in Sign-In Information**
+    (`iamtylerflores12345@yahoo.com`, Clerk `user_3IS7IGizJd6UTZmrUf8xkOGB3F8`):
+    `is_beta false`, `subscriptions none`, `hasActiveSubscription false` — the reviewer reaches
+    the paywall, so the 08-22 class is not lurking. **Re-run it in the same minute as the
+    press**; its entire value is freshness.
+  - **TWO THINGS STILL UNKNOWN, AND ONE OF THEM IS A TRAP THIS FILE ALREADY NAMES.**
+    1. **`REVENUECAT_SANDBOX_USER_IDS` must contain `user_3IS7IGizJd6UTZmrUf8xkOGB3F8` through
+       review**, or the reviewer's SANDBOX purchase succeeds at StoreKit and grants nothing.
+       It reads `len=0` in a session — **that is NOT evidence it is unset**, it is a Vercel
+       variable, exactly like `FCM_SERVICE_ACCOUNT`. **And nothing in `/api/health/status`
+       reports it**, so unlike the FCM case there is no instrument to ask instead: it is
+       genuinely unobservable from a session and must be read in Vercel. Clear it once
+       APPROVED, never before.
+    2. **`App Review` carries a red badge in the console's left nav** and no session can see
+       what is behind it. A one-shot button should not be pressed with an unread error on the
+       page.
+  - **The StoreKit-age check passes:** `@revenuecat/purchases-capacitor` landed `8818544`
+    (2026-08-29); build 28 is 09-20, so it is not the no-StoreKit build whose paywall renders
+    an `unavailable` fallback that looks identical to a healthy one.
+  - **THE PRECHECK IS STILL MANDATORY AND IS STILL THE THING THAT BITES.** Run
+    `scripts/app-review-precheck.mts <sign-in-email>` **in the same minute as the
+    resubmission** — the demo account has silently become a subscriber twice, and a subscriber
+    sees no paywall, which IS the 08-22 rejection.
+  - **THE COUNT IS SIX NOW, AND TWO PLACES STILL SAY FIVE** — `CLAUDE.md`'s router entry (fixed
+    2026-09-22) and `.claude/skills/store-release/SKILL.md`, whose `description:` is the whole
+    matching surface. `docs/APP-STORE.md` carries no account of this rejection at all. All
+    three of those are the **SIDE lane's** surface; named here rather than edited.
+  - **The 3.1.2 rejection this block used to describe (2026-09-15, no Terms of Use link) is
+    resolved** — two lines in one field, `src/lib/store-listing.test.mts` guards it — and the
+    mechanics below still apply to any resubmission.
   - **ONE UNREAD SIGNAL QUALIFIES THAT SENTENCE, AND ONLY THE OWNER CAN SETTLE IT.** An Apple email
     dated **Sep 15**, *"There's an issue with your CampHawk: Campsite Alerts (iOS) submission"*,
     sits against a build submitted **Sep 14 21:35 PT**. On the dates it is most likely the 3.1.2

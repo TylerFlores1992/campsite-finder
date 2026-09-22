@@ -1338,10 +1338,17 @@ a stale sha sits beside a live heartbeat) — **`bot-ask git-status` is the auth
 **SIDE lane's** (`docs/LANES.md`, the APP/STORE surface) — `docs/APP-STORE.md`,
 `docs/PLAY-STORE.md`, `docs/STOREKIT-PLAN.md`.
 
-**CONCLUSION.** Five Apple rejections, five distinct causes — none a recurrence: a demo
+**CONCLUSION.** **SIX** Apple rejections, six distinct causes — none a recurrence: a demo
 password nobody had tried; information needed; 3.1.1 with no IAP; **3.1.1 again with the fix
 live in production and invisible to a SUBSCRIBER demo account**; 3.1.2 over a missing Terms
-of Use link. **Apple IAP was DECIDED on 2026-08-24 and is not an open question** — 3.1.3(b)
+of Use link; and **2.1(a) on 2026-09-18 — "App crashed when we tapped on camera"** (iPad Air
+11-inch M3, iPadOS 27.0), because no `NSCameraUsageDescription` existed and iOS terminates a
+process that touches the camera without one. **We ship no camera code**: the route is Clerk's
+own `UserProfile` file input inside WKWebView, which iOS offers "Take Photo" on. Fixed in
+`35bed0d` — `codemagic.yaml` writes three purpose strings AND reads them back out of the built
+IPA — built on `2b47138`, distributed, and **confirmed on a device 2026-09-22**. The
+resubmission is the only step left and only the owner can take it.
+**Apple IAP was DECIDED on 2026-08-24 and is not an open question** — 3.1.3(b)
 restates the demand rather than excusing it, and at 15% the store nets MORE than Stripe on
 every plan (Stripe's flat $0.30 is an effective 14.9% on $2.50). The Play chain is proven in
 production end to end; the Apple chain is proven in sandbox.
