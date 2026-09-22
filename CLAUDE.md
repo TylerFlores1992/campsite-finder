@@ -1544,9 +1544,22 @@ Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the auth
 - **#26 — the request counter is attached to the RESIDENT page only**, so workers and every
   throwaway tab are invisible. `context.on('request')` closes two thirds of it. Bot-side; land
   it with something else bot-side, because an update ends the RC session.
-- **`recentBotEvents` has no source filter**, so a cancelled CI twin's `__t…` fixture row
-  renders in the readout as a real reading. One line — and it is the leak investigation's
-  primary readout, so it wants its own mutation-verified guard.
+- **`#M450`'s hand-off decline is unexplained.** Healthy session, won at T+0.1s, declined
+  anyway at minute 27.5. Two candidates remain and the data cannot separate them: a competitor
+  inside the exposure window, or RC not yet propagating our own release. The retry shipped
+  2026-09-21 covers the second without settling which it was.
+- **`released` has no terminal state for "handed off and the user LOST the race."** Both
+  2026-09-21 rows read `released` with `claimed_at` NULL, which the state table calls the happy
+  path. Two lost campsites render as success.
+- **Why `findCartEntry` misses a cart RC says is ours is NOT established.** The contents
+  fallback (#389) routes around it; the cause is still open, and a null `LockedShoppingCart` is
+  an unconfirmed candidate rather than the answer.
+- **`update-guard`'s `requested` bypass may not work.** A requested update was refused for
+  being outside the quiet window, which `if (!requested && …)` says cannot happen; the libuv
+  assertion in the same note is the candidate. On-demand works (measured, 23s), so this is a
+  reliability question rather than a blocker.
+- **A skipped rehearsal counts as a rehearsal**, which suppressed the one informative rehearsal
+  after the 09-21 box update. Bot-side, one gap calculation.
 - **The RC reconnect's NEXT step is unexplained.** #363 fixed the hidden-input timeout; the box
   now submits the email and rec.gov renders **no password input at all** (`0 match(es), 0
   visible`). That is a third state, not the old bug. **No mechanism is written in.**
