@@ -1260,6 +1260,52 @@ had just succeeded:
   the site may be gone. Whether RC had dropped our entry or a competitor took it inside the
   exposure window **is not determinable from what we recorded**, and the two live figures for
   RC's cart lapse are a bundle-read **15 minutes** and a single observation of **45**.
+- **THE LATE TEXT IS THE SAME BUG, AND THAT IS WHAT MAKES IT A PRODUCT DEFECT RATHER THAN A
+  LOGGING ONE.** `notifyHeld` fires on `markCarted` returning `firstTime` — the TRANSITION, in
+  `/api/auto-cart/rc-holds`. So the user was told at **15:15:03** because that is when the
+  read-back finally matched, not because anything about the site changed. The contents fallback
+  resolves the entry key on the first pass RC answers `already added` — **15:00:24, about
+  fourteen and a half minutes sooner** — and the fixed burst verdict can resolve it at T−0.5s,
+  i.e. at the release. **A mislabelled hold is a text that does not arrive.**
+
+**AN UPDATE THE OWNER REQUESTED WAS REFUSED, AND THE RECORD READ AS APPLIED (2026-09-21).** The
+box sat on `2069e36` for a day while `bot_update_requests` said:
+
+```
+appliedAt  2026-09-21 00:08:03      <- stamped
+appliedSha 2069e360…                <- the sha it was ALREADY on
+appliedNote [update-guard] SKIP - outside the quiet window (20:00 PT, allowed 2:00-5:00)
+            node.exe : Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+            file src\win\async.c, line 94
+```
+
+- **`appliedAt` AND `appliedSha` ARE STAMPED ON A SKIP.** Only `appliedNote` says it did not
+  happen, and `autocart.bot_version` reads the sha. That is shape #6 — two facts of different
+  ages as one record — and this file already names `appliedNote` beside `appliedSha` as an
+  instance. **Read the NOTE before believing the sha.**
+- **AND THE REFUSAL ITSELF LOOKS WRONG.** `update-guard`'s window check is
+  `if (!requested && (hour < windowStart || hour >= windowEnd))`, so a REQUESTED update is
+  supposed to bypass the quiet window — yet a requested one was refused for being outside it.
+  `requested` is read from the feed (`requested = j?.updateRequested === true`), so a guard
+  that crashed or could not reach the feed leaves it false and the window check then applies.
+  **The libuv assertion in the same note is the candidate and the mechanism is NOT
+  established.** Do not write one in.
+- **ON DEMAND IT WORKS, MEASURED THE SAME EVENING.** `requestBotUpdate` at 03:06:43 UTC →
+  `appliedSha eeb9d05`, note `updated and verified`, at 03:07:06 — **23 seconds** — and
+  `bot-ask git-status` confirmed `HEAD eeb9d05 on master`. So the path is sound and the 09-21
+  refusal was not the ration or the window by design.
+- **THE HOLD-PROXIMITY CHECK IS THE ONE `requested` DOES NOT BYPASS**, and that is deliberate:
+  `if (hrs != null && hrs >= 0 && hrs < minHoursToRelease)` refuses within 6h of a release
+  whatever asked. At 20:12 PT against an 08:00 release it passed with ~11h48m of margin.
+
+**A SKIPPED REHEARSAL COUNTS AS A REHEARSAL, WHICH SUPPRESSES THE ONE THAT WOULD MATTER.**
+Tonight's pair read `03:00 · skip  the session is live — a rehearsal would prove nothing`
+(correct) then `03:07 · skip  rehearsed 0h ago` — and the thing it had "rehearsed 0h ago" was
+that skip. So the update, which ENDS the RC session and replaces the code, was immediately
+followed by the one rehearsal that would have been informative being declined on the strength
+of a non-event. The last real PASS is 2026-09-21 03:01. **A skip is not a rehearsal**; the gap
+should be measured from the last ATTEMPT that ran the body.
+
 - **`released` IS REPORTED AS SUCCESS WHEN IT IS NOT.** Both rows read `released` with
   `claimed_at` NULL, and the state table calls that *"the bot let go; the user's own session has
   it"*. There is **no terminal state for "handed off and the user lost the race"**, so the
