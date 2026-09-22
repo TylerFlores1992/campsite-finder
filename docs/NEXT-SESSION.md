@@ -10,42 +10,44 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
-## 0. FIRST: THE BURST HAS NOW BEEN OBSERVED, AND IT STOPS WHEN IT WINS
+## 0. FIRST: THE RC HOLD BETA IS CLOSED, AND THE HAND-OFF FAILED THE MORNING IT CLOSED
 
-*This section replaced the 09-17 "the burst has never been observed" block, which is answered:
-it fired twice on 2026-09-21 and both rows are in `bot_events`.*
+*This section replaced the 09-21 "the burst has now been observed" block, which is answered and
+folded into `CLAUDE.md` → "THE CART BURST STOPS WHEN IT WINS". Read that if you touch the burst.*
 
-**Read `CLAUDE.md` → "THE CART BURST STOPS WHEN IT WINS".** Two Carpinteria holds carted at the
-08:00 PT release and **both hand-offs were declined** by RC. Three separate defects, all found
-from the runner's own log:
+**Read `CLAUDE.md` → "RC holds — THE BETA IS CLOSED TO AN ALLOWLIST".** On 2026-09-22 the owner
+saw `#M421` cart and then lose the site, and closed the beta.
 
 ```
-15:00:00  x could not hold #R359: HTTP 200 (13 fast attempts ending T-0.5s … RC said something else: HTTP 200)
-15:00:00  v held #M450 - won it on attempt 14 at T+0.1s
-15:00:24  x could not hold #R359: cart is already added      <- and ~75 more, every ~12s
-15:15:03  v held #R359 - entry 9b6aa2dc-...
+#M421   carted 15:00:01Z   ->  released, claimed_at NULL     <- the bot let go, nobody caught it
+webview x5  storedToken:'none'  oktaKeys:0  rcLoggedIn:false  <- not expired. EMPTY.
+last recorded status: "Sign in above, and we'll add it the moment you're through."
 ```
 
-1. **The burst's stop condition fires on SUCCESS.** `why = v.error || \`HTTP ${status}\`` and a
-   successful submit has no `ErrorMessage`, so `why` became the string `"HTTP 200"`,
-   `isNotAvailable` did not recognise it, and the lane stopped at **T−0.5s with 15 budget left**.
-   **We won `#R359` and reported a loss.**
-2. **`cart is already added` was logged as a failure** ~75 times over 15 minutes — RC telling us
-   the site was already ours. **`carted_at` and a large `T+s` are a LABEL, not a late win.**
-3. **The hand-off made exactly ONE attempt.** 40 attempts to take a campsite, one to hand it
-   back. `#M450`'s release genuinely happened (`-> handed over #M450 (HTTP 200)`), so its decline
-   was a competitor or un-propagated release, and one POST resolved that by assuming the worse.
+Two changes shipped in **#392** (`315b82e`), both live:
 
-**All three are fixed and LIVE** (#385, #388, #389). The hand-off retry is web-side and was
-verified serving from `/api/rc-precart`; the burst fixes are on the box at `eeb9d05`, confirmed
-by `bot-ask git-status`.
+1. **`RC_HOLD_BETA_OPEN = false`** in `src/lib/autocart-beta.ts`, two Clerk ids beside it.
+   A **second gate**, not a narrowing of `hasAutocartEntitlement` — three people PAY for that
+   plan and must keep reading as entitled everywhere else. **ReserveCalifornia holds only;
+   Recreation.gov auto-cart is untouched.** Enforced in the poller and in `/new` (promise panel
+   *and* upsell); the claim path is deliberately untouched so a carted hold stays claimable.
+2. **`rc-retry.explain()`** replaced `"RC declined (401) — see console"` on the customer's
+   screen. The status code and RC's own words moved to `data-detail`, which the epilogue
+   forwards — the person gets a remedy, the diagnostic keeps the facts.
 
-**What is still open from it** is in `CLAUDE.md`'s Open block: `#M450`'s decline, `released`
-having no "handed off and lost" state, and why `findCartEntry` misses.
+**TWO THINGS ARE OPEN AND NEITHER HAS A MECHANISM WRITTEN IN — do not supply one:**
 
-**AND THE LATE TEXT WAS THE SAME BUG.** `notifyHeld` fires on `markCarted`'s TRANSITION, so the
-owner was told at 15:15:03 because that is when the read-back matched. Nothing about the
-campsite changed. A mislabelled hold is a text that does not arrive.
+- **Why the webview had NO RC session after a sign-in.** The claim screen had reported
+  `tokenLife: 'dead'` — a *stored* token past expiry — and the precart webview then reported
+  **emptier than that**. One row, no controlled comparison.
+- **The `401` the owner photographed is not in our telemetry.** Zero
+  `rc_hold_requests.client_reports` rows mention it, **all time**. A terminal hand-off failure
+  does not reliably survive the webview closing, so every future post-mortem here is working
+  from a screenshot. **That is the thing most worth fixing next** — it is the instrument for
+  all of this and it has a hole exactly where the failure is.
+
+**AND A BILLING DECISION IS OPEN:** the three paying Auto-Cart subscribers lost the RC hold
+offer. Refund, downgrade, tell them, or leave it — the owner's call, deliberately not encoded.
 
 ## 0a. THE rec.gov RECONNECT IS FIXED AND LIVE ON BOTH HALVES — nothing is pending
 
@@ -420,26 +422,28 @@ real logins from a blocked address.
 
 ---
 
-## 1. State — re-verified 2026-09-22, 04:20 UTC (2026-09-21 21:20 PT)
+## 1. State — re-verified 2026-09-22, ~18:50 UTC (11:50 PT)
 
 | | |
 |---|---|
-| master | `8c9b7d5`. Five PRs landed 09-21: **#386** (worker-deploy replaced-machine + `recentBotEvents` source filter), **#387** (a CI correction), **#388** (hand-off retry), **#389** (burst stop-on-success), **#390** (three findings). **Verify against `origin/master`; this line ages.** |
-| open issues | **none** — #243 was closed by #386. |
-| open PRs | **none.** |
-| mini-PC | **`eeb9d05`**, applied 2026-09-22 03:07 UTC in **23 seconds** on demand. Confirmed by `bot-ask git-status` → `HEAD eeb9d05 on master`, never `autocart.bot_version`. It is one docs commit behind web (`8c9b7d5`) and **there is no bot-side code in that gap.** |
-| health | **18 of 19 ok**, overall `degraded` — the one warn is `autocart.bot_version` on the docs-only gap above. |
-| fleet | worker heartbeat **2s**, **14 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines, 4 slots free**. |
-| holds | **`#R315` (Carpinteria SB — Santa Rosa) is TAPPED and queued for 2026-09-22 08:00 PT.** Two more sites sit `offered` and untapped, which is not a fault. |
-| RC session | **LIVE.** The 09-21 box update ended it, and an on-demand rehearsal at 03:55 UTC re-established it: `okta=ALIVE (exp 2026-09-22T15:55:40)` — **past the 08:00 PT release** — with a fresh 60-minute token. `autocart.rc_login` PASSED unattended post-update. **The 6h on-demand ration is spent until ~02:55 PT.** |
-| the burst | **OBSERVED, twice, and both defects fixed.** §0. |
-| the hand-off | **retries 5x now**, live in production, verified serving from `/api/rc-precart`. §0. |
-| the leak | **DIAGNOSED, CONTAINED, DURATION CURED — still NOT eliminated.** §2. Unchanged 09-21. |
+| master | `315b82e` (**#392**, the closed beta + the hand-off copy). Before it, `6fc4f53` (#391, handover repair). **Verify against `origin/master`; this line ages.** |
+| open issues | **none.** |
+| open PRs | **none** at the time of writing — #392 merged 18:47 UTC. |
+| mini-PC | **`eeb9d05`**. Confirmed by `bot-ask git-status`, never `autocart.bot_version`. It is behind web and **there is no bot-side code in the gap** — #392 is poller + web only. |
+| health | overall `degraded`, and the one warn is `autocart.bot_version` on that docs/web gap. |
+| fleet | heartbeat **1s**, **14 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines**. **READ THIS FRESH** — the reading above was taken while the #392 worker deploy was still `in_progress`, so it describes the OLD code. |
+| holds | **none live or pending.** 09-22's four rows are settled: `#M421` released-and-lost (§0), `#R315` carted for another user, two expired. |
+| RC session | last known LIVE after the 09-21 rehearsal; **re-read it, do not trust this cell.** `/api/admin/rc-session-probe` or the readout. |
+| the burst | observed twice, both defects fixed and live. `CLAUDE.md`. |
+| the hand-off | retries 5x, live. **Failed anyway on 09-22 for a reason we could not record** — §0. |
+| the leak | **DIAGNOSED, CONTAINED, DURATION CURED — still NOT eliminated.** §2. Unchanged. |
 | migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left** — the next main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
+| Google Cloud | free trial lapses **~2026-09-28**; recorded recommendation is to **let it lapse, do not upgrade**. `CLAUDE.md` → "GOOGLE CLOUD". |
 
-**THE ONE THING TO CHECK FIRST TOMORROW:** how `#R315` went at 08:00 PT.
-`NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts`, and read §0 before reading a
-`could not hold` line as a loss.
+**THE ONE THING TO CHECK FIRST:** that #392's worker deploy landed and the gate is actually
+live — `/api/health/status` for the fleet, and the poller's startup line
+`RC hold beta CLOSED — holds offered to 2 allowlisted user(s) only`. A healthy heartbeat read
+*during* a deploy describes the code being replaced, not the code that replaced it.
 
 ## 2. The leak — DIAGNOSED, CONTAINED, AND THE DURATION CURED. **IT IS NOT ELIMINATED.** Read before touching anything memory-related.
 

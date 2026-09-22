@@ -1511,10 +1511,112 @@ measurement taken — read the output.
 kept because several carry a reading that exists nowhere else. **Read them as history, not as
 state** — anything still live was carried into the router entries above or the section below.
 
+## RC holds — THE BETA IS CLOSED TO AN ALLOWLIST (2026-09-22)
+
+`RC_HOLD_BETA_OPEN = false` in `src/lib/autocart-beta.ts`, with two Clerk ids beside it.
+**ReserveCalifornia holds only — Recreation.gov auto-cart is untouched** and still runs for
+every entitled user. Owner's call, after a morning where the flow failed twice.
+
+- **THE ENTITLEMENT WAS 16 PEOPLE**: 11 `is_beta`, 1 `autocart_trial_until`, **3 paying
+  Auto-Cart subscribers**, 1 grandfathered. All 16 were being offered a button that takes a
+  real campsite off the market.
+- **IT IS A SECOND GATE, NOT A NARROWING OF `hasAutocartEntitlement`.** Entitlement answers
+  "has this person paid" and three people have; collapsing the two would make a paying
+  subscriber read as base tier in the five other places that consult the same definition.
+  `rcHoldBetaAllows` is a separate question — "is the hold path working well enough to point
+  anybody at it yet" — and **fails closed on an absent user id**.
+- **TWO ENFORCERS, AND THE CLAIM PATH IS DELIBERATELY NOT ONE.** The poller's
+  `holdOfferDecision` (new `betaAllowed` fact, blocker `beta-restricted`) and `/new`'s
+  `canRcHold`, which gates the promise panel **and the upsell — the worse of the two, because
+  it links to `/pricing` and asks for money for it.** The claim action is untouched so an
+  already-carted hold stays claimable; entitlement is still checked where it would be spent.
+- **`beta-restricted` LOGS NOTHING**, for the same reason `not-entitled` does not: it is
+  re-read on every held check of every held unit and would bury the three blockers that mean
+  something in a `tail-log` that returns 16,000 characters. Visibility is **one line at poller
+  startup** instead — the right cadence for a flag a human edits.
+- **REOPENING IS `RC_HOLD_BETA_OPEN = true`**, which short-circuits before the list is
+  consulted. A code change rather than a Fly env var **on purpose**: `autocart-beta.ts` is in
+  `worker-deploy.yml`'s `paths:`, so the poller and the website can never disagree about who
+  is being promised what. An env var would move one and not the other.
+- **THE THREE PAYING SUBSCRIBERS ARE A BILLING DECISION NOBODY HAS TAKEN.** They keep rec.gov
+  auto-cart and everything else the plan buys; they lose the RC hold offer. Refund, downgrade
+  or leave it is open and is deliberately not encoded.
+
+### The morning that caused it — `#M421`, and a hole in the telemetry
+`#M421` carted at 15:00:01Z and ended `released` with `claimed_at` NULL. The hand-off webview
+reported, on **five consecutive injections**, `storedToken: 'none'`, `rcToken: 'none'`,
+`ssoToken: 'none'`, `oktaKeys: 0`, `rcLoggedIn: false` — **not an expired token, nothing at
+all.** The precart behaved correctly: waited, never got one, and said "Sign in above".
+- **WHY THE STORAGE WAS EMPTY AFTER A SIGN-IN IS NOT ESTABLISHED. Do not write one in.** The
+  claim screen had reported `tokenLife: 'dead'` (a *stored* token past expiry) and the precart
+  webview then reported **emptier** than that. One row, no controlled comparison.
+- **THE `401` THE OWNER PHOTOGRAPHED IS NOT IN OUR DATA — zero rows mention it, ALL TIME**
+  (`rc_hold_requests.client_reports`). The last thing we recorded was the sign-in prompt. So a
+  terminal hand-off failure does not reliably survive the webview closing, and **that is why
+  the cause of this one is unavailable rather than merely unknown.** The epilogue's
+  MutationObserver forwards the status line; whatever produced that toast landed after the
+  last report reached us. **Recorded, NOT fixed** — it is the instrument for every future
+  hand-off failure and it has a hole exactly where the failure is.
+
+### "RC declined (401) — see console" was shown to a CUSTOMER
+Three things wrong and the third is the one that matters: `RC` is our abbreviation, `401` is
+an HTTP status, and **`see console` is an instruction that cannot be followed** — there is no
+console on a phone inside an in-app webview, and the message appears precisely when no
+developer is present. Worse, the jargon displaced the only useful content: a dead session and
+a full cart have completely different remedies and both rendered as "RC declined".
+- `rc-retry.explain()` phrases every terminal failure as one sentence naming what happened
+  **and what to do**. `decide` stays separate — a retry rule that acquires copy, or copy that
+  acquires a retry rule, is how both get edited by someone who meant to change only the other
+  — and one table is driven through **both**, so a case one recognises and the other does not
+  fails.
+- **THE TECHNICAL STRING IS NOT DISCARDED, IT MOVES.** `setStatus(text, detail)` writes it to
+  `#camphawk-rc-status`'s `data-detail`, which the epilogue forwards beside the visible
+  status. **`attributeFilter: ["data-detail"]` is load-bearing** — a childList/characterData
+  observer never fires for an attribute.
+- **THE PAGE STUB PROVED NOTHING UNTIL IT MODELLED ATTRIBUTES.** `rc-precart-cart-key.test.mts`
+  had `const status = { textContent: '' }`, so `setStatus`'s own try/catch swallowed the
+  `setAttribute` and the guard could not see the carrier the diagnostic depends on. The
+  guard-anchored-on-the-wrong-thing shape, arriving through the **test double** rather than
+  through the assertion.
+- **AND TWO GUARDS HAD TO BE RE-ANCHORED ON THEIR STATED PROPERTY, ONE OF THEM TWICE.**
+  `autocart-beta.test.mts` pinned the literal `canRcHold = campgroundSource ? … : false`, so
+  ANDing the beta flag onto the front — making the gate **stricter** — failed it. Its own
+  comment, three lines down, records the first time that happened. Pin the property.
+
+## GOOGLE CLOUD — TWO USES, AND THE LIVE PROJECT IS THE UNBILLED ONE (side lane, 2026-09-16)
+**Folded in 2026-09-22, six days late** — `docs/NOTES-claude-camphawk-side-lane-status-iij2xm.md`
+sat unread through two main-lane sessions, which is the exact cost `docs/LANES.md` names.
+Full write-up is `docs/PLAY-STORE.md` §0e (side lane's file).
+- **TWO USES, NEITHER ABLE TO COST ANYTHING**: Firebase Cloud Messaging
+  (`src/lib/notifications/push.ts`, service-account JWT in `FCM_SERVICE_ACCOUNT`) and the Play
+  Developer API (a second service account, in Codemagic as
+  `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`). Play Console, Play Billing and Search Console are
+  Google but are **not** Cloud billing surfaces.
+- **THERE ARE THREE NEAR-IDENTICALLY NAMED CLOUD PROJECTS and `/api/health/status` already
+  names the live one.** It prints `sa.project_id` off the live credential:
+  `project campapp-39c4b` — the one the console lists as **"Billing is disabled"**. One curl
+  settles it, and the instrument was running unread.
+- **`FCM_SERVICE_ACCOUNT` IS NOT IN AN AGENT SESSION'S ENV** — it is a Vercel variable, so
+  `printenv` finds nothing and that absence reads as a missing credential. The "credentials are
+  process env vars, there is no `.env` file" rule does **not** cover this one.
+- **AN ACCOUNT TYPE BEATS A COST FIGURE.** "Billing is disabled" means it *cannot* charge, not
+  that it did not this month; the one billing account is a **free trial** and a trial cannot
+  charge the card. Same family as `status = 'sent'` meaning only "Twilio returned 2xx" — the
+  `$0.00` is accurate and is not the question.
+- **RECOMMENDATION: let the trial lapse, do NOT upgrade** — upgrading is the act that creates
+  the ability to be charged. Banner arithmetic put the lapse at **~2026-09-28**, so this is
+  days away as of the fold-in. **Prefer unlinking billing to deleting a project**: deleting
+  takes any service account inside it, surfacing weeks later as a broken publish. The likely
+  correct action is **none**.
+- **NOT TESTED HERE: that the Play publisher service account survives the lapse.** General
+  Google behaviour says no-charge APIs do; nobody has verified it on this setup. The failure
+  mode is a red CI step reading *"The caller does not have permission"*, which `PLAY-STORE.md`
+  §0b warns reads like a Play problem and sends you to the wrong console.
+
 ## Open / next session
 
 **Start at `docs/NEXT-SESSION.md`.** This section is a short list of what is genuinely open on
-2026-09-21. Everything older is in `docs/ARCHIVE-OPEN-BLOCKS.md` (the dated handover blocks,
+2026-09-22. Everything older is in `docs/ARCHIVE-OPEN-BLOCKS.md` (the dated handover blocks,
 newest first) or in the subject archives the router points at. **A dated block that is no
 longer state was MOVED, not deleted** — see `docs/PRUNE-LEDGER.md`.
 
@@ -1522,10 +1624,30 @@ longer state was MOVED, not deleted** — see `docs/PRUNE-LEDGER.md`.
 Read it, do not quote it. `git fetch origin master && git log --oneline origin/master -10`
 for the tree; `/api/health/status` for the fleet (it is the authority, not a green deploy
 tick); `npx tsx scripts/bot-ask.mts git-status` for the mini-PC's sha (**never**
-`autocart.bot_version`); `ls docs/NOTES-*.md` for anything the side lane has not folded in.
+`autocart.bot_version`); `ls docs/NOTES-*.md` for anything the side lane has not folded in —
+**there are TWO files and the 09-16 one sat unfolded for six days**, so check both, newest
+sections first. (`…-status-iij2xm.md` §1 is folded in as of 2026-09-22;
+`…-setup-f7bpe2.md` is the older lane's §1-§30.)
 Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the authority).
 
 #### Open, and each one is a decision rather than a task
+- **The three paying Auto-Cart subscribers lost the RC hold offer on 2026-09-22 and nobody has
+  decided what that costs them.** They keep rec.gov auto-cart and everything else the plan
+  buys. Refund, downgrade, a note to them, or leave it — open, and deliberately not encoded in
+  `RC_HOLD_BETA_OPEN`.
+- **A terminal hand-off failure does not reliably reach our telemetry.** The `401` the owner
+  photographed on 2026-09-22 appears in **zero** `rc_hold_requests.client_reports` rows, all
+  time; the last thing recorded was the sign-in prompt before it. Until that hole is closed,
+  every future hand-off post-mortem is working from a screenshot. Recorded, not fixed.
+- **Why `#M421`'s webview had NO RC session at all after a sign-in is unexplained.**
+  `storedToken: 'none'`, `oktaKeys: 0` on five injections, after the claim screen had reported
+  a merely *expired* stored token. One row, no controlled comparison, **no mechanism written
+  in.**
+- **The Google Cloud free trial lapses ~2026-09-28** and the recorded recommendation is to let
+  it. Nothing we use needs a billing account; upgrading is the act that creates the ability to
+  be charged. The one unverified assumption is that the Play publisher service account
+  survives it — the failure mode is a red `android-release` step reading *"The caller does not
+  have permission"*, and the fix is minutes.
 - **The leak is diagnosed, contained and NOT fixed.** `base::SharedMemorySecurityPolicy`'s
   32 GiB cap is the ceiling, and the page-wedge cure has fired three times in production —
   which is a capability demonstrated, not a rate. **`docs/CHROMIUM-LEAK.md`, and read the
