@@ -26,7 +26,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.mjs';
+import { precartInPage, findCartEntry, listCartEntries, releaseEntry, NO_CART } from './rc-cart.mjs';
 import { shouldRetryBurst, describeBurst, BURST_BUDGET, BURST_LEAD_MS } from './cart-burst.mjs';
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder, forceProfileLock,
@@ -881,11 +881,53 @@ async function runPass() {
           try { return (JSON.parse(result.loadedFull)?.Result ?? {}).LockedShoppingCart ?? null; }
           catch { return null; }
         })();
-        const check = cartKey
+        let check = cartKey
           ? await findCartEntry(ctx.request, headers, cartKey, {
               placeId: locked?.placeId, facilityId: locked?.facilityId, unitId: h.unitId,
             })
           : { found: false, entryKey: null };
+
+        // THE MATCHER CAN MISS A CART WE DEMONSTRABLY HOLD, AND ON 2026-09-21 IT DID FOR
+        // FIFTEEN MINUTES. #R359's burst submitted at T-0.5s, RC accepted it, and
+        // `findCartEntry` did not match — so the runner logged `could not hold`, the burst
+        // stopped with 15 budget left, and the slow lane then asked RC ~75 more times over
+        // fifteen minutes, every one answered `cart is already added`, i.e. RC telling us the
+        // site was already ours. The `✓ held` that finally arrived was the read-back matching,
+        // not the site becoming free.
+        //
+        // `findCartEntry` matches `(placeId, facilityId)` off `LockedShoppingCart` and falls
+        // back to `JSON.stringify(e).includes(unitId)` — which its own header says cannot
+        // work, because RC's cart entries carry NO unit field. A null `locked` therefore
+        // leaves it with nothing to match on. WHY `locked` was null is not established.
+        //
+        // So fall back to the cart's CONTENTS, which is the guarantee the release path
+        // already relies on: each hold mints its OWN cart with NO_CART, so a cart carrying
+        // exactly one entry is carrying ours. That is a fact about how the cart was CREATED
+        // and cannot rot the way a matcher can.
+        if (!check.found && cartKey) {
+          const v = result?.submitted?.v;
+          const said = String(v?.error ?? '').toLowerCase();
+          // ONLY ON RC POSITIVELY SAYING IT IS OURS. Without this the fallback would adopt a
+          // stray entry on any refusal, which is how a bot ends up releasing somebody else's
+          // hold — strictly worse than the mislabel it fixes.
+          const rcSaysOurs = v?.isSuccess === true || said.includes('already added');
+          if (rcSaysOurs) {
+            const back = await listCartEntries(ctx.request, headers, cartKey)
+              .catch(() => ({ entries: [], status: 0 }));
+            // AN UNREADABLE CART IS NOT AN EMPTY ONE, and `listCartEntries` returns `[]` for
+            // both. Only a 200 carrying exactly one entry is a reading; anything else leaves
+            // this a miss and lets the slow lane try again.
+            const only = back.status === 200 && back.entries.length === 1 ? back.entries[0] : null;
+            const key = only?.CartEntryKey ?? null;
+            // AND NO ENTRY KEY MEANS NO RELEASE. Marking this carted without one would tell
+            // the user we are holding a site we cannot let go of — the worst shape this
+            // product has, and worse than the mislabel.
+            if (key) {
+              check = { found: true, entryKey: key, count: 1, status: back.status };
+              log(`  (cart read back by CONTENTS for ${h.unitName ?? h.unitId} — the matcher missed it)`);
+            }
+          }
+        }
 
         if (check.found) {
           const how = attempts > 1
@@ -901,9 +943,19 @@ async function runPass() {
           // precart giving up on a page that would not answer; the cart may even have
           // landed, which is why the read-back above still ran and why the retry keeps
           // whatever cart key we do have.
+          // AN EMPTY ErrorMessage IS NOT "RC SAID SOMETHING ELSE", and reading it as one is
+          // what stopped #R359's burst half a second before the release. `verdict()` sets
+          // `error: res?.ErrorMessage || ''`, and a SUCCESSFUL submit has no ErrorMessage —
+          // so `''` fell through this `||` to the literal string "HTTP 200", which
+          // `isNotAvailable` does not recognise, so `shouldRetryBurst` stopped the lane.
+          // The stop condition was firing on the success case.
+          const sv = result?.submitted?.v;
           const why = result?.timedOut
             ? `the cart call did not answer within ${Math.round(result.timedOut / 1000)}s — the page was not responding`
-            : (result?.submitted?.v?.error || `HTTP ${result?.submitted?.status}`);
+            : (sv?.error
+              || (sv?.isSuccess === true
+                ? 'RC accepted the submit and our entry could not be identified in the cart'
+                : `HTTP ${result?.submitted?.status} and RC gave no message`));
           // KEEP THE CART KEY ACROSS A FAST RETRY TOO. If the submit landed and only the
           // read-back did not, the site is locked in THAT cart, and minting a fresh one on
           // the next attempt would orphan it — the reason the slow lane already carries it.

@@ -150,3 +150,81 @@ test('a missing offset is NAMED, never rendered as T+0.0s and never dropped', ()
   assert.match(armed.text, /T\?/);
   assert.doesNotMatch(armed.text, /T\+0\.0s/);
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * THE BURST STOPPED ON ITS OWN SUCCESS, AND WE HELD #R359 FOR FIFTEEN MINUTES
+ * WHILE LOGGING "COULD NOT HOLD" (2026-09-21, from the runner's own log).
+ *
+ *   15:00:00  ✗ could not hold #R359: HTTP 200 (13 fast attempts ending T-0.5s
+ *             … RC said something else: HTTP 200)
+ *   15:00:24  ✗ could not hold #R359: cart is already added   <- and ~75 more
+ *   15:15:03  ✓ held #R359 — entry 9b6aa2dc-…
+ *
+ * Two defects, one response:
+ *
+ *   1. `verdict()` sets `error: res?.ErrorMessage || ''`, and a SUCCESSFUL submit has no
+ *      ErrorMessage. `why = v.error || \`HTTP ${status}\`` therefore produced the literal
+ *      string "HTTP 200", `isNotAvailable` did not recognise it, and `shouldRetryBurst`
+ *      stopped the lane — half a second before the release, with 15 budget left.
+ *   2. `findCartEntry` could not identify our entry, so a cart RC said was ours read as a
+ *      miss ~75 times, each one a real precart round-trip.
+ *
+ * These are STRUCTURAL assertions because the burst loop lives inside `withRC` with a
+ * Playwright page, a live RC session and a running browser behind it. Extracting it to
+ * make it callable is a larger and riskier change than the fix; what matters here is
+ * positional — WHICH signals the verdict consults, and in WHAT ORDER.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const RUNNER = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+
+/** The burst attempt body, bounded so an assertion cannot wander into the release loop. */
+function burstBody(): string {
+  const from = RUNNER.indexOf('const result = await precartInPage(page, {');
+  assert.ok(from > -1, 'the burst precart call must still exist — anchor not found');
+  const to = RUNNER.indexOf('await report({ id: h.id, ok: false', from);
+  assert.ok(to > from, 'the failure report must still follow it — anchor not found');
+  return RUNNER.slice(from, to).split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+}
+
+test('an empty ErrorMessage is no longer reported as "RC said something else"', () => {
+  const body = burstBody();
+  // The exact shape that produced "HTTP 200". If this comes back, so does the bug.
+  assert.ok(!/v\?\.error \|\| `HTTP \$\{result\?\.submitted\?\.status\}`/.test(body),
+    'the bare || fallback from ErrorMessage straight to the status must not return');
+  assert.match(body, /isSuccess === true/,
+    'a successful submit must be distinguished from an unrecognised refusal');
+  assert.match(body, /RC accepted the submit and our entry could not be identified/,
+    'and must say which of the two it was, in words the next reader can act on');
+});
+
+test('a cart RC says is ours is read back by CONTENTS when the matcher misses', () => {
+  const body = burstBody();
+  assert.match(body, /listCartEntries\(/,
+    'the contents fallback must exist — each hold mints its own cart, so one entry is ours');
+  assert.match(body, /already added/,
+    "and must fire on RC's own \"cart is already added\", which is proof we hold it");
+  // ORDER: the fallback must run BEFORE the found/not-found branch, or it cannot change
+  // the verdict — the fix-present-and-inert shape.
+  assert.ok(body.indexOf('listCartEntries(') < body.indexOf('if (check.found) {'),
+    'the fallback must run before the verdict is taken');
+});
+
+test('the fallback demands a POSITIVE reading, three ways', () => {
+  const body = burstBody();
+  const arm = body.slice(body.indexOf('if (!check.found && cartKey)'), body.indexOf('if (check.found) {'));
+  assert.ok(arm.length > 200, 'the fallback arm must still exist — anchor not found');
+  // AN UNREADABLE CART IS NOT AN EMPTY ONE. listCartEntries returns [] for both.
+  assert.match(arm, /status === 200/, 'a non-200 must not be read as a cart');
+  assert.match(arm, /length === 1/, 'and only exactly one entry identifies ours');
+  // NO ENTRY KEY, NO RELEASE. Marking carted without one strands the campsite.
+  assert.match(arm, /if \(key\)/, 'and an entry with no key must not be adopted');
+  assert.match(arm, /rcSaysOurs/,
+    'and RC must have positively said it is ours, or a stray entry could be adopted');
+});
+
+test('the import is present, so the fallback is not a reference to nothing', () => {
+  // A call to an unimported symbol throws at the worst possible moment — inside the burst,
+  // at the release, on the one path that either gets somebody a campsite or does not.
+  assert.match(RUNNER, /import \{[^}]*listCartEntries[^}]*\} from '\.\/rc-cart\.mjs'/,
+    'listCartEntries must be imported from rc-cart.mjs');
+});
