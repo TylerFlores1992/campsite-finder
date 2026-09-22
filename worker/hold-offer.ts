@@ -53,11 +53,20 @@ export interface HoldOfferFacts {
   roomToHold: boolean;
   /** `supportsRcHold(source)` — narrower than `isUseDirectSource` on purpose. */
   portalOk: boolean;
+  /**
+   * `rcHoldBetaAllows(userId)` — the CLOSED-BETA allowlist, and deliberately NOT part of
+   * `entitled`. Entitlement answers "has this person paid for the feature"; this answers
+   * "is the hold path working well enough to point anybody at it yet". Collapsing them
+   * would make a paying Auto-Cart subscriber read as base tier in the five other places
+   * that consult the same entitlement. See `src/lib/autocart-beta`.
+   */
+  betaAllowed: boolean;
 }
 
 export type HoldOfferBlocker =
   | 'no-unit'
   | 'not-entitled'
+  | 'beta-restricted'
   | 'bot-absent'
   | 'no-room'
   | 'portal-unsupported';
@@ -84,6 +93,10 @@ export function holdOfferDecision(f: HoldOfferFacts): HoldOfferDecision {
   if (!f.hasUnit) return { mayOffer: false, blockedBy: 'no-unit' };
   if (!f.portalOk) return { mayOffer: false, blockedBy: 'portal-unsupported' };
   if (!f.entitled) return { mayOffer: false, blockedBy: 'not-entitled' };
+  // AFTER ENTITLEMENT, because for somebody who never had the plan the honest blocker is
+  // that they do not have the plan — reporting "the beta is closed" to them would describe
+  // a door they were never at.
+  if (!f.betaAllowed) return { mayOffer: false, blockedBy: 'beta-restricted' };
   if (!f.botOk) return { mayOffer: false, blockedBy: 'bot-absent' };
   if (!f.roomToHold) return { mayOffer: false, blockedBy: 'no-room' };
   return { mayOffer: true, blockedBy: null };
@@ -115,6 +128,13 @@ export function describeHoldBlocker(
         `${ctx.capacity}. Sending the coming-soon alert without a hold link.`;
     case 'no-unit':
     case 'not-entitled':
+    // SILENT FOR THE SAME REASON AS `not-entitled`: while the beta is closed this is the
+    // ordinary state of nearly everyone entitled, and it is re-read on EVERY held check of
+    // every held unit. A line here would bury the three blockers that mean something, in a
+    // `tail-log` that returns only the last 16,000 characters. The rollout's visibility is
+    // a single line at poller startup instead — once per boot, which is the right cadence
+    // for a flag that changes when a human edits a file.
+    case 'beta-restricted':
       return null;
   }
 }

@@ -27,7 +27,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 type Decision = { retry: boolean; waitMs: number; reason: string; held: boolean };
-type Api = { decide: (o: Record<string, unknown>) => Decision; MAX_ATTEMPTS: number; GAP_MS: number };
+type Api = {
+  decide: (o: Record<string, unknown>) => Decision;
+  explain: (o: Record<string, unknown>) => string;
+  MAX_ATTEMPTS: number; GAP_MS: number;
+};
 
 /** Evaluate the shipped file in a bare scope and hand back what it registered. */
 function load(): Api {
@@ -37,6 +41,9 @@ function load(): Api {
   const api = g.__chHandoffRetry as Api | undefined;
   assert.ok(api && typeof api.decide === 'function',
     'rc-retry.js must register __chHandoffRetry — if this fails the phone has no rules');
+  assert.ok(typeof api.explain === 'function',
+    'rc-retry.js must also register explain() — content-rc.js calls it on every terminal ' +
+    'failure, and a missing function there throws inside the catch-all and shows nothing');
   return api;
 }
 
@@ -196,4 +203,92 @@ test('the deployment actually ships the file', () => {
   for (const f of ['rc-inject.js', 'rc-retry.js', 'content-rc.js']) {
     assert.ok(block.slice(0, 400).includes(f), `${f} must be traced into the deployment`);
   }
+});
+
+// ── what the PERSON is shown (2026-09-22) ───────────────────────────────────────────
+//
+// A real hand-off failure rendered as **"RC declined (401) — see console"**. An
+// abbreviation nobody expands, an HTTP status that means nothing to a customer, and an
+// instruction that cannot be followed: there is no console on a phone inside an in-app
+// webview. It appeared precisely when no developer was present, which is the only time it
+// was ever shown. `explain` replaces the sentence; `data-detail` keeps the status code.
+
+test('no user-facing failure sentence leaks jargon, a status code, or "see console"', () => {
+  const { explain, MAX_ATTEMPTS } = load();
+  const cases = [
+    { status: 401 }, { status: 403 }, { status: 500 }, { status: 0, netError: true },
+    { error: 'Maximum number of carts' }, { error: 'The unit is not available for the date(s) specified' },
+    { error: 'cart is already added' }, {}, { status: 429, error: '' },
+    { status: 500, attempt: MAX_ATTEMPTS },
+  ];
+  for (const c of cases) {
+    const out = explain(c);
+    assert.ok(out.length > 0, `${JSON.stringify(c)} produced an empty sentence`);
+    // THE EXACT STRING THAT SHIPPED. Pinned by name so reinstating it fails here.
+    assert.ok(!/see console/i.test(out), `"see console" survived for ${JSON.stringify(c)}`);
+    // `RC` as a standalone word. The substring appears inside "ReserveCalifornia", which is
+    // the spelled-out form we WANT, so a naive indexOf would forbid the fix.
+    assert.ok(!/\bRC\b/.test(out), `bare "RC" survived for ${JSON.stringify(c)}: ${out}`);
+    // No HTTP status codes. Three digits starting 4 or 5 is what the old line printed.
+    assert.ok(!/\b[45]\d{2}\b/.test(out), `a status code survived for ${JSON.stringify(c)}: ${out}`);
+    assert.match(out, /[.!]$/, `not a sentence for ${JSON.stringify(c)}: ${out}`);
+  }
+});
+
+test('the two failures a person can ACT on say so, and differently', () => {
+  const { explain } = load();
+  // A dead session is fixable on the page they are already looking at, in about twenty
+  // seconds. A full cart is fixable too, by a completely different action. The old line
+  // rendered both as "RC declined" — which is why this asserts they DIFFER, not merely
+  // that each is non-empty.
+  const expired = explain({ status: 401 });
+  const full = explain({ error: 'Maximum number of carts reached' });
+  assert.match(expired, /sign.?in/i, 'a 401 must name signing in as the remedy');
+  assert.match(full, /cart is full/i, 'a capacity refusal must say the cart is full');
+  assert.notEqual(expired, full, 'two different remedies must not render as one sentence');
+  // And the honest loss is said plainly rather than hedged — somebody told "something went
+  // wrong" retries a site that has gone.
+  assert.match(explain({ error: 'The unit is not available for the date(s) specified' }),
+    /booked it first|is gone/i);
+});
+
+test('explain and decide agree about which cases they recognise', () => {
+  // TWO FUNCTIONS, ONE CLASSIFICATION. They are separate so that a retry rule cannot
+  // acquire copy and copy cannot acquire a retry rule — but a case one recognises and the
+  // other does not is exactly the drift that produces a correct decision with a wrong
+  // sentence. Driven through both from one table.
+  const { decide, explain } = load();
+  const table = [
+    { o: { status: 200, error: 'cart is already added' }, held: true, says: /already in your cart/i },
+    { o: { status: 200, error: 'Maximum carts' }, held: false, says: /cart is full/i },
+    { o: { status: 401 }, held: false, says: /sign.?in/i },
+    { o: { status: 403 }, held: false, says: /would not accept/i },
+  ];
+  for (const row of table) {
+    const d = decide({ attempt: 1, netError: false, ...row.o });
+    assert.equal(d.retry, false, `${JSON.stringify(row.o)} must be terminal for decide`);
+    assert.equal(d.held, row.held, `${JSON.stringify(row.o)} disagrees about held`);
+    assert.match(explain(row.o), row.says);
+  }
+});
+
+test('content-rc.js CALLS explain, and keeps the diagnostic on data-detail', () => {
+  // FIX PRESENT AND INERT is the way this change fails: a perfect `explain` that nothing
+  // invokes leaves "RC declined (401) — see console" on the phone with every pure test
+  // above still green.
+  const cr = readFileSync('extension/content-rc.js', 'utf8');
+  assert.match(cr, /setStatus\(\s*RETRY\.explain\(/,
+    'the terminal failure must be phrased by explain()');
+  assert.ok(!/RC declined \(\$\{res\.status\}\)/.test(cr),
+    'the old status-code sentence must be gone from the visible status');
+  assert.match(cr, /setAttribute\('data-detail'/,
+    'the technical string must still be written somewhere a diagnostic can read it');
+  // AND THE DIAGNOSTIC MUST STILL RECEIVE IT. `lib/rc-precart-script`'s epilogue forwards
+  // the status line; forwarding only `textContent` after this change would leave us with a
+  // plain sentence and no status code anywhere — strictly worse than what it replaced.
+  const ep = readFileSync('src/lib/rc-precart-script.ts', 'utf8');
+  assert.match(ep, /getAttribute\("data-detail"\)/,
+    'the epilogue must read data-detail, or the status code reaches nobody at all');
+  assert.match(ep, /attributeFilter: \["data-detail"\]/,
+    'data-detail is an attribute — a childList observer alone never fires for it');
 });

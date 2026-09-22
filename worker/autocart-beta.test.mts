@@ -154,7 +154,15 @@ test('a beta BADGE never sits beside hand-written beta prose', () => {
 
 test('/new tells an RC watcher the capability exists', () => {
   const nw = read('src/components/v2/NewWatch.tsx');
-  assert.match(nw, /canRcHold = campgroundSource \? supportsRcHold\(campgroundSource\) : false/);
+  // RE-ANCHORED AGAIN 2026-09-22 ON THE PROPERTY, NOT THE EXPRESSION. This pinned the whole
+  // literal `canRcHold = campgroundSource ? supportsRcHold(campgroundSource) : false`, so
+  // closing the beta — which ANDs `RC_HOLD_BETA_OPEN` onto the front, i.e. makes the gate
+  // STRICTER — failed a guard whose subject is that the source is consulted at all. Exactly
+  // the shape the comment below already records one line down, committed a second time by
+  // the person reading it. The property is: `canRcHold` is derived from `supportsRcHold` of
+  // the campground's own source, and nothing else about the shape is this guard's business.
+  assert.match(nw, /const canRcHold =[^;]*supportsRcHold\(campgroundSource\)/,
+    'canRcHold must still be derived from the campground source');
   // RE-ANCHORED 2026-09-09, NOT RELAXED — and the FIRST re-anchor was vacuous, which is the
   // whole lesson. This pinned the exact expression `{canRcHold && (`; gating the panel on the
   // reader's ENTITLEMENT too (`{canRcHold && offer === "promise" && (`) broke it over a change

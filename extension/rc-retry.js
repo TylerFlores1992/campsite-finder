@@ -88,7 +88,72 @@
     };
   }
 
-  var api = { decide: decide, MAX_ATTEMPTS: MAX_ATTEMPTS, GAP_MS: GAP_MS };
+  /**
+   * WHAT TO SHOW THE PERSON HOLDING THE PHONE, once `decide` has stopped.
+   *
+   * ## The bug this exists for (2026-09-22, reported from a real hand-off)
+   *
+   * The failure line read **"RC declined (401) — see console"**. Three things wrong with
+   * it, and the third is the one that matters:
+   *
+   *   1. `RC` is our abbreviation. Nobody outside this repo expands it.
+   *   2. `401` is an HTTP status. It is the single most useful fact we have and it means
+   *      nothing whatever to the person reading it.
+   *   3. **`see console` is an instruction that cannot be followed.** There is no console
+   *      on a phone, inside an in-app webview, at 08:00. It is a message to a developer
+   *      printed on a customer's screen — and it appears exactly when the developer is
+   *      not there, which is the only time it is ever shown.
+   *
+   * And the sentence displaced the only thing worth saying: what to do next. A 401 and a
+   * full cart have completely different remedies and both rendered as "RC declined".
+   *
+   * ## The technical string is NOT discarded — it moves
+   *
+   * `content-rc.js` writes it to `#camphawk-rc-status`'s `data-detail`, which
+   * `lib/rc-precart-script`'s epilogue forwards beside the visible status. So the
+   * diagnostic keeps the status code and the user gets a sentence, which is the split the
+   * old line was trying to do with one string and could not.
+   *
+   * ## Classification mirrors `decide` ON PURPOSE, and is pinned to it
+   *
+   * `decide` answers "try again?" and this answers "so what do I tell them?" — the same
+   * facts, two questions. They are separate functions because a retry rule that acquired
+   * copy, or copy that acquired a retry rule, is how both get edited by someone who only
+   * meant to change the other. `handoff-retry.test.mts` drives one table through BOTH, so
+   * a case recognised by one and not the other fails.
+   *
+   * @param {object} o `{ status, error, netError }` — the same shape `decide` takes.
+   * @returns {string} One sentence: what happened, then what to do about it.
+   */
+  function explain(o) {
+    o = o || {};
+    var msg = String(o.error == null ? '' : o.error).toLowerCase();
+    var status = Number(o.status) || 0;
+
+    if (msg.indexOf('already added') !== -1) return 'It is already in your cart.';
+    if (msg.indexOf('maximum') !== -1) {
+      return 'Your ReserveCalifornia cart is full. Check out or remove a site, then try again.';
+    }
+    // THE REMEDY IS THE POINT. A dead session is the one failure the person can actually
+    // fix, in about twenty seconds, on the page they are already looking at — and the old
+    // wording ("RC declined (401)") told them nothing was fixable.
+    if (status === 401) {
+      return 'Your ReserveCalifornia sign-in has expired. Sign in on this page, then add the site to your cart.';
+    }
+    if (status === 403) {
+      return 'ReserveCalifornia would not accept the request. Book the site on this page.';
+    }
+    if (o.netError) return 'We could not reach ReserveCalifornia. Book the site on this page.';
+    // "NOT AVAILABLE" AFTER THE RETRIES ARE SPENT IS THE HONEST LOSS. Said plainly rather
+    // than hedged: somebody who is told "something went wrong" goes and retries a site that
+    // has gone, and the useful next move is to look at what else is open.
+    if (msg.indexOf('not available') !== -1) {
+      return 'Someone else booked it first. The site is gone.';
+    }
+    return 'ReserveCalifornia would not add the site. Book it on this page.';
+  }
+
+  var api = { decide: decide, explain: explain, MAX_ATTEMPTS: MAX_ATTEMPTS, GAP_MS: GAP_MS };
   // Both consumers live in the same isolated world; the global is explicit so the
   // dependency is greppable from `content-rc.js` rather than implied by load order.
   if (typeof window !== 'undefined') window.__chHandoffRetry = api;

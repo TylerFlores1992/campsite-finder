@@ -71,7 +71,17 @@ function makePage(opts: {
   if (opts.carted) session.set('camphawk_rc_done', JSON.stringify(opts.carted));
 
   const listeners: Record<string, ((e: unknown) => void)[]> = {};
-  const status = { textContent: '' };
+  // ATTRIBUTES ARE MODELLED NOW, because `setStatus(text, detail)` writes the technical
+  // half to `data-detail` (2026-09-22). A bare `{ textContent: '' }` made that write throw
+  // into setStatus's own try/catch, so the stub would have silently proved nothing about
+  // the carrier the diagnostic depends on — the guard-anchored-on-the-wrong-thing shape,
+  // arriving through the test double rather than through the assertion.
+  const attrs = new Map<string, string>();
+  const status = {
+    textContent: '',
+    setAttribute(k: string, v: string) { attrs.set(k, v); },
+    getAttribute(k: string) { return attrs.has(k) ? attrs.get(k)! : null; },
+  };
 
   const el = () => {
     const node: Record<string, unknown> = {
@@ -272,9 +282,22 @@ test("RC's refusal is reported in RC's own words, never as success", async () =>
   await page.settle();
 
   assert.equal(page.calls.length, 2, 'it still tried');
-  assert.match(page.status.textContent, /RC declined/);
-  assert.match(page.status.textContent, /Maximum Reservations in Cart/);
-  assert.ok(!/Added to cart/.test(page.status.textContent));
+  // RE-ANCHORED 2026-09-22 ON BOTH CARRIERS, NOT RELAXED. The property this test names —
+  // RC's refusal reported in RC's own words, never as success — is unchanged. What changed
+  // is that one string became two: the person now reads plain English with a remedy, and
+  // RC's verbatim words moved to `data-detail` for the diagnostic. Asserting only the
+  // visible text after that would drop the "in RC's own words" half of this test's own
+  // title; asserting only the attribute would let the screen go back to saying nothing.
+  assert.ok(!/Added to cart/.test(page.status.textContent),
+    'a declined cart must never render as the success phrase');
+  assert.match(page.status.textContent, /cart is full/i,
+    'the person must be told what happened, in words that name the remedy');
+  assert.ok(!/RC declined|see console|\b200\b/.test(page.status.textContent),
+    'the visible sentence must not carry jargon or a status code — see rc-retry.explain');
+  const detail = page.status.getAttribute('data-detail') || '';
+  assert.match(detail, /Maximum Reservations in Cart/,
+    "RC's own words must survive somewhere a diagnostic can read them");
+  assert.match(detail, /HTTP 200/, 'and so must the status code');
   assert.equal(page.local.get('shoppingCartKey'), undefined, 'a declined cart is not adopted');
 });
 

@@ -433,7 +433,8 @@
           continue;
         }
         setState('failed');
-        setStatus('Couldn\u2019t reach RC — book manually.');
+        setStatus(RETRY.explain({ status: 0, error: '', netError: true }),
+          'could not reach ReserveCalifornia');
         return;
       }
       // READ THE BODY ONCE. It used to be `res.clone().text()` on the success path and
@@ -524,14 +525,23 @@
         }
 
         setState('failed');
-        setStatus(`RC declined (${res.status}) — ${(detail || 'see console').replace(/<br\/?>/g, ' ')}`
-          + (attempt > 1 ? ` (${attempt} attempts)` : ''));
+        // THE SENTENCE AND THE DIAGNOSTIC ARE DIFFERENT AUDIENCES. `explain` says what
+        // happened and what to do; the status code, RC's own words and the attempt count go
+        // to `data-detail`, where the epilogue picks them up. Nothing is lost — it stops
+        // being printed at somebody who cannot act on it.
+        setStatus(
+          RETRY.explain({ status: res.status, error: apiError, netError: false }),
+          `HTTP ${res.status}`
+            + (detail ? ` — ${String(detail).replace(/<br\/?>/g, ' ')}` : '')
+            + ` (${attempt} attempt${attempt === 1 ? '' : 's'})`,
+        );
         return;
       }
       }
     } catch (e) {
       setState('failed');
-      setStatus('Couldn’t reach RC — book manually.');
+      setStatus(RETRY.explain({ status: 0, error: '', netError: true }),
+        'could not reach ReserveCalifornia');
     }
   }
 
@@ -600,7 +610,25 @@
   function scrollToTop() {
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { try { window.scrollTo(0, 0); } catch {} }
   }
-  function setStatus(t) { if (statusEl) statusEl.textContent = t; }
+  /**
+   * The sentence the PERSON reads, and — separately — the string a DEVELOPER needs.
+   *
+   * They used to be one string, which is how "RC declined (401) — see console" reached a
+   * customer's phone: an HTTP status and an instruction to open a console that does not
+   * exist inside an in-app webview. The visible text is now plain English with a remedy
+   * (`RETRY.explain`), and the technical half rides `data-detail`, which nothing on screen
+   * renders and `lib/rc-precart-script`'s epilogue forwards beside the status.
+   *
+   * WRITTEN EVEN WHEN EMPTY, never left stale: a later status with no detail must CLEAR the
+   * previous one, or a diagnostic pairs a fresh sentence with an old status code — which is
+   * this repo's two-facts-of-different-ages shape, in the one place built to explain a
+   * failure.
+   */
+  function setStatus(t, detail) {
+    if (!statusEl) return;
+    statusEl.textContent = t;
+    try { statusEl.setAttribute('data-detail', detail == null ? '' : String(detail)); } catch (e) {}
+  }
 
   /**
    * Which of the three (plus two ordinary ones) the bar is in.

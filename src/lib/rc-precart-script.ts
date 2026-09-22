@@ -367,10 +367,28 @@ export function epilogue(): string {
     '        : { reason: "no hold in this link — the script ran and had nothing to cart" });',
     '      return;',
     '    }',
+    // THE DETAIL RIDES ALONGSIDE, because the visible sentence stopped carrying it.
+    // `setStatus(text, detail)` writes the status code and RC's own words to `data-detail`
+    // so the person reads plain English — see content-rc.js. Forwarding only `textContent`
+    // after that change would have made this diagnostic strictly worse than the message it
+    // replaced: "Your ReserveCalifornia sign-in has expired" with no status code at all.
+    // OMITTED WHEN EMPTY rather than sent as "": a key that is always present and usually
+    // blank trains a reader to skip it.
+    '    var det = function () { var d = el.getAttribute("data-detail") || ""; return d ? R.scrub(d) : null; };',
+    '    var say = function (stage) {',
+    '      var d = det();',
+    '      var out = { status: R.scrub(el.textContent || "") };',
+    '      if (d) out.detail = d;',
+    '      R.send(stage, out);',
+    '    };',
     '    R.send("banner", { status: R.scrub(el.textContent || "(empty)") });',
     '    try {',
-    '      new MutationObserver(function () { R.send("status", { status: R.scrub(el.textContent || "") }); })',
-    '        .observe(el, { childList: true, characterData: true, subtree: true });',
+    // `attributes` IS NEW AND IS LOAD-BEARING. `data-detail` is an ATTRIBUTE, so a
+    // childList/characterData observer never fires for it — and `setStatus` writes both in
+    // one call, so the text change carries the detail with it. Watched anyway, because the
+    // one ordering that would lose it is a detail written without a text change.
+    '      new MutationObserver(function () { say("status"); })',
+    '        .observe(el, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["data-detail"] });',
     '    } catch (e) { R.send("error", { message: "status observer failed: " + R.scrub(e && e.message) }); }',
     '  }, 0);',
     '})();',

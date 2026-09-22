@@ -23,6 +23,7 @@ import { useNativeLinkout, useStoreCanSell, StorePlansLink, SUBSCRIBE_HREF } fro
 import SubscribeCta, { useAccountGate } from "./SubscribeCta";
 import { useSubscription } from "./useSubscription";
 import { autoCartOffer, autoCartIntent } from "@/lib/autocart-offer";
+import { RC_HOLD_BETA_OPEN } from "@/lib/autocart-beta";
 import type { Campground } from "@/lib/types";
 import { WATCH_LIMIT, MAX_DIVISIONS_PER_WATCH } from "@/lib/limits";
 
@@ -499,7 +500,15 @@ export default function NewWatch({
     campgroundSource ? supportsAutoCart(campgroundSource) && !firstCome : false;
   // Narrower than isUseDirectSource on purpose -- the bot holds ONE ReserveCalifornia
   // account, so advertising this on an Ohio watch would promise what nothing can perform.
-  const canRcHold = campgroundSource ? supportsRcHold(campgroundSource) : false;
+  // AND NOT WHILE THE BETA IS CLOSED (2026-09-22). Both panels below make a promise about
+  // the 08:00 hold — one to a subscriber ("we'll offer to cart it"), one to everybody else
+  // ("it's on the Auto-Cart plan, see plans"). The poller stopped offering holds to anyone
+  // off the allowlist on the same day, so BOTH were about to describe something that will
+  // not happen, and the upsell was the worse of the two: it SELLS it. The client cannot
+  // know the allowlist and must not be told it, so this hides the copy from everyone —
+  // including the owner, who does not need a panel on this screen to be offered a hold.
+  // See `src/lib/autocart-beta`.
+  const canRcHold = RC_HOLD_BETA_OPEN && (campgroundSource ? supportsRcHold(campgroundSource) : false);
   const windowNights = range.start && range.end ? nightsBetween(range.start, range.end) : 0;
   // The API rejects flexNights longer than the window; catch it before the round trip.
   const flexTooLong = mode === "flexible" && windowNights > 0 && flexNights > windowNights;
