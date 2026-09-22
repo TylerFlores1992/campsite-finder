@@ -10,56 +10,48 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
-## 0. FIRST: THE CART BURST NOW RECORDS ITSELF — READ THE FIRST ROW CAREFULLY
+## 0. FIRST: THE BURST HAS NOW BEEN OBSERVED, AND IT STOPS WHEN IT WINS
 
-**Read `CLAUDE.md` → "THE 08:00 FAST LANE HAS NEVER ONCE BEEN OBSERVED RUNNING".**
+*This section replaced the 09-17 "the burst has never been observed" block, which is answered:
+it fired twice on 2026-09-21 and both rows are in `bot_events`.*
 
-On 2026-09-17 a real user's hold (`#A124`, rc-357, Carpinteria SB — Anacapa) was lost at the
-15:00 UTC release — RC answered *"The unit is not available for the date(s) specified."*, the row
-went `failed` at 15:20:01Z, and the user was told automatically on all three channels. The owner
-asked the only question that matters: **did the 500 ms burst fire?** Nothing could say.
+**Read `CLAUDE.md` → "THE CART BURST STOPS WHEN IT WINS".** Two Carpinteria holds carted at the
+08:00 PT release and **both hand-offs were declined** by RC. Three separate defects, all found
+from the runner's own log:
 
-The burst has been live since 2026-09-03 and **has never once left a durable trace**: on a loss
-its summary rides in `error`, which ~110 slow-lane retries then overwrite while the hold stays
-`requested` for its 20-minute grace; on a win it goes only to the log; and `tail-log` rolls at
-80-400 lines / 16,000 characters with no offset and no rotation. Across all history,
-`output ilike '%fast attempt%'` returns **0 rows**.
+```
+15:00:00  x could not hold #R359: HTTP 200 (13 fast attempts ending T-0.5s … RC said something else: HTTP 200)
+15:00:00  v held #M450 - won it on attempt 14 at T+0.1s
+15:00:24  x could not hold #R359: cart is already added      <- and ~75 more, every ~12s
+15:15:03  v held #R359 - entry 9b6aa2dc-...
+```
 
-**IT EMITS A `cart-burst` BOT EVENT NOW**, one per hold per release pass that waited for the
-release — in Postgres, where nothing can overwrite or roll it away.
+1. **The burst's stop condition fires on SUCCESS.** `why = v.error || \`HTTP ${status}\`` and a
+   successful submit has no `ErrorMessage`, so `why` became the string `"HTTP 200"`,
+   `isNotAvailable` did not recognise it, and the lane stopped at **T−0.5s with 15 budget left**.
+   **We won `#R359` and reported a loss.**
+2. **`cart is already added` was logged as a failure** ~75 times over 15 minutes — RC telling us
+   the site was already ours. **`carted_at` and a large `T+s` are a LABEL, not a late win.**
+3. **The hand-off made exactly ONE attempt.** 40 attempts to take a campsite, one to hand it
+   back. `#M450`'s release genuinely happened (`-> handed over #M450 (HTTP 200)`), so its decline
+   was a competitor or un-propagated release, and one POST resolved that by assuming the worse.
 
-- **THE ROW COUNT IS ZERO TODAY AND THAT IS CORRECT.** The first arrives on the next **tapped**
-  hold. Untapped offers produce nothing.
-- **`NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` — CART BURSTS PRINTS FIRST.**
+**All three are fixed and LIVE** (#385, #388, #389). The hand-off retry is web-side and was
+verified serving from `/api/rc-precart`; the burst fixes are on the box at `eeb9d05`, confirmed
+by `bot-ask git-status`.
 
-| the row says | what happened | where the fault is |
-|---|---|---|
-| many attempts | raced and lost | nowhere — the burst works |
-| **exactly one attempt** | the lane armed and declined to retry | **ours** — the `reason` names it |
-| **no row at all** | the runner never arrived before T | **ours** — the burst did not run |
+**What is still open from it** is in `CLAUDE.md`'s Open block: `#M450`'s decline, `released`
+having no "handed off and lost" state, and why `findCartEntry` misses.
 
-- **ONE ATTEMPT IS NOT A RACE.** Reporting it as one sends you to RC's side of a fault that is
-  ours. **NO ROW is the case the owner feared**, and it is why the event is gated on
-  `waitedForRelease` and *not* on the burst having retried.
-- **CROSS-CHECK AN ABSENCE** against `scripts/rc-holds-readout.mts` before reading silence as
-  quiet: no row is only a finding for a hold that was tapped and whose release has passed.
-
-**IT IS LIVE ON THE BOX** — `637316e`, applied 2026-09-17 17:44:17 UTC, read from
-`bot-ask git-status` and never from `autocart.bot_version`. So a hold tapped from here on is
-covered; anything before 17:44 was not, and an absent row for one of those says nothing.
-
-**AND THE POLLER'S 15 SECONDS IS NOT THE CART'S CADENCE.** `rc-hold-outcome.ts` says *"the poller
-never saw this unit open at any 15-second sample"* — that is the **Fly poller**, a different loop
-on a different machine from the **mini-PC hold runner**, which carts at 500 ms across T-15s..T+30s.
-Do not quote one in answer to a question about the other, and **do not read the poller's silence
-as the site never opening**: `claimNotification` stamps every *sampled* open cycle, so at 15
-seconds a sub-15-second flip is invisible by construction.
-
+**AND THE LATE TEXT WAS THE SAME BUG.** `notifyHeld` fires on `markCarted`'s TRANSITION, so the
+owner was told at 15:15:03 because that is when the read-back matched. Nothing about the
+campsite changed. A mislabelled hold is a text that does not arrive.
 
 ## 0a. THE rec.gov RECONNECT IS FIXED AND LIVE ON BOTH HALVES — nothing is pending
 
-**Read `CLAUDE.md` → "RECONNECT AUTO-CART FOR REC.GOV WAS ONE HIDDEN INPUT, AND THE LOOP WAS
-CLOSED".** Reported from the Android app on 2026-09-18: *"reconnect auto-cart for rec.gov"*, the
+**Read `docs/ARCHIVE-RC-AUTOCART.md` → `"RECONNECT AUTO-CART FOR REC.GOV" WAS ONE
+HIDDEN INPUT, AND THE LOOP WAS CLOSED`.** (The heading carries its own inner quotes — grep for
+`WAS ONE HIDDEN INPUT`.) Reported from the Android app on 2026-09-18: *"reconnect auto-cart for rec.gov"*, the
 reconnect failing with credentials the owner believed correct, and in the manual `/connect`
 fallback **the email re-typed into the password field on every keystroke.** Three causes, none of
 them the password.
@@ -140,7 +132,7 @@ Three things that will bite in the first ten minutes:
 
 **Three firings (09-17 09:50:17, 09-17 17:44:39, 09-18 15:19:36 UTC) are not a rate either, and
 all three are the SAME lever** — the last two are box updates, which produce the cold RC home-page
-load the burst population needs. `CLAUDE.md` → "IT FIRED", "A SECOND TIME" and "A THIRD TIME" are
+load the burst population needs. `docs/CHROMIUM-LEAK.md` → "IT FIRED", "A SECOND TIME" and "A THIRD TIME" are
 the account; this section is how to read the box for the next one.
 
 ```sql
@@ -222,7 +214,7 @@ trip killed by a bail emits no `tab-close`, and 09-15 has a `bail:ramp` sixteen 
 release — its browser age of 6.2 h fits a renewal, so a killed auto-login is unlikely there and is
 not excluded.)
 
-**AND THE ATTRIBUTION RULE APPLIES WHENEVER IT DOES FIRE** (`CLAUDE.md` → "THE CURE WATCHES ONE
+**AND THE ATTRIBUTION RULE APPLIES WHENEVER IT DOES FIRE** (`docs/CHROMIUM-LEAK.md` → "THE CURE WATCHES ONE
 RENDERER OF TWO"). `maybeAutoLogin` runs in a **throwaway tab** and the cure probes
 **`residentPage` only**, so a ramp in the trip's own renderer is invisible to it — and correctly
 so, because `closeTabBounded` in the `finally` already reclaims that one. **"The cure did not
@@ -428,52 +420,30 @@ real logins from a blocked address.
 
 ---
 
-## 1. State — re-verified 2026-09-18, 15:25 UTC
+## 1. State — re-verified 2026-09-22, 04:20 UTC (2026-09-21 21:20 PT)
 
 | | |
 |---|---|
-| master | `00fdcb5` (#365 docs; `2e49994` #364 and `fff3b98` #363 before it). **Verify against `origin/master`; this line ages.** One open issue, **#243** (worker-deploy goes red when Fly REPLACES a machine rather than updating it — cosmetic; `/api/health/status` is the authority on a red deploy, not the tick). |
+| master | `8c9b7d5`. Five PRs landed 09-21: **#386** (worker-deploy replaced-machine + `recentBotEvents` source filter), **#387** (a CI correction), **#388** (hand-off retry), **#389** (burst stop-on-success), **#390** (three findings). **Verify against `origin/master`; this line ages.** |
+| open issues | **none** — #243 was closed by #386. |
 | open PRs | **none.** |
-| mini-PC | **`2e49994` — the same sha as web**, applied 2026-09-18 15:19 UTC in 35 seconds. Confirm with `bot-ask git-status`, never `autocart.bot_version` (it COALESCEs and can show a stale sha beside a live heartbeat). |
-| health | **16 of 19 ok** (re-read 2026-09-19 02:37 UTC), overall `degraded` — three warns, **every one documented-benign** (below). |
-| fleet | worker heartbeat **6s**, **15 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines, 4 slots free**. |
-| holds | **ZERO live and zero released in 24h.** That is the ordinary state, not a fault. |
-| RC session | **WARN, and that is the box update's own cost** — `stop-all` closed the Chromium the token lives in at 15:19. `planRenewal` repairs it unattended. **Do not reach for `rc-login.bat`**; it force-kills the browser the repair needs. |
-| the leak | **DIAGNOSED, CONTAINED, AND THE *DURATION* CURED — still NOT eliminated.** §2. The cure has fired **three times** (09-17 09:50:17, 09-17 17:44:39, 09-18 15:19:36), all on the burst population, none followed by a ramp. A is built, B is answered and off, C is built. |
-| the last ramp | **09-17 14:31:49 UTC**, on an 82-minute browser (the OLD population), from the T-30 auto-login. Peak `rc_mb` **3,168 MB**, commit **45,568**. The walk is thirteenth-consistent and the dump is `target-silent` for the sixth time — **nothing left to read there.** |
-| the burst | **has never been observed firing.** `cart-burst` is LIVE on the box and has **0 rows** — correct until the next tapped hold. §0. |
+| mini-PC | **`eeb9d05`**, applied 2026-09-22 03:07 UTC in **23 seconds** on demand. Confirmed by `bot-ask git-status` → `HEAD eeb9d05 on master`, never `autocart.bot_version`. It is one docs commit behind web (`8c9b7d5`) and **there is no bot-side code in that gap.** |
+| health | **18 of 19 ok**, overall `degraded` — the one warn is `autocart.bot_version` on the docs-only gap above. |
+| fleet | worker heartbeat **2s**, **14 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines, 4 slots free**. |
+| holds | **`#R315` (Carpinteria SB — Santa Rosa) is TAPPED and queued for 2026-09-22 08:00 PT.** Two more sites sit `offered` and untapped, which is not a fault. |
+| RC session | **LIVE.** The 09-21 box update ended it, and an on-demand rehearsal at 03:55 UTC re-established it: `okta=ALIVE (exp 2026-09-22T15:55:40)` — **past the 08:00 PT release** — with a fresh 60-minute token. `autocart.rc_login` PASSED unattended post-update. **The 6h on-demand ration is spent until ~02:55 PT.** |
+| the burst | **OBSERVED, twice, and both defects fixed.** §0. |
+| the hand-off | **retries 5x now**, live in production, verified serving from `/api/rc-precart`. §0. |
+| the leak | **DIAGNOSED, CONTAINED, DURATION CURED — still NOT eliminated.** §2. Unchanged 09-21. |
 | migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left** — the next main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
 
-**ALL THREE WARNS ARE DOCUMENTED-BENIGN — and the delivery canary ANSWERED (2026-09-19 02:37
-UTC).** All three `delivery:*` checks are **green again**, last result 2026-09-18T17:41:07Z, with
-nobody touching them: the 35-hour silence was a worker deploy re-phasing an interval anchored at
-process start (`637316e` merged 17:38:40Z on 09-17 and the next firing is 24 h + 2.5 min after it).
-**Do not chase a late alert-health canary within one interval of a worker deploy.** What is left:
-`autocart.rc_session` (RC rejects the token between releases — the token lives ~1h and
-`planRenewal` repairs it; **never reach for `rc-login.bat`**), `autocart.rc_login` (the once-per-20h
-rehearsal gate, last PASS 2026-09-17), and `autocart.bot_version` (box `2e49994` vs web `00fdcb5`,
-and the check itself says **"No bot-side code in the gap"** — the gap is docs, so **do not spend a
-box update on it**; an update ends the RC session).
-
-**THE CAPTCHA IS OVER AND BOTH PREDICTIONS WERE FALSIFIED BY THE BOX.** The 12:00 UTC warm-up was
-stopped by an image challenge; the handover said `maybeAutoLogin` would meet the same overlay and
-that a human sign-in was needed before 14:30. **Neither happened.** The session repaired
-unattended, four `auto-login` trips ran 14:34-14:37, and `session_live_since` moved to 14:37:05 —
-then 16:47 after the ordinary renewal. **One CAPTCHA is an event, not an escalation**; the reading
-that would matter is whether the next unattended sign-in after a human one also meets one, and
-nobody has that.
-
-**AND DO NOT READ A RED `autocart.rc_session` WITHIN A FEW MINUTES OF A MERGE AS A REAL DEAD
-SESSION.** A numeric `carted` test fixture (`REAL = '0'`, five minutes out) passes `REAL_UNIT`, so
-for the length of any `npm test` run — CI on every merge included — the health route counts a hold
-ahead and the check reddens over a session with nothing wrong with it. Check whether a Verify run
-was in flight first. Full entry in CLAUDE.md.
-
----
+**THE ONE THING TO CHECK FIRST TOMORROW:** how `#R315` went at 08:00 PT.
+`NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts`, and read §0 before reading a
+`could not hold` line as a loss.
 
 ## 2. The leak — DIAGNOSED, CONTAINED, AND THE DURATION CURED. **IT IS NOT ELIMINATED.** Read before touching anything memory-related.
 
-**`CLAUDE.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`" and the block directly
+**`docs/CHROMIUM-LEAK.md` → "THE 32 GiB CEILING IS `base::SharedMemorySecurityPolicy`" and the block directly
 beneath it, "THE RESIDUAL IS COMMIT, AND NOTHING WATCHES IT", are the full account.** Everything
 here is a pointer to them.
 
@@ -681,7 +651,7 @@ path is untouched: `maybeAutoLogin` at T−30, the T−3h warm-up, the nightly r
 ### 2.6 THE CURE (2026-09-16) — it cures the DURATION, not the burst
 
 `scripts/auto-cart-bot/page-wedge.mjs` plus one arm in the keep-warm's existing watchdog timer.
-**`CLAUDE.md` → "THE CURE: RECYCLE THE WEDGED PAGE, NOT THE BROWSER" is the full account.**
+**`docs/ARCHIVE-OPEN-BLOCKS.md` → "THE CURE: RECYCLE THE WEDGED PAGE, NOT THE BROWSER" is the full account.**
 
 Probe the resident page with a **bounded** `page.evaluate('1')`; after **3 consecutive**
 no-answers at a **10 s** cadence, close the page. A renderer holds its mappings for as long as
@@ -769,7 +739,7 @@ elevated sample or none. So the series is the *corroborating* instrument here an
     in one statement, checked in source. **Do not go looking there.**
   - The repair is `COALESCE(cancel_at_period_end, false) OR cancel_at IS NOT NULL`, and the three
     caveats that make it more than a one-liner (four copies of the predicate, the live-row filter,
-    the missing mirror fixture) are in CLAUDE.md → **"THE CANCELLATION BADGE MISSES THE ONLY
+    the missing mirror fixture) are in docs/ARCHIVE-PRODUCT-AND-PLATFORM.md → **"THE CANCELLATION BADGE MISSES THE ONLY
     CANCELLING SUBSCRIBER"**.
   - **The Oct 8 deadline is real but not urgent** — three weeks of margin, and the row is right,
     so nothing is lost by taking it deliberately.
@@ -781,7 +751,7 @@ elevated sample or none. So the series is the *corroborating* instrument here an
   an **AAB** and therefore necessarily uses Play App Signing. **Nothing is owed.**
   - **The email and the docs describe TWO mechanisms sharing one date, and quoting either alone
     misleads.** *Registration* is global and its consequence is removal; *install-time
-    enforcement* is BR/ID/SG/TH-only until 2027. **Quote the row, not the date** — CLAUDE.md →
+    enforcement* is BR/ID/SG/TH-only until 2027. **Quote the row, not the date** — docs/ARCHIVE-PRODUCT-AND-PLATFORM.md →
     "ANDROID DEVELOPER VERIFICATION".
   - Open only if the sideload APK ever becomes a real channel: three registered keys is more than
     the app signing key alone, so the `camphawk_upload` key is very likely among them — **Play
@@ -826,7 +796,7 @@ elevated sample or none. So the series is the *corroborating* instrument here an
   **ALL THREE ARE NOW PROVEN BY ONE ROW** — an Apple TestFlight purchase on 2026-09-15 03:23 UTC
   wrote the first `provider=apple` row this product has ever had, and a plan change four minutes
   later updated the SAME row (Apple keeps `original_transaction_id` stable inside a subscription
-  group). CLAUDE.md → "THE APPLE PURCHASE CHAIN IS PROVEN". **What is still unexercised is a REAL
+  group). docs/ARCHIVE-PRODUCT-AND-PLATFORM.md → "THE APPLE PURCHASE CHAIN IS PROVEN". **What is still unexercised is a REAL
   `PRODUCTION` purchase**, carrying the two known gaps below.
 - **iOS `1.0 (27)` IS BACK IN THE QUEUE — RESUBMITTED 2026-09-15, SIX ITEMS, NOTHING OUTSTANDING.**
   Apple rejected it that morning on **3.1.2**, no Terms of Use (EULA) link in the App Store
@@ -847,7 +817,7 @@ elevated sample or none. So the series is the *corroborating* instrument here an
     enable `Resubmit to App Review`.** The version has to be pushed back into the submission with
     **`Update Review`** (top right of the version page; Apple's help calls that slot *Add for
     Review* — **match on POSITION, not the label**). Resubmit went live the instant it was pressed.
-    CLAUDE.md → "SAVING THE METADATA DOES NOT RESOLVE THE ITEM".
+    docs/ARCHIVE-PRODUCT-AND-PLATFORM.md → "SAVING THE METADATA DOES NOT RESOLVE THE ITEM".
   - **`Update Review` IS A ONE-SHOT** (*"you can edit items in a submission only once before
     resubmission"*) and **Remove is irreversible** (*"removed items cannot be added back to the same
     submission"*). Both are Apple's own words; the second would make the 09-14 draft trap permanent.
@@ -862,7 +832,7 @@ elevated sample or none. So the series is the *corroborating* instrument here an
     It is `1.0 (27)`'s web layer, so a push fixes it with no rebuild.
   - **WHAT IS STILL UNVERIFIED AND MATTERS IF IT PASSES:** build 27 has **zero installs**, so
     nobody has walked the paywall on the binary the reviewer gets. Worth doing while it queues.
-  Standing facts, unchanged — and read CLAUDE.md → "THE SUBMISSION STATE, WRITTEN DOWN BECAUSE IT
+  Standing facts, unchanged — and read docs/ARCHIVE-PRODUCT-AND-PLATFORM.md → "THE SUBMISSION STATE, WRITTEN DOWN BECAUSE IT
   LIVED ONLY IN A CHAT" before touching anything: **SBP approved at 15%** (no price change needed
   — the four products were already on the 15% column), **§4e is 7-of-7** while that file still
   says `GATED ON SBP`, and **Sign-In Information points at the clean account**.
