@@ -1213,6 +1213,47 @@ with the site back on the open market.
   healthy silent re-mint (the `renewed` verdict), so reading it refuses the sessions that work.
   `#R359` had BOTH fields negative, so a test built from that row alone cannot tell which field
   the code reads — the guard carries a separate renewal row for exactly that.
+**THE CART BURST STOPS WHEN IT WINS, AND WE HELD `#R359` FOR FIFTEEN MINUTES WHILE LOGGING
+"COULD NOT HOLD" (2026-09-21, from the runner's own log).** The burst reported
+`won: false, attempts: 13, lastOffsetMs: -487, reason: "RC said something else: HTTP 200"` —
+it gave up **half a second before the release with 15 budget left.** It gave up because it
+had just succeeded:
+
+```
+15:00:00  ✗ could not hold #R359: HTTP 200 (13 fast attempts ending T-0.5s … RC said something else: HTTP 200)
+15:00:00  ✓ held #M450 — won it on attempt 14 at T+0.1s
+15:00:24  ✗ could not hold #R359: cart is already added      <- and ~75 more, every ~12s
+15:15:03  ✓ held #R359 — entry 9b6aa2dc-a923-4e91-953d-30163200bf7b
+```
+
+- **THE MECHANISM IS ONE `||`.** `rc-hold-runner.mjs` builds
+  `why = result?.submitted?.v?.error || \`HTTP ${result?.submitted?.status}\``, and `verdict()`
+  sets `error: res?.ErrorMessage || ''` — **a SUCCESSFUL submit has no ErrorMessage**, so `''`
+  is falsy and `why` becomes the string `"HTTP 200"`. `isNotAvailable("HTTP 200")` is false, and
+  `shouldRetryBurst` stops on anything it does not positively recognise. **The stop condition
+  fires on the success case.** Shape #1 again: an absent reading (no error text) rendered as a
+  positive fact ("RC said something else").
+- **`cart is already added` IS RC SAYING WE HAVE IT**, and the runner logs it as `✗ could not
+  hold`. The decision "did we get it?" is taken from `findCartEntry` ALONE, discarding two
+  facts the same response carries: `submitted.v.isSuccess`, and that string. R359 was ours
+  continuously from ~T−0.5s; the `✓ held` at 15:15:03 is the **read-back finally matching**,
+  not the site becoming free.
+  - **SO `carted_at` AND `T+904s` IN THE READOUT ARE A LABELLING ARTIFACT, NOT A LATE WIN.** Do
+    not read a large `T+s` as "RC released late" or "it dropped from someone's cart" without
+    checking the log for `already added` — and the ~75 retries were ~75 real precart
+    round-trips against RC for a site we already had.
+  - **WHY THE MATCHER MISSES IS NOT ESTABLISHED.** `findCartEntry` matches `(placeId,
+    facilityId)` from the load response's `LockedShoppingCart`, falling back to
+    `JSON.stringify(e).includes(unitId)` — and that fallback is the matcher the module's own
+    header says does not work, because **RC's cart entries carry no unit field**. A null
+    `locked` would explain it and nobody has confirmed one. **The robust answer is the
+    guarantee the release path already uses**: a cart this run minted with `NO_CART` contains
+    only what this run put there, so `listCartEntries` identifies it without matching anything.
+- **`#M450`'S RELEASE GENUINELY HAPPENED** — `→ handed over #M450 (HTTP 200)` at 15:27:34 in
+  the same log — so "the release silently failed" is **refuted**, and the hand-off decline is
+  still one of: a competitor inside the window, RC not yet propagating our release, or a
+  transient. The retry shipped 2026-09-21 covers the last two without needing to know which.
+
 - **`#M450` IS NOT EXPLAINED BY ANY OF THIS AND IS STILL OPEN.** Its session was healthy
   (`storedExpiresInSec: 3482`), it was carted at **T+0.1s** by the burst, and its precart was
   declined anyway — claimed at **minute 27.5**, past the point where the screen already warns

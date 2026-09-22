@@ -374,8 +374,21 @@
       installationsidentity: 'cali',
       storeid: '111',
     };
+    // THE HAND-OFF RETRIES NOW — see extension/rc-retry.js for why, and for the rules.
+    // A missing module must not break the cart: `decide` falls back to "one attempt",
+    // which is exactly the behaviour this replaced, so a bundle that lost the file is no
+    // worse than before rather than broken.
+    var RETRY = (typeof window !== 'undefined' && window.__chHandoffRetry) || {
+      decide: function () { return { retry: false, waitMs: 0, reason: 'no retry module', held: false }; },
+      MAX_ATTEMPTS: 1,
+    };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     try {
+      for (let attempt = 1; ; attempt++) {
       // Step 1 — load. Gives us the facility's required extras and takes the unit lock.
+      // RE-RUN ON EVERY ATTEMPT, deliberately: it is the call that takes the unit lock,
+      // so a retry that skipped it would be asking RC to cart a unit it has not locked
+      // for us. The bot's burst re-runs the pair for the same reason.
       // Non-fatal: if it fails we still try the submit with no extras, which is strictly
       // no worse than what this did before.
       try {
@@ -399,12 +412,30 @@
       }
 
       // Step 2 — submit.
-      const res = await fetch(ENDPOINT, {
-        method: 'POST',
-        credentials: 'include',
-        headers: rcHeaders,
-        body: JSON.stringify(buildPayload()),
-      });
+      // A THROW HERE IS RETRYABLE AND MUST NOT ESCAPE THE LOOP. RC answered nineteen of
+      // twenty identical calls with a 200 and one with a 500 (2026-07-30); a transport
+      // failure on the one POST that hands a campsite over is exactly the draw worth
+      // taking again. Without this the outer catch renders it "book manually" on the
+      // first blip, which is the single-attempt behaviour this loop exists to end.
+      let res;
+      try {
+        res = await fetch(ENDPOINT, {
+          method: 'POST',
+          credentials: 'include',
+          headers: rcHeaders,
+          body: JSON.stringify(buildPayload()),
+        });
+      } catch (netErr) {
+        const dn = RETRY.decide({ attempt, status: 0, error: '', netError: true });
+        if (dn.retry) {
+          setStatus(`Couldn't reach RC — trying again (${attempt}/${RETRY.MAX_ATTEMPTS})…`);
+          await sleep(dn.waitMs);
+          continue;
+        }
+        setState('failed');
+        setStatus('Couldn\u2019t reach RC — book manually.');
+        return;
+      }
       // READ THE BODY ONCE. It used to be `res.clone().text()` on the success path and
       // `res.text()` on the failure path, which is two ways to consume one stream and one
       // more thing to get wrong now that the success path also needs a field out of it.
@@ -453,9 +484,10 @@
         setStatus(onCartPage()
           ? '✓ Added to cart — check the dates and check out. If this page looks empty, reload it: the site is held.'
           : '✓ Added to cart — opening your cart…');
-        // LAST, so a status the report channel needs is already written and every line above
-        // has run. Delayed — see CART_NAV_DELAY_MS.
+        // OUT OF THE RETRY LOOP. `goToCart()` navigates, so falling through to another
+        // attempt would fire a second submit against a page that is leaving.
         goToCart();
+        return;
       } else {
         let detail = apiError;
         console.log('[CampHawk RC] full error body:', raw);
@@ -465,8 +497,37 @@
             detail = j.errors ? Object.keys(j.errors).join(', ') : (j.title || raw.slice(0, 160));
           } catch { detail = raw.slice(0, 160); }
         }
+        // ASK BEFORE GIVING UP. "not available" covers both "a competitor has it" and
+        // "RC has not caught up with our own release yet", which are opposite facts
+        // arriving as one string — so a single attempt resolves them by assuming the
+        // worse one. See extension/rc-retry.js.
+        const d = RETRY.decide({ attempt, status: res.status, error: apiError, netError: false });
+
+        // RC SAYS WE ALREADY HAVE IT, WHICH IS A WIN. Treated as carted rather than as a
+        // refusal — the same reading the bot's burst gives the identical string, and the
+        // opposite of what the hold runner did to #R359 seventy-five times.
+        if (d.held) {
+          carted = true;
+          rememberCarted(_cartKey === NO_CART ? '' : _cartKey, job.unitId);
+          setState('carted');
+          setStatus('✓ Added to cart — it was already held for you. Opening your cart…');
+          goToCart();
+          return;
+        }
+
+        if (d.retry) {
+          // SAY WHAT IS HAPPENING. A silent pause over a campsite somebody is watching
+          // reads as a hang, and the count is what makes it legible as progress.
+          setStatus(`Not free yet — trying again (${attempt}/${RETRY.MAX_ATTEMPTS})…`);
+          await sleep(d.waitMs);
+          continue;
+        }
+
         setState('failed');
-        setStatus(`RC declined (${res.status}) — ${(detail || 'see console').replace(/<br\/?>/g, ' ')}`);
+        setStatus(`RC declined (${res.status}) — ${(detail || 'see console').replace(/<br\/?>/g, ' ')}`
+          + (attempt > 1 ? ` (${attempt} attempts)` : ''));
+        return;
+      }
       }
     } catch (e) {
       setState('failed');
