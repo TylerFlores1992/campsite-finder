@@ -861,6 +861,34 @@ elevated sample or none. So the series is the *corroborating* instrument here an
   - **The StoreKit-age check passes:** `@revenuecat/purchases-capacitor` landed `8818544`
     (2026-08-29); build 28 is 09-20, so it is not the no-StoreKit build whose paywall renders
     an `unavailable` fallback that looks identical to a healthy one.
+  - **THE `Update Review` TRAP RECURRED AND COST A SECOND SESSION — IT IS IN THE HANDOVER NOW
+    FOR THAT REASON.** `Resubmit to App Review` on the SUBMISSION page sits **greyed out** under
+    *"Unresolved Issues"* and a banner reading *"Your app version was rejected and no other items
+    submitted can be accepted or approved"*, and **nothing on that page enables it.** The version
+    has to be pushed back into the submission with **`Update Review`, top right of the VERSION
+    page**, beside `Save` — Apple's own help calls that slot *Add for Review*, so **match on
+    POSITION, not the label**. Resubmit went live the instant it was pressed, both times.
+    - **The full account is `docs/ARCHIVE-PRODUCT-AND-PLATFORM.md` → "SAVING THE METADATA DOES
+      NOT RESOLVE THE ITEM"**, written 2026-09-15. It was complete and correct and **still cost
+      this session**, because a person mid-submission looks at the handover, not at a 4,600-line
+      archive. **That is the router's limit, not the archive's failure** — a step you execute
+      under time pressure belongs where you will be standing.
+  - **CONFIRM THE SUBMISSION NAMES THE BUILD BEFORE PRESSING RESUBMIT.** After `Update Review`
+    the six rows read `Ready for Review` and the `iOS App 1.0` row carries **`1.0 (28)`** as a
+    link. That row is the check that matters: it is the difference between resubmitting the fix
+    and resubmitting the rejected binary, and it is readable in one glance.
+  - **STATE AS OF 23:08 UTC 2026-09-22, AND WHAT IS NOT KNOWN.** `Update Review` pressed, six
+    items `Ready for Review`, `1.0 (28)` in the submission, `Resubmit to App Review` **live and
+    UNPRESSED**. Pre-check run twice (23:06:13, 23:08:50), CLEAN both times. **Whether the owner
+    then pressed Resubmit is NOT established** — no session can read App Store Connect, so read
+    the console rather than assuming this sentence aged into "submitted".
+  - **OWNER DECISIONS, so they are not re-raised as oversights:** the camera was tested on
+    **build 28** specifically; the **iPad test was declined** (the reviewer's device was an iPad
+    Air 11-inch M3, and the fix is device-independent by mechanism — `Info.plist` is a property
+    of the binary and Device Family is `iPhone, iPad` — so the residual is small but it is not
+    zero, and a 2.1(a) that comes back on iPad is new information rather than a repeat); and
+    `REVENUECAT_SANDBOX_USER_IDS` was set **and redeployed** (an env change does not reach
+    already-deployed functions).
   - **THE PRECHECK IS STILL MANDATORY AND IS STILL THE THING THAT BITES.** Run
     `scripts/app-review-precheck.mts <sign-in-email>` **in the same minute as the
     resubmission** — the demo account has silently become a subscriber twice, and a subscriber
