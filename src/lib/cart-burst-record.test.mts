@@ -218,8 +218,15 @@ test('the fallback demands a POSITIVE reading, three ways', () => {
   assert.match(arm, /length === 1/, 'and only exactly one entry identifies ours');
   // NO ENTRY KEY, NO RELEASE. Marking carted without one strands the campsite.
   assert.match(arm, /if \(key\)/, 'and an entry with no key must not be adopted');
-  assert.match(arm, /rcSaysOurs/,
-    'and RC must have positively said it is ours, or a stray entry could be adopted');
+  // PINNED ON THE CONDITION, NOT THE DECLARATION. The first version asserted `/rcSaysOurs/`,
+  // which still matched after `if (rcSaysOurs)` was replaced with `if (true)` — the variable
+  // was merely still declared. That is the most dangerous mutation of the five, because
+  // without this precondition the fallback adopts a stray entry on any refusal and the bot
+  // can release somebody else's hold. Verified: it survived, then did not.
+  assert.match(arm, /if \(rcSaysOurs\)/,
+    'RC must positively say it is ours, and that must be the CONDITION, not just a variable');
+  assert.match(arm, /isSuccess === true \|\| said\.includes\('already added'\)/,
+    'and the two signals that constitute it must both be read');
 });
 
 test('the import is present, so the fallback is not a reference to nothing', () => {
