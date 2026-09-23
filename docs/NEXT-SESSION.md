@@ -50,6 +50,14 @@ and retried the full 20-minute window; five were offers nobody requested and exp
 never reaches a cart read-back, so neither #397 diagnostic fired. The four items they serve are
 still waiting on a refusal that happens AFTER a cart.
 
+**ONE RUN IS SCHEDULED FOR 2026-09-24 07:45 PT AND IT IS THE PRIORITY WHEN IT FIRES.**
+`scripts/rc-release-window.mts --record` against that morning's facilities — it must be
+LAUNCHED BEFORE 07:58:30 PT because it polls from T−90s. It answers the one question the
+09-23 release left open (`#L053`: did the night ever go free?). **Scheduled ONCE, on the
+owner's instruction — tomorrow only, nothing recurring.** Re-derive the facility list at fire
+time from the queued holds; yesterday's was `357,359,360`. Verified reachable 2026-09-23:
+direct RDR, HTTP 200 in 724 ms.
+
 **THREE INSTRUMENTS ARE RUNNING AND STILL UNREAD.** `#M450`, `findCartEntry` and `update-guard`
 each got one recorded field in #397 rather than a theory. **The cheapest next win is to read
 those logs after the next refusal, not to build anything.**
