@@ -104,7 +104,25 @@ export function safeToUpdate(opts = {}) {
   // An explicit "update now" replaces the schedule, not the safety check below it.
   const hour = pacificHour(now);
   if (!requested && (hour < windowStart || hour >= windowEnd)) {
-    return { ok: false, reason: `outside the quiet window (${hour}:00 PT, allowed ${windowStart}:00-${windowEnd}:00)` };
+    /*
+     * SAY WHAT `requested` ACTUALLY READ (2026-09-23). On 2026-09-21 an update the owner had
+     * requested was refused for being outside the window — which `if (!requested && …)` says
+     * cannot happen — and the note recorded only the refusal, so the two explanations were
+     * indistinguishable after the fact:
+     *
+     *   • the feed answered and `updateRequested` was genuinely false (a server-side fault),
+     *   • or the guard never got a usable answer and `requested` stayed at its default.
+     *
+     * `feedReachable` is already true by here (the check above returns), so a `false` now
+     * means the feed ANSWERED and said no. That single fact separates them, and it was not
+     * being written down. NO MECHANISM IS CLAIMED — the libuv assertion in that same note
+     * remains a candidate and nothing here promotes it.
+     */
+    return {
+      ok: false,
+      reason: `outside the quiet window (${hour}:00 PT, allowed ${windowStart}:00-${windowEnd}:00)`
+        + ` — feed answered, updateRequested=${requested}`,
+    };
   }
 
   const hrs = hoursUntilRelease(nextRelease, now);

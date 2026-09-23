@@ -281,7 +281,13 @@ test("RC's refusal is reported in RC's own words, never as success", async () =>
   page.sendToken();
   await page.settle();
 
-  assert.equal(page.calls.length, 2, 'it still tried');
+  // RE-ANCHORED 2026-09-22 ON THE PROPERTY, NOT THE COUNT. This read `calls.length === 2`,
+  // which is a proxy for "it still tried" and broke the moment the refusal grew a
+  // diagnostic read-back (`readCartAfterFailure`) — a third call that is the whole point
+  // of this branch. A count is also weaker than it looks: two `load`s and no `submit`
+  // would have satisfied it, which is precisely the 2026-08-13 bug this file exists for.
+  assert.ok(page.calls.some(c => c.url === LOAD), 'it still asked RC about the cart');
+  assert.ok(page.calls.some(c => c.url === SUBMIT), 'it still tried to submit');
   // RE-ANCHORED 2026-09-22 ON BOTH CARRIERS, NOT RELAXED. The property this test names —
   // RC's refusal reported in RC's own words, never as success — is unchanged. What changed
   // is that one string became two: the person now reads plain English with a remedy, and
