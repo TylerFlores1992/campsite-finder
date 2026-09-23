@@ -1174,8 +1174,43 @@ load-bearing BY ACCIDENT and must not be "tidied up" to match the renewal's guar
 is an **absolute cap** we cannot bring forward: it did not reset across a password sign-in
 (three corroborations).
 
+**MEASURED 2026-09-23: `okta=GONE(404)` WENT BACK TO `ALIVE` ON ITS OWN, AND THE SIGN-IN COST
+SIXTEEN SECONDS.** A box update at 04:43:20Z ended the session; at 04:44Z `/api/health/status`
+read *token rejected, `okta=GONE(404)`* and warned that the next sign-in would be *"a full
+password form, ~12 min and several GB, not the ~11s cookie-answered one"* against an 08:00 PT
+release. At **05:14:39Z** — 31 minutes later, unprompted — `bot_events` recorded
+`tab-close {"label":"auto-login","hung":false,"tripMs":15968}`, and by 12:58Z the session was
+`ok` for 7h43m with `okta=ALIVE`. **The repair fired by itself and took 16 s, not 12 minutes.**
+- **WHICH OF TWO THINGS THAT FALSIFIES IS NOT ESTABLISHED. Do not write one in.** Either the
+  check's cheap/expensive prediction was wrong, or Okta had recovered in the intervening 30
+  minutes and the sign-in was cookie-answered after all. **The discriminator is an Okta probe
+  reading between 04:44Z and 05:14Z, and nothing took one.**
+- **T−30 IS NOT THE ONLY REPAIR.** T−30 for that release was 14:30Z, seven hours after this
+  fired, so the actor was the **warm-up** path, not `maybeAutoLogin` — which is what its own
+  guard says it should do (*"only a definitive GONE acts"*). Both close a throwaway tab and
+  both label it `auto-login`, so the label alone does not name which.
+- **SO A HANDOVER LINE ABOUT A THIN MARGIN AGED OUT WITHIN THE HOUR.** The 09-23 04:44 reading
+  was written up as *"~18 minutes of margin"*; the margin was never spent. **Re-read before
+  acting on a session reading — shape #6, arriving through a doc written eight hours earlier.**
+
+**AND `autocart.rc_login` REPORTS THE REHEARSAL, NOT THE AUTO-LOGIN (2026-09-23).** It reads the
+`rc_login_rehearsal` singleton (`src/app/api/health/status/route.ts`), so its sentence *"the bot
+signed in unattended Nh ago"* describes the **rehearsal's** sign-in and nothing else. At 12:58Z
+it said **9h57m** while a successful auto-login had happened **7h44m** earlier and was invisible
+to it. The sentence is literally true and reads as *"the last time the bot signed in"*, which it
+is not.
+- **A SUCCESSFUL AUTO-LOGIN SHOWS UP IN `bot_events` AND NOWHERE ELSE** —
+  `tab-close` with `label: "auto-login"`, carrying `tripMs` (the cost) and `hung`. **That is the
+  table to read before concluding anything about how a session was restored**; this session
+  nearly wrote *"it recovered with no login spent"* into this file from the health check alone,
+  and `bot_events` is what falsified it.
+- Renaming the sentence is web-only (`route.ts` is in **no** `worker-deploy.yml` `paths:` entry,
+  so it costs no poller restart) — recorded rather than done, because it was found two hours
+  before a release.
+
 **DO NOT:** make the unconditional Okta probe conditional; read `okta=GONE` between releases
-as a fault (it is the ordinary state, and `maybeAutoLogin` at T−30 is the designed repair);
+as a fault (it is the ordinary state, the repair fires by itself, and `maybeAutoLogin` at T−30
+is the last of several);
 print `rc-login.bat` over a live-but-short session — **it force-kills the Chromium the token
 lives in**, and doing so has been a false alarm at least twice; clear cookies to force a
 sign-in (**losing `DT` makes a login look like a fresh profile, which cost the household IP
@@ -1353,7 +1388,10 @@ Tonight's pair read `03:00 · skip  the session is live — a rehearsal would pr
 that skip. So the update, which ENDS the RC session and replaces the code, was immediately
 followed by the one rehearsal that would have been informative being declined on the strength
 of a non-event. The last real PASS is 2026-09-21 03:01. **A skip is not a rehearsal**; the gap
-should be measured from the last ATTEMPT that ran the body.
+should be measured from the last ATTEMPT that ran the body. (**That PASS date is the 09-21
+reading and has aged** — `rc_login_rehearsal_log` carries real `ok=true` runs on 09-21 03:01,
+09-22 03:55 and 09-23 03:01, so the rehearsal has been healthy every night since. Read the log,
+not this sentence.)
 **FIXED 2026-09-23 (#397), AND THE REPAIR WAS A DIFFERENT SOURCE RATHER THAN A CALCULATION.**
 `lastRehearsalAttempt` reads `rc_login_rehearsal_log WHERE skipped_why IS NULL` — the log
 already carries every attempt and is already indexed on `ran_at DESC`, so **no `attempted_at`
@@ -1751,12 +1789,28 @@ the only number main has left, and nothing in the 09-23 batch spent it.**
 - **The RC reconnect's NEXT step is unexplained.** #363 fixed the hidden-input timeout; the box
   now submits the email and rec.gov renders **no password input at all** (`0 match(es), 0
   visible`). That is a third state, not the old bug. **No mechanism is written in.**
-- **The RC session's next sign-in is the EXPENSIVE kind, and the margin is 18 minutes.**
-  `/api/health/status` at 2026-09-23 04:44Z: `okta=GONE(404)`, so `maybeAutoLogin` at T−30
-  faces *"a full password form, ~12 min and several GB, not the ~11s cookie-answered one"*
-  against an 08:00 PT release. **That is the designed repair working as designed** — this file
-  says not to read `okta=GONE` between releases as a fault, and not to print `rc-login.bat`
-  over a live-but-short session. Recorded because the margin is thin, not because it is wrong.
+- **CLOSED THE SAME NIGHT, AND THE MARGIN WAS NEVER SPENT.** The `okta=GONE(404)` at 04:44Z
+  repaired itself at 05:14:39Z in **16 seconds**; at 12:58Z the session was `ok` for 7h43m with
+  `okta=ALIVE`. Kept here only as the pointer to the entry above, which records what is
+  established and what is not.
+- **A DOCS-ONLY VERSION GAP WARNS, WHICH MAKES THE WHOLE STATUS `degraded` AND INVITES A
+  DESTRUCTIVE FIX.** On 2026-09-23 the only non-ok check was `autocart.bot_version` —
+  *"mini-PC is on 21a0d1b; web is on 793e788. **No bot-side code in the gap**"* — the gap being
+  `CLAUDE.md` and `docs/NEXT-SESSION.md`, nothing else. The check already knows it is harmless
+  and says so in its own detail, and still returns `warn`.
+  - **THE COST IS NOT COSMETIC.** A tick that will not go green invites clearing it, and the two
+    actions that would are **`rc-login.bat`** (force-kills the Chromium the live token is in)
+    and **a box update** (ends the RC session) — asked for two hours before a release with five
+    live holds. `update-guard` would have refused the update at 2.01h against its 6h rule; the
+    login has no such guard and is the owner's hand on the box. **The cry-wolf shape, on the
+    one page whose job is "is anything broken?"**
+  - **THE CANDIDATE IS ONE LEVEL**: the `state: 'behind'` branch of `botVersionLevel`
+    (`src/lib/health-thresholds.ts`) returning `ok` rather than `warn` when it has already
+    established there is no bot-side code in the gap. The `missesBotCode` branch is untouched —
+    that one is a real disagreement between the halves and must stay fail/warn.
+  - **NOT SHIPPED, AND THE REASON IS THE FILE IT LIVES IN.** `src/lib/health-thresholds.ts` is
+    in `worker-deploy.yml`'s `paths:`, so merging it **restarts all three pollers** — which is
+    exactly what you must not do inside a release window. Land it after a release, never before.
 - **MIGRATION 079 IS THE LAST OF MAIN'S BLOCK AND IS STILL FREE.** Three repairs that looked
   like they needed it did not: a `lost` hold status (derived instead — `src/lib/hold-outcome.ts`),
   a rehearsal `attempted_at` column (a different SOURCE, not a new column), and a `noted_at`
