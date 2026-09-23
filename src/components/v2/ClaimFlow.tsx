@@ -104,6 +104,23 @@ interface HoldState {
   cartedAt?: string | null;
 }
 
+/**
+ * STAGES THAT GO OUT AT ONCE — the ones that say what HAPPENED rather than what is being
+ * broadcast. Each arrives a handful of times per run, so flushing on them costs almost
+ * nothing, and each is the line somebody reads when a hand-off fails.
+ *
+ * `token` and `cartkey` are deliberately absent: `rc-inject.js` rebroadcasts both every
+ * 1500ms and they are the reason the batching exists at all.
+ */
+const FLUSH_NOW_STAGES = new Set(['status', 'error', 'idle', 'closed']);
+
+/**
+ * The longest a report may sit unflushed, however busy the stream. The debounce alone had
+ * no ceiling, so "quiet for 1500ms" was a condition a run could fail to meet for its whole
+ * duration.
+ */
+const MAX_REPORT_WAIT_MS = 5000;
+
 export default function ClaimFlow({ holdId, token }: { holdId: string; token: string }) {
   const [state, setState] = useState<HoldState | null>(null);
   // Captured on first load, BEFORE the release. The redirect fires the instant status
@@ -242,11 +259,14 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    */
   const pending = useRef<RcReport[]>([]);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** When the oldest unflushed report arrived — the clock `MAX_REPORT_WAIT_MS` bounds. */
+  const oldestPending = useRef<number | null>(null);
 
   const flushReports = useCallback(() => {
     const batch = pending.current;
     if (!batch.length) return;
     pending.current = [];
+    oldestPending.current = null;
     // `keepalive` so a flush started as the tab is hidden or the webview closes still
     // goes out — which is exactly when the LAST report, the one carrying the cart's
     // verdict, would otherwise be lost.
@@ -260,8 +280,50 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
 
   const onReport = useCallback((r: RcReport) => {
     pending.current.push(r);
+
+    /**
+     * A REPORT THAT CARRIES A VERDICT DOES NOT WAIT BEHIND THE CHATTY ONES (2026-09-23).
+     *
+     * ## What went wrong
+     *
+     * On 2026-09-22 a hand-off failed on a real phone with `RC declined (401)` on screen,
+     * and **that 401 appears in zero `client_reports` rows, all time.** The last thing
+     * recorded was the sign-in prompt before it. So the instrument built to explain
+     * hand-off failures has a hole exactly where the failure is.
+     *
+     * **THE CAUSE OF THAT PARTICULAR LOSS IS STILL NOT ESTABLISHED and nothing here
+     * claims it.** What IS established is two ways the last report can be deferred, both
+     * read off the code rather than inferred:
+     *
+     * 1. **The debounce RESET on every report.** `clearTimeout` + a fresh 1500ms on each
+     *    one is a debounce, not a throttle, so an unbroken stream arriving faster than
+     *    the interval defers the flush **indefinitely** — there was no ceiling. And
+     *    `rc-inject.js` rebroadcasts on a `setInterval(…, 1500)`, the same number, so the
+     *    margin was zero by construction. (The NOISY-stage dedupe in
+     *    `lib/rc-precart-script` swallows most of those rebroadcasts before they reach
+     *    here, which is probably why this has not bitten harder.)
+     * 2. **Everything waited equally.** The debounce exists to batch `token`/`cartkey`,
+     *    which arrive dozens of times a minute. A `status` carrying "RC declined" arrives
+     *    a handful of times per run and is the entire point of the channel, and it sat in
+     *    the same queue behind them.
+     *
+     * ## The rule
+     *
+     * Chatty stages still batch. A stage that says what HAPPENED goes immediately, and
+     * `keepalive` on the fetch means an immediate flush survives the webview closing —
+     * which a queued one, by definition, had not yet started.
+     */
+    if (FLUSH_NOW_STAGES.has(r.stage)) {
+      if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
+      flushReports();
+      return;
+    }
+    // AND THE DEBOUNCE HAS A CEILING NOW. Without one, "quiet for 1500ms" is a condition a
+    // busy run can simply never meet, and the buffer grows until something else flushes it.
     if (flushTimer.current) clearTimeout(flushTimer.current);
-    flushTimer.current = setTimeout(flushReports, 1500);
+    if (oldestPending.current == null) oldestPending.current = Date.now();
+    const waited = Date.now() - oldestPending.current;
+    flushTimer.current = setTimeout(flushReports, Math.max(0, Math.min(1500, MAX_REPORT_WAIT_MS - waited)));
 
     // TOKEN LIFE, FROM WHICHEVER STAGE HAPPENS TO CARRY IT. `null` means this report said
     // nothing about it and must leave the last reading alone — an absent reading is not a
