@@ -28,6 +28,26 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
+import { holdOutcome, describeHoldOutcome } from '../src/lib/hold-outcome';
+
+/**
+ * Short forms for the table column; `describeHoldOutcome` carries the long ones.
+ *
+ * DECLARED HERE, ABOVE ITS FIRST USE, AND `tsc` CANNOT TELL YOU WHY. Placed below the
+ * table it feeds, this threw `ReferenceError: Cannot access 'OUTCOME_MARK' before
+ * initialization` at runtime — a module-level `const` read inside a `.map()` that runs at
+ * module level is in its temporal dead zone — while BOTH typecheck configs passed clean.
+ * Caught only by `worker/rc-holds-readout.test.mts`, which EXECUTES this script instead of
+ * scanning it. Same family as "`next build` passing is NOT enough".
+ */
+const OUTCOME_MARK: Record<ReturnType<typeof holdOutcome>, string> = {
+  'claimed': 'claimed',
+  'client-carted': 'carted by user',
+  'client-failed': 'LOST',
+  'unresolved': 'unresolved',
+  'not-handed-off': '\u2014',
+};
+
 import {
   closeReasonReading, keepSignedInReading, pickKeepSignedInReport, signInPathReading,
   rcSessionReading, rcLoadReading,
@@ -243,7 +263,15 @@ console.table(holds.map((h) => ({
   // Derived from data already recorded — no new instrumentation — because the alternative
   // was believing an arithmetic estimate for as long as it took somebody to complain.
   'T+s': h.cart_lag_s == null ? '—' : `${h.cart_lag_s}s`,
-  claimed: clock(h.claimed_at ?? h.released_at),
+  // NEVER `claimed_at ?? released_at` AGAIN. That printed the moment the bot LET GO under
+  // a heading saying the user took it, so two campsites lost on 2026-09-21 rendered as the
+  // happy path in the one readout anybody consults after a release. An absent reading
+  // (`claimed_at IS NULL`) rendered as a positive fact, in a single `??`.
+  //
+  // `released` with no claim is genuinely ambiguous — on a plain desktop browser there is
+  // no injectable client, the user books by hand, nothing is reported, and that is a
+  // SUCCESS. So the column says which of the five it is and leaves `unresolved` unresolved.
+  claimed: h.claimed_at ? clock(h.claimed_at) : OUTCOME_MARK[holdOutcome(h)],
 })));
 
 // DID THE USER'S OWN DEVICE CART IT? The bot's half of the hand-off ends at `released`,
@@ -299,6 +327,11 @@ if (handed.length) {
       : (h.client_last_note ?? h.client_last_stage);
 
     console.log(`  • ${who} [${where}]: ${outcome} (${mins(h.client_reported_at)}m ago)`);
+    // AND THE DERIVED VERDICT BESIDE THE RAW LINE, because they answer different questions:
+    // the line above is what the client last SAID, this is what that adds up to. Printed
+    // even when it is `unresolved` — an unanswered question stated is worth more than a
+    // blank, and the blank is what let two losses read as the happy path.
+    console.log(`      → ${describeHoldOutcome(holdOutcome(h))}`);
 
     // THE READ-BACK, WHICH OUTRANKS THE STATUS STRING ABOVE IT.
     //
