@@ -10,7 +10,31 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
-## 0. FIRST: THE RC HOLD BETA IS CLOSED, AND THE HAND-OFF FAILED THE MORNING IT CLOSED
+## 0. FIRST: WHERE 2026-09-23 LEFT IT
+
+Five PRs landed on 09-22/23 — **#392** (beta closed + copy), **#393** (docs), **#394** (the
+sixth Apple rejection), **#395** (cancellation badge + telemetry flush), **#396** (`released`
+outcome + #22), **#397** (rehearsal + #26 + three diagnostics). Master is `21a0d1b`, **and the
+mini-PC is on the same sha** — updated on demand at 21:43 PT in 23 seconds, `bot-ask git-status`
+confirming `HEAD 21a0d1b on master`. `/api/health/status`: 3/3 shards held, heartbeat 3s,
+`autocart.bot_version` **ok**.
+
+**READ THE FLEET, DO NOT QUOTE THAT PARAGRAPH.** It was true at 04:44Z on 09-23 and a reading
+goes stale faster than the conclusion drawn from it.
+
+**THREE INSTRUMENTS ARE NOW RUNNING AND NOBODY HAS READ THEM YET.** `#M450`, `findCartEntry`
+and `update-guard` were all marked *mechanism not established*; #397 added one recorded field
+each rather than a theory. **The next session's cheapest win is to read those logs after the
+next refusal, not to build anything.** `CLAUDE.md`'s Open block says what each reading means.
+
+**WHAT WAS DELIBERATELY NOT DONE, on the owner's instruction:** nothing about the three paying
+Auto-Cart subscribers; nothing about Google Cloud (the owner verified it does not affect this
+project); nothing about Apple beyond waiting on the resubmission.
+
+**AND MIGRATION 079 IS STILL FREE** — three repairs that looked like they needed a column did
+not. It is the last of main's block; past it, claim a new one out loud in `docs/LANES.md`.
+
+## 0a. THE RC HOLD BETA IS CLOSED, AND THE HAND-OFF FAILED THE MORNING IT CLOSED
 
 *This section replaced the 09-21 "the burst has now been observed" block, which is answered and
 folded into `CLAUDE.md` → "THE CART BURST STOPS WHEN IT WINS". Read that if you touch the burst.*
@@ -43,13 +67,15 @@ Two changes shipped in **#392** (`315b82e`), both live:
 - **The `401` the owner photographed is not in our telemetry.** Zero
   `rc_hold_requests.client_reports` rows mention it, **all time**. A terminal hand-off failure
   does not reliably survive the webview closing, so every future post-mortem here is working
-  from a screenshot. **That is the thing most worth fixing next** — it is the instrument for
-  all of this and it has a hole exactly where the failure is.
+  from a screenshot. #395 closed two ways the last report could be DEFERRED — an unbounded
+  debounce, and verdict stages queueing behind `token`/`cartkey` chatter — but **nothing has
+  yet demonstrated a terminal failure arriving**, so treat the channel as suspect rather than
+  repaired until one does.
 
 **AND A BILLING DECISION IS OPEN:** the three paying Auto-Cart subscribers lost the RC hold
 offer. Refund, downgrade, tell them, or leave it — the owner's call, deliberately not encoded.
 
-## 0a. THE rec.gov RECONNECT IS FIXED AND LIVE ON BOTH HALVES — nothing is pending
+## 0b. THE rec.gov RECONNECT IS FIXED AND LIVE ON BOTH HALVES — nothing is pending
 
 **Read `docs/ARCHIVE-RC-AUTOCART.md` → `"RECONNECT AUTO-CART FOR REC.GOV" WAS ONE
 HIDDEN INPUT, AND THE LOOP WAS CLOSED`.** (The heading carries its own inner quotes — grep for
@@ -108,7 +134,7 @@ from a regression.
 
 ---
 
-## 0b. Ground yourself — four commands, in this order
+## 0c. Ground yourself — four commands, in this order
 
 ```bash
 curl -sS "$HTTPS_PROXY/__agentproxy/status"                        # blocked hosts, if any
@@ -130,7 +156,7 @@ Three things that will bite in the first ten minutes:
 
 ---
 
-## 0c. THE CURE HAS FIRED THREE TIMES — read the box with these queries, not with the memory series
+## 0d. THE CURE HAS FIRED THREE TIMES — read the box with these queries, not with the memory series
 
 **Three firings (09-17 09:50:17, 09-17 17:44:39, 09-18 15:19:36 UTC) are not a rate either, and
 all three are the SAME lever** — the last two are box updates, which produce the cold RC home-page
@@ -422,28 +448,28 @@ real logins from a blocked address.
 
 ---
 
-## 1. State — re-verified 2026-09-22, ~18:50 UTC (11:50 PT)
+## 1. State — re-verified 2026-09-23, 04:44 UTC (21:44 PT 09-22)
 
 | | |
 |---|---|
-| master | `315b82e` (**#392**, the closed beta + the hand-off copy). Before it, `6fc4f53` (#391, handover repair). **Verify against `origin/master`; this line ages.** |
+| master | `21a0d1b` (**#397**). Before it `b7e13cd` (#396), `1749cac` (#395). **Verify against `origin/master`; this line ages.** |
 | open issues | **none.** |
-| open PRs | **none** at the time of writing — #392 merged 18:47 UTC. |
-| mini-PC | **`eeb9d05`**. Confirmed by `bot-ask git-status`, never `autocart.bot_version`. It is behind web and **there is no bot-side code in the gap** — #392 is poller + web only. |
-| health | overall `degraded`, and the one warn is `autocart.bot_version` on that docs/web gap. |
-| fleet | heartbeat **1s**, **14 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines**. **READ THIS FRESH** — the reading above was taken while the #392 worker deploy was still `in_progress`, so it describes the OLD code. |
-| holds | **none live or pending.** 09-22's four rows are settled: `#M421` released-and-lost (§0), `#R315` carted for another user, two expired. |
-| RC session | last known LIVE after the 09-21 rehearsal; **re-read it, do not trust this cell.** `/api/admin/rc-session-probe` or the readout. |
-| the burst | observed twice, both defects fixed and live. `CLAUDE.md`. |
-| the hand-off | retries 5x, live. **Failed anyway on 09-22 for a reason we could not record** — §0. |
+| open PRs | **none** at the time of writing — #396 and #397 merged serially, each with its own green master `Verify` and `Deploy worker`. |
+| mini-PC | **`21a0d1b`** — level with web. Updated on demand at 21:43 PT, applied in **23 seconds**, note `updated and verified`. Confirmed by `bot-ask git-status`, **never** `autocart.bot_version`. |
+| health | overall `degraded`; the single non-ok check is `autocart.rc_session`, which is the **ordinary state between releases**. |
+| fleet | heartbeat **3s**, **14 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines**. Read after both worker deploys completed, not during. |
+| holds | **4 `offered`**, all for **2026-09-23 08:00 PT**. That was 10.3h out when the box was updated — clear of `update-guard`'s 6h refusal. |
+| RC session | token rejected, `okta=GONE(404)`. **Ordinary between releases**; `maybeAutoLogin` at T−30 is the designed repair, and the bot signed in unattended 1h43m earlier. But the next sign-in is the **expensive kind** (~12 min), so the margin to 08:00 is ~18 minutes. **Do NOT print `rc-login.bat` over it.** |
+| instruments | **three new ones, all unread** — see §0. |
 | the leak | **DIAGNOSED, CONTAINED, DURATION CURED — still NOT eliminated.** §2. Unchanged. |
-| migrations | highest **`078`**. **Main's block is `077-079`, so `079` is the ONLY number left** — the next main-lane migration after that needs a new block claimed out loud in `docs/LANES.md` first. Side lane `080+`. |
-| Google Cloud | free trial lapses **~2026-09-28**; recorded recommendation is to **let it lapse, do not upgrade**. `CLAUDE.md` → "GOOGLE CLOUD". |
+| migrations | highest **`078`**. **`079` is the ONLY number main has left** and the 09-23 batch did not spend it, though three repairs looked like they would. Past 079, claim a new block out loud in `docs/LANES.md` first. Side lane `080+`. |
+| Google Cloud | **closed — the owner verified it does not affect this project.** Do not re-raise it. |
 
-**THE ONE THING TO CHECK FIRST:** that #392's worker deploy landed and the gate is actually
-live — `/api/health/status` for the fleet, and the poller's startup line
-`RC hold beta CLOSED — holds offered to 2 allowlisted user(s) only`. A healthy heartbeat read
-*during* a deploy describes the code being replaced, not the code that replaced it.
+**RELEASE TIMES ARE PACIFIC WALL-CLOCK STRINGS, AND `Date.parse` GETS THEM WRONG BY SEVEN
+HOURS.** `rc_hold_requests.release_at` is **`text`**, zone-less, compared everywhere against
+`NOW() AT TIME ZONE 'America/Los_Angeles'` (`src/lib/rc-holds.ts`). Reading `2026-09-23T08:00:00`
+with `Date.parse` treats it as UTC and reported the release as **3.3h away when it was 10.3h**.
+Compute it in SQL, in Pacific, the way the code does — this decides whether you may touch the box.
 
 ## 2. The leak — DIAGNOSED, CONTAINED, AND THE DURATION CURED. **IT IS NOT ELIMINATED.** Read before touching anything memory-related.
 
@@ -594,7 +620,7 @@ what would settle it.
   twelve-hour block. **`restart-rc` is a different lever with different costs and is NOT covered
   by this line** — it is **2-for-4** (the two hits were 09-09 and 09-10, when the young/burst
   population was live; **it is back as of 09-17**), needs no Okta precondition and locks no
-  campsite, and §0c is the one thing outstanding that needs a ramp.
+  campsite, and §0d is the one thing outstanding that needs a ramp.
 - **Lowering `LOW_RAM_MB`, lowering `MEM_DUMP_STALL_MS`, parking the resident page, building
   Track B.** Each is refused for a recorded reason in `CLAUDE.md`.
 - **Enlarging the pagefile. The precondition was settled on 2026-09-11 and the answer is

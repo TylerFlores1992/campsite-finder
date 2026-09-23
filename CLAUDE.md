@@ -854,6 +854,19 @@ of the second condition. The names are unreachable: the log's visible window is 
   checkout, `setup-node` and `npm ci` before it reaches jsx-spacing, let alone `npm test`, so
   the cancelled twin **cannot have written a fixture row.** Compute the overlap before reaching
   for this explanation; it is the first one to hand and it does not always fit.
+  - **DO NOT REUSE THAT PRE-TEST BUDGET AS A CONSTANT — IT IS ~31 SECONDS, NOT ~90, AND STOP
+    GUESSING AT IT ENTIRELY (measured 2026-09-23).** On a `claude/bot-batch` push: checkout
+    **1 s**, `setup-node` **3 s**, `npm ci` **26 s** (cached), so the `Verify` step began at
+    **T+31 s**. The twin was cancelled 57 s into that step — and its own log's last line is
+    **`ok 788`**. A 90-second overlap therefore covered **the first third of a 2,445-test
+    suite**, not zero of it. The 09-19 conclusion still stands at *twelve* seconds; the
+    sentence justifying it does not generalise.
+  - **THE CANCELLED TWIN'S LOG NAMES EXACTLY WHICH TESTS IT RAN, so this stops being
+    arithmetic at all.** `get_job_logs` on the cancelled job, last `ok N` = the highest test it
+    executed against the production database. Intersect that with the surviving run's hidden
+    range and you have a real answer instead of a stopwatch: on 09-23 the twin ran **12..788**
+    and the failure lay in **12..1615**, so it is a live candidate. Had the twin stopped at
+    `ok 6`, it would be excluded outright. **Read the twin's log before arguing from seconds.**
 - **THE OTHER NAMED WRITERS ARE OUT TOO.** No other workflow was `in_progress`, and the Nightly
   RIDB Sync last ran **09-18 13:15-14:37 UTC**, thirteen hours earlier.
 - **WHAT IS LEFT IS THE TEST-VERSUS-PRODUCTION CLASS, AND IT CANNOT BE SERIALISED.** The poller
@@ -1279,24 +1292,60 @@ appliedNote [update-guard] SKIP - outside the quiet window (20:00 PT, allowed 2:
             file src\win\async.c, line 94
 ```
 
-- **`appliedAt` AND `appliedSha` ARE STAMPED ON A SKIP.** Only `appliedNote` says it did not
-  happen, and `autocart.bot_version` reads the sha. That is shape #6 — two facts of different
-  ages as one record — and this file already names `appliedNote` beside `appliedSha` as an
-  instance. **Read the NOTE before believing the sha.**
-- **AND THE REFUSAL ITSELF LOOKS WRONG.** `update-guard`'s window check is
-  `if (!requested && (hour < windowStart || hour >= windowEnd))`, so a REQUESTED update is
-  supposed to bypass the quiet window — yet a requested one was refused for being outside it.
-  `requested` is read from the feed (`requested = j?.updateRequested === true`), so a guard
-  that crashed or could not reach the feed leaves it false and the window check then applies.
-  **The libuv assertion in the same note is the candidate and the mechanism is NOT
-  established.** Do not write one in.
+- ~~**`appliedAt` AND `appliedSha` ARE STAMPED ON A SKIP.**~~ **FALSE, AND THE CODE SAYS SO
+  IN A COMMENT (corrected 2026-09-23).** `noteBotUpdateAttempt` (`src/lib/bot-update.ts`)
+  writes **`applied_note` and nothing else** — its own header reads *"WRITES `applied_note`
+  AND NEVER `applied_at`, so the request stays pending and the box tries again"*. Only
+  `markBotUpdateApplied` touches `applied_at`/`applied_sha`, and that is the real-update path.
+  **So a skip cannot stamp either field.**
+  - **WHAT ACTUALLY HAPPENS IS WORSE, BECAUSE IT SURVIVES THE CORRECTION.** A later skip
+    **overwrites the note of an earlier SUCCESS**, leaving a row whose three fields describe
+    two different events. Observed directly: this file recorded the 09-21 on-demand update as
+    `appliedAt 03:07:06`, `appliedSha eeb9d05`, note `updated and verified`; read back on
+    09-23 the **same** timestamp and **same** sha carried
+    `SKIP - outside the quiet window (21:00 PT …)` — a note stamped an hour AFTER the
+    `appliedAt` beside it. Still shape #6, but the fields are not the ones this entry named.
+    **AND THE CODE BLOCK AT THE TOP OF THIS ENTRY IS ITSELF A THIRD NOTE** — it quotes
+    `(20:00 PT …)`, which the row no longer carries. One `applied_note` column, three
+    different readings across three days, one unchanging `appliedSha`. **The column is a
+    rolling last-line-of-log, not a record of anything.**
+  - **`applied_note` HAS NO TIMESTAMP OF ITS OWN, SO IT CANNOT BE ATTRIBUTED TO AN ATTEMPT.**
+    A requested on-demand run and an unrequested scheduled-task run write the same column, and
+    nothing in the row says which one you are reading. **"Read the NOTE before believing the
+    sha" is therefore not enough** — the note is not evidence about the update the sha
+    describes. `bot-ask git-status` is the only authority, as this file already says.
+  - Giving the note its own `noted_at` would settle it and costs **migration 079, the last of
+    main's block** — a decision, deliberately not taken here.
+- ~~**AND THE REFUSAL ITSELF LOOKS WRONG.**~~ **THE EVIDENCE FOR THAT REFUSAL DOES NOT
+  SUPPORT IT (2026-09-23).** The reasoning was: a REQUESTED update is supposed to bypass the
+  window (`if (!requested && (hour < windowStart || hour >= windowEnd))`), yet the note says
+  one was refused for being outside it. **But the note cannot be attributed to the requested
+  attempt** — see the bullet above — and the scheduled task runs unrequested through the same
+  guard and writes the same column. A skip note beside a requested update is exactly what a
+  healthy night produces.
+  **SO THERE IS NO ESTABLISHED INSTANCE OF THE `requested` BYPASS FAILING.** That is not the
+  same as it being proven sound, and the box genuinely did sit on `2069e36` for a day — what
+  is retired is the note as evidence, not the question. The libuv assertion remains
+  uninvestigated and no mechanism is written in.
 - **ON DEMAND IT WORKS, MEASURED THE SAME EVENING.** `requestBotUpdate` at 03:06:43 UTC →
   `appliedSha eeb9d05`, note `updated and verified`, at 03:07:06 — **23 seconds** — and
   `bot-ask git-status` confirmed `HEAD eeb9d05 on master`. So the path is sound and the 09-21
   refusal was not the ration or the window by design.
+- **AND IT WORKED AGAIN, DELIBERATELY OUTSIDE THE WINDOW (2026-09-23, 21:43 PT).**
+  `requestBotUpdate` → `appliedSha 21a0d1b`, note `updated and verified`, in **23 seconds**,
+  confirmed by `bot-ask git-status` reading `HEAD 21a0d1b on master`. Two measurements now, at
+  20:06 PT and 21:43 PT, both far outside `2:00-5:00` and both 23 seconds. **The bypass is
+  measured working; treat a future skip note as a note, not as a refusal of your request.**
 - **THE HOLD-PROXIMITY CHECK IS THE ONE `requested` DOES NOT BYPASS**, and that is deliberate:
   `if (hrs != null && hrs >= 0 && hrs < minHoursToRelease)` refuses within 6h of a release
   whatever asked. At 20:12 PT against an 08:00 release it passed with ~11h48m of margin.
+- **AND THE INPUT TO THAT CHECK IS THE EASIEST THING IN THIS REPO TO READ WRONG.**
+  `rc_hold_requests.release_at` is **`text`** — RC's own zone-less PACIFIC wall clock, compared
+  everywhere against `NOW() AT TIME ZONE 'America/Los_Angeles'` (`src/lib/rc-holds.ts:186`).
+  `Date.parse('2026-09-23T08:00:00')` treats it as **UTC** and is wrong by seven hours: on
+  2026-09-23 that reported the release as **3.3h away when it was 10.3h**, i.e. inside the 6h
+  refusal when it was nowhere near it. **Compute hours-to-release in SQL, in Pacific**, because
+  this number is what decides whether you may end the RC session.
 
 **A SKIPPED REHEARSAL COUNTS AS A REHEARSAL, WHICH SUPPRESSES THE ONE THAT WOULD MATTER.**
 Tonight's pair read `03:00 · skip  the session is live — a rehearsal would prove nothing`
@@ -1305,11 +1354,33 @@ that skip. So the update, which ENDS the RC session and replaces the code, was i
 followed by the one rehearsal that would have been informative being declined on the strength
 of a non-event. The last real PASS is 2026-09-21 03:01. **A skip is not a rehearsal**; the gap
 should be measured from the last ATTEMPT that ran the body.
+**FIXED 2026-09-23 (#397), AND THE REPAIR WAS A DIFFERENT SOURCE RATHER THAN A CALCULATION.**
+`lastRehearsalAttempt` reads `rc_login_rehearsal_log WHERE skipped_why IS NULL` — the log
+already carries every attempt and is already indexed on `ran_at DESC`, so **no `attempted_at`
+column and no migration**; 079 stayed free. **A FAILED rehearsal still counts, deliberately:**
+the gap rations logins from an address whose anti-bot posture cost twelve hours once, and a
+failed login spent that budget exactly as a passing one did — filtering on `ok IS TRUE` would
+retry a failing login every twenty minutes. The singleton is still served to
+`/api/health/status`, which asks *"has the rehearsal gone quiet"* — a question a skip **should**
+answer. **Two readers, two questions, one row: do not collapse them.**
 
 - **`released` IS REPORTED AS SUCCESS WHEN IT IS NOT.** Both rows read `released` with
   `claimed_at` NULL, and the state table calls that *"the bot let go; the user's own session has
-  it"*. There is **no terminal state for "handed off and the user lost the race"**, so the
-  readout renders two lost campsites as the happy path.
+  it"*. `rc-holds-readout` printed `claimed_at ?? released_at` under a heading saying the user
+  took it — **the moment the BOT let go, rendered as the user's win.** Shape #1 in one `??`.
+  **FIXED 2026-09-23 (#396), AND THE REPAIR THIS FILE RECORDED WOULD HAVE BEEN WRONG.** It
+  asked for a terminal `lost` state plus a sweep. That asserts a fact nobody has: `released`
+  with no claim is **genuinely ambiguous**, because a plain desktop browser has no injectable
+  client, the user books by hand, nothing is ever reported — **and that is a success.** So the
+  outcome is DERIVED (`src/lib/hold-outcome.ts`) and **`unresolved` is a first-class answer,
+  pinned in BOTH directions: it must not round to a loss and must not round to a win.** Against
+  production, `#M421`, `#M450` and `#R359` all flipped from reading as claimed to `LOST`.
+  **DO NOT add a `lost` status** — it would spend migration 079 to record a guess.
+  - **Ordering is the design, not an implementation detail.** A success anywhere in a run
+    outranks a later refusal: the RC SPA navigates after a successful cart, the bundle
+    re-injects, and the second submit answers `cart is already added` — which is **proof the
+    cart survived**. Reading the last line reported the two runs that settled the question as
+    failures.
 
 ### The mini-PC — supervision, updates, the watchdog, remote control
 **Full record: `docs/ARCHIVE-RC-AUTOCART.md`.**
@@ -1623,7 +1694,7 @@ Full write-up is `docs/PLAY-STORE.md` §0e (side lane's file).
 ## Open / next session
 
 **Start at `docs/NEXT-SESSION.md`.** This section is a short list of what is genuinely open on
-2026-09-22. Everything older is in `docs/ARCHIVE-OPEN-BLOCKS.md` (the dated handover blocks,
+2026-09-23. Everything older is in `docs/ARCHIVE-OPEN-BLOCKS.md` (the dated handover blocks,
 newest first) or in the subject archives the router points at. **A dated block that is no
 longer state was MOVED, not deleted** — see `docs/PRUNE-LEDGER.md`.
 
@@ -1635,17 +1706,20 @@ tick); `npx tsx scripts/bot-ask.mts git-status` for the mini-PC's sha (**never**
 **there are TWO files and the 09-16 one sat unfolded for six days**, so check both, newest
 sections first. (`…-status-iij2xm.md` §1 is folded in as of 2026-09-22;
 `…-setup-f7bpe2.md` is the older lane's §1-§30.)
-Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the authority).
+Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the authority) — **079 is
+the only number main has left, and nothing in the 09-23 batch spent it.**
 
 #### Open, and each one is a decision rather than a task
 - **The three paying Auto-Cart subscribers lost the RC hold offer on 2026-09-22 and nobody has
   decided what that costs them.** They keep rec.gov auto-cart and everything else the plan
   buys. Refund, downgrade, a note to them, or leave it — open, and deliberately not encoded in
   `RC_HOLD_BETA_OPEN`.
-- **A terminal hand-off failure does not reliably reach our telemetry.** The `401` the owner
-  photographed on 2026-09-22 appears in **zero** `rc_hold_requests.client_reports` rows, all
-  time; the last thing recorded was the sign-in prompt before it. Until that hole is closed,
-  every future hand-off post-mortem is working from a screenshot. Recorded, not fixed.
+- **A terminal hand-off failure may still not reach our telemetry, and the fix is UNPROVEN in
+  anger.** The `401` the owner photographed on 2026-09-22 appears in **zero**
+  `rc_hold_requests.client_reports` rows, all time. #395 removed two ways the last report could
+  be deferred — the unbounded debounce, and verdict stages queueing behind `token`/`cartkey`
+  chatter — but **nothing has yet demonstrated a terminal failure arriving.** Until one does,
+  treat the channel as suspect rather than repaired.
 - **Why `#M421`'s webview had NO RC session at all after a sign-in is unexplained.**
   `storedToken: 'none'`, `oktaKeys: 0` on five injections, after the claim screen had reported
   a merely *expired* stored token. One row, no controlled comparison, **no mechanism written
@@ -1662,36 +1736,32 @@ Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the auth
 - **The commit residual has no watcher.** Every arm reads free RAM or private bytes; the burst
   spends neither. Four options with their predicted readings are in the leak file under "THE
   RESIDUAL IS COMMIT, AND NOTHING WATCHES IT" — **option B (the pagefile) is OFF, measured.**
-- **The cancellation badge cannot see the one cancelling subscriber.** The data is right; all
-  four gates read `cancel_at_period_end` and Stripe reports a **dated** cancellation with the
-  flag false. The repair is `COALESCE(cancel_at_period_end, false) OR cancel_at IS NOT NULL` in
-  **one** definition rather than the four copies that exist. Deadline Oct 8, three weeks of
-  margin, **NOT STARTED on the owner's instruction.**
-- **#22 — `hold-fixture-invisibility` borrows a REAL user with a phone** and asserts
-  `holdAtRisk` returns its numeric fixture. Give it its own inserted, phoneless user. Real-DB
-  and in `worker/**`, so verifying it restarts all three pollers.
-- **#26 — the request counter is attached to the RESIDENT page only**, so workers and every
-  throwaway tab are invisible. `context.on('request')` closes two thirds of it. Bot-side; land
-  it with something else bot-side, because an update ends the RC session.
-- **`#M450`'s hand-off decline is unexplained.** Healthy session, won at T+0.1s, declined
-  anyway at minute 27.5. Two candidates remain and the data cannot separate them: a competitor
-  inside the exposure window, or RC not yet propagating our own release. The retry shipped
-  2026-09-21 covers the second without settling which it was.
-- **`released` has no terminal state for "handed off and the user LOST the race."** Both
-  2026-09-21 rows read `released` with `claimed_at` NULL, which the state table calls the happy
-  path. Two lost campsites render as success.
-- **Why `findCartEntry` misses a cart RC says is ours is NOT established.** The contents
-  fallback (#389) routes around it; the cause is still open, and a null `LockedShoppingCart` is
-  an unconfirmed candidate rather than the answer.
-- **`update-guard`'s `requested` bypass may not work.** A requested update was refused for
-  being outside the quiet window, which `if (!requested && …)` says cannot happen; the libuv
-  assertion in the same note is the candidate. On-demand works (measured, 23s), so this is a
-  reliability question rather than a blocker.
-- **A skipped rehearsal counts as a rehearsal**, which suppressed the one informative rehearsal
-  after the 09-21 box update. Bot-side, one gap calculation.
+- **`#M450`'s hand-off decline is unexplained — but the reading that separates the two
+  candidates is now being taken.** Healthy session, won at T+0.1s, declined anyway at minute
+  27.5; a competitor inside the exposure window and RC not yet propagating our own release
+  both fit. `readCartAfterFailure` (#397, web-side) logs the cart's ENTRY COUNT beside the next
+  terminal refusal: **`0 entries` = we never held it; `1 entry` = we held it and the refusal
+  was a re-submit.** Nothing to build — **wait for a refusal and read the log.**
+- **Why `findCartEntry` misses a cart RC says is ours is NOT established — instrumented as of
+  #397.** The contents fallback (#389) routes around it. A miss over a non-empty list now logs
+  the entries' **key names** (names only, never values) and the runner records
+  `locked=NULL|present`. `NULL` confirms the standing null-`LockedShoppingCart` candidate;
+  `present` refutes it and the key names say what the matcher is wrong about. **Still a
+  candidate, not an answer — do not write a mechanism in before the log arrives.**
 - **The RC reconnect's NEXT step is unexplained.** #363 fixed the hidden-input timeout; the box
   now submits the email and rec.gov renders **no password input at all** (`0 match(es), 0
   visible`). That is a third state, not the old bug. **No mechanism is written in.**
+- **The RC session's next sign-in is the EXPENSIVE kind, and the margin is 18 minutes.**
+  `/api/health/status` at 2026-09-23 04:44Z: `okta=GONE(404)`, so `maybeAutoLogin` at T−30
+  faces *"a full password form, ~12 min and several GB, not the ~11s cookie-answered one"*
+  against an 08:00 PT release. **That is the designed repair working as designed** — this file
+  says not to read `okta=GONE` between releases as a fault, and not to print `rc-login.bat`
+  over a live-but-short session. Recorded because the margin is thin, not because it is wrong.
+- **MIGRATION 079 IS THE LAST OF MAIN'S BLOCK AND IS STILL FREE.** Three repairs that looked
+  like they needed it did not: a `lost` hold status (derived instead — `src/lib/hold-outcome.ts`),
+  a rehearsal `attempted_at` column (a different SOURCE, not a new column), and a `noted_at`
+  for `applied_note` (a decision, above). **Past 079, claim a new block out loud in
+  `docs/LANES.md` — do not take 080, which is the side lane's.**
 - **Two docs carry stale instructions and are the SIDE lane's**: `docs/APP-STORE.md` §2d's
   sign-out steps and §5, and `docs/STOREKIT-PLAN.md` §4e's "gated on SBP" checklist. Named
   here rather than edited.
