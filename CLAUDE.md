@@ -1040,6 +1040,14 @@ six wearing different clothes; if you catch yourself about to write one up as no
    filter; `rc_mb` NULL vs `0`; `claimBotCommands` returning `[]` for both "nobody asked" and
    "the query threw"; an empty scan that could not read a command line. **`unknown` never
    rounds to a verdict** — not to "signed out", not to "fully booked", not to "dead session".
+   - **AND THE NEWEST WAY IN: A ZERO IN A FIELD NOBODY EVER POPULATES (2026-09-23).** Reading
+     `ReservationId: 0` as "nobody booked it" is sound only if that field is ever non-zero in
+     that dataset — an UNAUTHENTICATED grid has no obvious reason to disclose another
+     customer's reservation. It turned out to be populated (**121 of 122 not-free slices**),
+     which is what let the conclusion stand; had it been 0 of 122 the identical reading would
+     have meant nothing. **Before a zero or a null becomes evidence, count how often that
+     column is non-empty in the SAME response.** One aggregate settles it, and the answer is
+     as often "the field is decorative here" as "the thing is absent".
 2. **FIX PRESENT AND INERT.** The change is in the diff, reviewed, merged — and unreachable.
    A guard inside the loop it guards against; a pure function nothing calls; `void 0 && f()`
    passing an `indexOf` anchor; `if (false)`. **Ask what would have to run for this to matter,
@@ -1225,6 +1233,71 @@ the response distinguishes them.** A discriminator would have to come from outsi
 so the policy has no choice but to spend the full window. Shape #1 in the provider's own
 vocabulary rather than in ours. **Do not "fix" it by shortening the window** — that is what
 catches a late release.
+
+**`#L053` — THE HOLD THAT NEVER CARTED, AND THE INSTRUMENT THAT ANSWERS IT (2026-09-23).**
+The same release carried two requested holds. `#M403` carted at T+0.85s and the user took it.
+`#L053` (Leo Carrillo SP — Canyon, arrival 09-26) never carted, ended `failed`, and the user
+got a `hold_missed` text at **08:20:07** — which is only when `HOLD_GRACE_MIN` closed the retry
+window, twenty minutes after the event. **Two holds, two notifications, twenty minutes apart and
+in different vocabularies, is why it read as one.**
+
+- **`bot_events` CARRIES A `cart-burst` ROW PER HOLD, AND IT IS THE RECORD OF WHAT THE BURST
+  SAW.** Nothing in this file named it before. Fields: `won, unit, holdId, reason, attempts,
+  budgetLeft, firstOffsetMs, lastOffsetMs, why`. **Six rows exist in total**, newest 09-23 — so
+  it is new and sparse, not a long series.
+
+  ```
+  #L053  first −15000ms  last +16183ms  attempts 28  budgetLeft 0
+         "the burst budget is spent" · "The unit is not available for the date(s) specified."
+  #M403  first −15000ms  last    851ms  attempts 14  budgetLeft 14   won
+  ```
+
+  Same release, same second, same session: one freed and was carted at T+0.85s, the other was
+  polled **28 times across 31 seconds** and never once read free.
+
+- **BUT THE BURST CANNOT SEPARATE "NEVER FREED" FROM "TAKEN INSIDE A 1.1-SECOND GAP", AND THE
+  FIRST WRITE-UP OF THIS CLAIMED IT COULD.** 28 attempts over 31 s is ~1.1 s between samples,
+  and RC answers *not available* both before the release (locked) and after (someone else has
+  it). **The burst bounds our own behaviour, not the site's.** Do not read a spent budget as
+  proof nobody got it.
+- **WHAT DOES SEPARATE THEM IS THE GRID — AND ONLY AFTER CHECKING THE FIELD IS POPULATED AT
+  ALL.** `#L053`'s 09-26 slice reads `IsFree false · IsBlocked TRUE · ReservationId 0 ·
+  Lock null`. A `0` there means "nobody booked it" **only if RC populates the field for other
+  people's reservations**, which is not obvious for an unauthenticated grid. Measured on the
+  same call: of **122 not-free slices in that facility, 121 carry `ReservationId > 0`**. So the
+  field is real, and `#L053` is the **sole** not-free slice in its campground without a
+  reservation. That is the evidence, and it was nearly skipped.
+- **A CANDIDATE, NOT A MECHANISM.** `findRCHeldUnits` offers a hold on
+  `!IsFree && !IsBlocked && no ReservationId && hasRealLock(Lock)` — and `hasRealLock` is
+  **`year > 2000` and nothing else**, so it cannot tell a customer's cart lock from any other
+  lock RC writes. `#L053` now being `IsBlocked` with `Lock null` fits *"the Lock we keyed on
+  resolved into a block rather than a release"* — i.e. we offered a hold on a site that was
+  never going to free. **That is a candidate. Do not write it in as the mechanism.** The
+  discriminator is the next bullet.
+- **THE INSTRUMENT THAT SETTLES IT EXISTS AND HAS BEEN DARK SINCE 2026-09-10.**
+  `rc_release_readings` records, at 2-second resolution, whether each locked night actually
+  went free and in what bracket — the exact question. It is written **only** by
+  `scripts/rc-release-window.mts`, a hand-run script **scheduled nowhere**; the newest row is
+  09-10. Its own header says the poller's 15 s cadence "swallowed the whole question", which is
+  precisely what happened here.
+- **AND IT CAN ONLY RUN FROM A SESSION SANDBOX, WHICH IS WHY IT KEEPS NOT RUNNING.** Not the
+  mini-PC (that IP holds the live RC session — the address whose anti-bot posture cost twelve
+  hours once). Not Fly (**cannot reach the California RDR host at all**). Not via
+  `/api/rc-proxy` (hundreds of invocations from the poller's own Vercel IP, which RC's WAF
+  meters). It therefore talks to RDR **directly**, verified again 2026-09-23: **HTTP 200 in
+  724 ms**. **So it cannot be built into the product** — it structurally needs somebody to run
+  it, and that is the whole reason this gap recurs.
+- **COST, FOR WHEN SOMEBODY ASKS WHETHER TO ATTACH IT TO EVERY HOLD: it scales per FACILITY,
+  not per hold.** One `/search/grid` returns the whole facility, so ten holds at one facility
+  cost what one does. At `--lead=90 --after=240 --every=2000` that is 165 ticks per facility
+  (~495 requests over 5½ minutes for three). **Do not shorten `--after`** — a late or absent
+  release is what that tail catches, and it is exactly the `#L053` case. **Do not widen
+  `--every`** — 2 s is the entire reason it beats the poller's 15 s.
+- **`hold_missed`'s COPY IS WRONG FOR THIS CASE.** It reads *"Our bot missed the release… It may
+  still be free — tap to check."* We did not miss it and it is not free: the site is blocked and
+  the campground was 100% full that night. "We were too slow" and "RC withdrew the site" lead a
+  user to opposite actions. **Not fixed** — recorded, because what it should say is a product
+  decision.
 
 **AND `autocart.rc_login` REPORTS THE REHEARSAL, NOT THE AUTO-LOGIN (2026-09-23).** It reads the
 `rc_login_rehearsal` singleton (`src/app/api/health/status/route.ts`), so its sentence *"the bot
@@ -1811,6 +1884,17 @@ the only number main has left, and nothing in the 09-23 batch spent it.**
   user, `cart read back: 1 entry`.** First clean success since the beta closed. It does NOT
   close the three items below: a success exercises neither diagnostic (a precart refused at
   the first step never reaches a cart read-back) and says nothing about the failure path.
+- **WHY `#L053` NEVER CARTED AT THAT SAME RELEASE IS NOT SETTLED, AND ONE RUN WOULD SETTLE IT.**
+  The burst polled it 28 times from T−15s to T+16.2s and never read it free; it is now
+  `IsBlocked` with no reservation, alone among 122 taken slices of which 121 carry one. That
+  makes a competitor's booking unlikely but **does not rule out a cart inside a ~1.1 s sampling
+  gap**, and the standing candidate — that `hasRealLock`'s `year > 2000` test cannot tell a
+  cart lock from a lock that resolves into a BLOCK, so we offered a hold on a site that was
+  never going to free — **is a candidate with no mechanism written in.**
+  `scripts/rc-release-window.mts --record` is the discriminator and is scheduled **once**, for
+  the 2026-09-24 08:00 PT release (owner's call: tomorrow only, nothing recurring). **Read
+  `rc_release_readings` against the `cart-burst` rows afterwards** — the first says what the
+  site did, the second what we did, and having only the second is what left this open.
 - **`#M450`'s hand-off decline is unexplained — but the reading that separates the two
   candidates is now being taken.** Healthy session, won at T+0.1s, declined anyway at minute
   27.5; a competitor inside the exposure window and RC not yet propagating our own release
