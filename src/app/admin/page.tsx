@@ -7,7 +7,7 @@ import BrandMark from '@/components/v2/BrandMark';
 import AdminAutoRefresh from '@/components/AdminAutoRefresh';
 import AdminTabs, { type AdminData } from '@/components/admin/AdminTabs';
 import { query, queryOne } from '@/lib/db/client';
-import { listAdminUsers, countTestUsers } from './users/queries';
+import { listAdminUsers, countTestUsers, CANCELLING } from './users/queries';
 import { getShardCoverage, getPollerCapacity, type PollerCapacity, type ShardCoverage } from '@/lib/capacity';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 
@@ -145,16 +145,19 @@ export default async function AdminPage() {
       // canceled row beside a live one is a reporting quirk; here it would be a
       // falsehood, because a long-dead row can carry `cancel_at_period_end = true` from
       // the cancellation that killed it and would be counted as a churn in progress
-      // for ever.
+      // for ever. THAT LIVENESS CHECK NOW LIVES INSIDE `CANCELLING` (2026-09-23), with
+      // the rest of the rule, because widening the definition to Stripe's second field
+      // made forgetting it more expensive — a cancelled row nearly always has a
+      // `cancel_at`, where only some carry the flag.
       //
       // `min(cancel_at)` is the SOONEST one, which is the date worth showing beside a
       // count: it is when the next bite lands. NULL is a real answer — Stripe can set
       // the flag without a date — and renders as no date rather than as no cancellation.
       safe(
         queryOne<{ n: number; soonest: string | null }>(
-          `SELECT count(*)::int n, min(cancel_at)::text soonest
-             FROM subscriptions
-            WHERE status IN ('active','trialing') AND cancel_at_period_end`
+          `SELECT count(*)::int n, min(s.cancel_at)::text soonest
+             FROM subscriptions s
+            WHERE ${CANCELLING('s')}`
         ),
         { n: 0, soonest: null }
       ),

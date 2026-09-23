@@ -26,6 +26,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { CANCELLING } from '@/app/admin/users/queries';
 
 /** Comments stripped. Every rule below is quoted in the note explaining it — including
  *  the mistakes — so a comment-blind scan would fail on its own explanation. */
@@ -152,14 +153,70 @@ test('THE COUNT IS OVER LIVE ROWS, NOT THE WHOLE TABLE', () => {
   // end of the current billing period." So a long-dead row keeps the flag from the
   // cancellation that killed it, and an unfiltered count reports every churn that has
   // ever happened as one in progress — for ever, growing, and never actionable.
-  const start = ADMIN_PAGE.indexOf('cancel_at_period_end');
-  assert.ok(start > -1, 'the cancelling count is gone — re-anchor this test');
-  const stmt = ADMIN_PAGE.slice(Math.max(0, start - 400), start + 100);
+  //
+  // RE-ANCHORED 2026-09-23, AND THE MOVE IS THE REASON. This pinned the literal
+  // `status IN ('active','trialing') AND cancel_at_period_end` inside admin/page.tsx.
+  // The liveness clause then moved INTO the `CANCELLING` definition — a strictly
+  // stronger arrangement, since no caller can now forget it — and this failed over a
+  // change that made its own subject safer. Its anchor assertion did exactly its job:
+  // `cancel_at_period_end` is no longer in that file at all, so it said "re-anchor this
+  // test" rather than reporting something false.
+  //
+  // The property is unchanged: the count cannot see a dead row. It is asserted where the
+  // rule now lives.
   assert.match(
-    stmt,
-    /status IN \('active','trialing'\)\s+AND cancel_at_period_end/,
-    'the count must be filtered to live subscriptions.'
+    CANCELLING('s'),
+    /status IN \('active','trialing'\)/,
+    'the definition must exclude dead rows itself.'
   );
+  assert.match(
+    CANCELLING('s'),
+    /status IN[\s\S]*AND[\s\S]*cancel_at/,
+    'liveness must GATE the cancellation fields, not merely sit beside them.'
+  );
+  assert.match(
+    ADMIN_PAGE,
+    /FROM subscriptions s\s+WHERE \$\{CANCELLING\('s'\)\}/,
+    'and the count must reach it through the definition rather than restating it.'
+  );
+});
+
+test('THE DEFINITION READS BOTH OF STRIPE\'S FIELDS — the bug it was written for', () => {
+  // A non-null `cancel_at` does NOT imply `cancel_at_period_end`; they are independent.
+  // Three gates read the flag alone, so they agreed with each other and were all wrong
+  // about the same person. Measured across the whole table on 2026-09-23: exactly one row
+  // carries a `cancel_at`, it is `active`, its flag is FALSE, and it leaves 2026-10-08.
+  // Proved against production — flag-only counted 0, both-fields counted 1, and zero dead
+  // rows were pulled in.
+  const sql = CANCELLING();
+  assert.match(sql, /cancel_at_period_end/, 'the flag must still count.');
+  assert.match(sql, /cancel_at IS NOT NULL/, 'the DATED case is the one that was invisible.');
+  assert.match(sql, /\bOR\b/, 'either field alone means cancelling — requiring both is the bug.');
+  // `WHERE NULL` is unknown rather than false, and so is `NOT NULL`, so a bare column
+  // reference in a boolean position silently drops rows in whichever direction.
+  assert.match(sql, /COALESCE\([a-z]+\.cancel_at_period_end, false\)/, 'NULL is not false in SQL.');
+});
+
+test('ONE definition — no gate may read the flag on its own', () => {
+  // This is the property that actually failed: `CANCELLING` can be perfect while a fourth
+  // call site reads the column directly, which is precisely how three gates came to agree
+  // and all be wrong. Accounted for by shape, so a projection cannot cover for a gate.
+  const reads = [...QUERIES.matchAll(/cancel_at_period_end/g)].length;
+  const definition = [...QUERIES.matchAll(/COALESCE\(\$\{t\}\.cancel_at_period_end, false\)/g)].length;
+  const projection = [...QUERIES.matchAll(/s\.cancel_at_period_end, s\.cancel_at/g)].length;
+  assert.equal(definition, 1, 'there must be exactly ONE definition.');
+  assert.equal(projection, 1, 'and exactly one LIVE_SUB projection.');
+  assert.equal(reads, definition + projection,
+    `queries.ts reads cancel_at_period_end ${reads} times but ${definition + projection} are ` +
+    'accounted for — the extra is a fourth gate, and it will disagree with the others.');
+  assert.equal([...ADMIN_PAGE.matchAll(/cancel_at_period_end/g)].length, 0,
+    'admin/page.tsx must reach the rule through CANCELLING, never by naming the column.');
+});
+
+test('the alias is a parameter, so one definition serves every caller', () => {
+  assert.match(CANCELLING('s'), /\bs\.cancel_at_period_end\b/);
+  assert.match(CANCELLING(), /\bsub\.cancel_at_period_end\b/, 'the LIVE_SUB lateral is the default.');
+  assert.ok(!CANCELLING('s').includes('sub.'), 'an explicit alias must not leak the default.');
 });
 
 test('the count is reported beside the statuses, never AS one', () => {
