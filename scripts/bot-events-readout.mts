@@ -49,7 +49,7 @@
 import {
   recentBotEvents, requestCountReason, loopAnswerReading, dumpJoinReading, mappedSwarmReading,
   mappedNameReading, busyThreadReading, mappedSpanReading, servicePairReading, spinSiteReading,
-  cartBurstReading,
+  cartBurstReading, recgovCartReading,
   type BotEventRow, type RequestCountReason, type BusyThreadKind,
 } from '@/lib/bot-events';
 
@@ -77,12 +77,13 @@ const arg = (name: string, dflt: string): string => {
 const hours = Math.max(1, Number(arg('hours', '72')) || 72);
 const showAll = process.argv.includes('--all');
 
-const [scans, closes, counts, dumps, bursts] = await Promise.all([
+const [scans, closes, counts, dumps, bursts, recgovCarts] = await Promise.all([
   recentBotEvents('ramp-scan', hours, showAll ? 50 : 3),
   recentBotEvents('tab-close', hours, showAll ? 500 : 40),
   recentBotEvents('request-counts', hours, showAll ? 200 : 40),
   recentBotEvents('mem-dump', hours, showAll ? 50 : 6),
   recentBotEvents('cart-burst', hours, showAll ? 200 : 40),
+  recentBotEvents('recgov-cart', hours, showAll ? 200 : 40),
 ]);
 
 const pt = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false });
@@ -111,6 +112,39 @@ if (bursts.length === 0) {
     const x = d(b);
     console.log(`  ${pt(b.at)}  ${String(x.unit ?? '?')} — ${String(x.releaseAt ?? '?')} PT`);
     printVerdict('    ', cartBurstReading(x).text);
+  }
+}
+
+/**
+ * rec.gov CART JOBS — second, for the same reason bursts are first: these are real people's
+ * campsites, and everything below is a memory leak on a spare machine.
+ *
+ * THE COUNT THAT MATTERS IS `carted-on-retry`. The ladder shipped on 2026-09-23 costing every
+ * retried job ~15 seconds of the user's own head start on the fallback alert, on the strength
+ * of one measured incident. This line is the only place that price is ever weighed against
+ * what it bought, so it is printed as a total whether or not it is zero.
+ *
+ * AN EMPTY LIST IS NOT AN ALL-CLEAR. One row per finished cart job — so for a window in which
+ * `autocart_jobs` has rows and this does not, the bot is reporting outcomes without the trail,
+ * which means a box that has not been updated. That is a reading, not silence.
+ */
+console.log(`rec.gov CART JOBS: ${recgovCarts.length}${showAll ? '' : ' (newest 40; --all for more)'}`);
+if (recgovCarts.length === 0) {
+  console.log('  none in this window. Ordinary if no auto-cart watch saw an opening — but if');
+  console.log('  autocart_jobs has rows over the same hours, the box is older than the cart');
+  console.log('  ladder (2026-09-23) and is reporting outcomes with no trail. Check that before');
+  console.log('  reading this as quiet.');
+} else {
+  const readings = recgovCarts.map((r) => recgovCartReading(d(r)));
+  const won = readings.filter((x) => x.kind === 'carted-on-retry').length;
+  const first = readings.filter((x) => x.kind === 'carted').length;
+  // BOTH HALVES OF THE PRICE, ON ONE LINE. A retry count with no win count reads as cost, and a
+  // win count with no total reads as free.
+  console.log(`  ${first} carted first time · ${won} CARTED ON A RETRY (jobs the old one-shot bot would have lost) · ${readings.length - first - won} not carted`);
+  for (const r of recgovCarts) {
+    const x = d(r);
+    console.log(`  ${pt(r.at)}  ${String(x.campground ?? '?')} site ${String(x.campsiteId ?? '?')} — ${String(x.stay ?? '?')}`);
+    printVerdict('    ', recgovCartReading(x).text);
   }
 }
 

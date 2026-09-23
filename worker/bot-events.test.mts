@@ -29,12 +29,26 @@ test('the kind is allow-listed — anything else stores as NULL, never as what t
   assert.equal(eventKind(42), null);
   assert.equal(eventKind('request-counts'), 'request-counts');
   assert.equal(eventKind('cart-burst'), 'cart-burst');
+  assert.equal(eventKind('recgov-cart'), 'recgov-cart');
   // BY VALUE ON PURPOSE, so adding a kind is a DECISION rather than a drift. `cart-burst`
   // was taken deliberately on 2026-09-17: the 08:00 fast lane had never once been observed
   // running, because its summary lived in a field the slow lane overwrote and in a log that
   // rolls in thirteen minutes. src/lib/cart-burst-record.test.mts carries that account.
+  //
+  // `recgov-cart` on 2026-09-23, for the same reason one table along: the rec.gov cart bot
+  // ran a bounded RETRY ladder from that day, and the netlog that says WHY an add did not
+  // take existed only in a box console that rolls in ~89 minutes — so the question was
+  // unanswerable ten hours after a real job gave up on a site that was still open.
+  // src/lib/autocart-cart-retry.test.mts carries that account.
+  //
+  // AND NOTE WHAT THIS COSTS, BECAUSE IT IS NOT OBVIOUS FROM HERE: the kind list lives in
+  // `src/lib/bot-events.ts`, which is NOT in `worker-deploy.yml`'s `paths:` — but this guard
+  // lives under `worker/**`, which is the FIRST entry in that list. So adding a kind fires a
+  // worker deploy and restarts all three pollers, however web-side the change looks. That is
+  // the trap `docs/LANES.md` records twice; it is stated here so the next person reads it
+  // before writing "no worker deploy" in a PR body.
   assert.deepEqual([...BOT_EVENT_KINDS].sort(),
-    ['cart-burst', 'mem-dump', 'ramp-scan', 'request-counts', 'tab-close']);
+    ['cart-burst', 'mem-dump', 'ramp-scan', 'recgov-cart', 'request-counts', 'tab-close']);
 });
 
 test('text loses every control character except newline and tab, and is capped', () => {

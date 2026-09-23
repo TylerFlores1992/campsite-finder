@@ -6,15 +6,37 @@
 // calendar ignores synthetic dispatched events for the check-out hover, so the
 // range only forms with genuine pointer input.
 //
-// Returns the outcome string the bot reports to CampHawk:
+// ── ONE ATTEMPT WAS NOT ENOUGH (2026-09-23) ──────────────────────────────────────────
+// This file used to make a single attempt and give up. On job 7c0c524f the add did not
+// confirm, the poller re-checked the site 200ms later, found it STILL OPEN, and sent the
+// "book it yourself" alert — the paid feature having tried exactly once. `attemptCart`
+// below is that single attempt, unchanged in what it does; `cartRecGov` now runs it under
+// the bounded ladder in `cart-retry.mjs`, which owns every rule about whether a second
+// attempt is allowed and what it may do. All of it is under a 25-second budget that keeps
+// the ladder finishing BEFORE the poller's independent 35-second fallback deadline, so the
+// retry and the alert can never run at the same time.
+//
+// Outcome strings (the ladder classifies each one; see cart-retry.mjs):
 //   'carted'                      → success, VERIFIED present in the cart
-//   'add-not-confirmed'           → clicked Add to Cart but cart stayed empty
+//   'add-not-confirmed(empty)'    → rec.gov says the cart is empty; the add did not take
+//   'add-not-confirmed(unknown)'  → no definitive signal — we do NOT know. Never re-added
+//                                   blind; the retry re-READS the cart instead.
 //   'range-not-formed(sel=N)'     → couldn't select a multi-day range (N cells stuck)
 //   'already-booked'|'dates-not-found'|'cta-not-ready'|'calendar-not-loaded' → page issue
 //   'session-expired'             → not signed in / cart bounced to sign-in
 //   'error'                       → navigation/exception
 // Anything but 'carted' makes the server re-verify and send a normal alert.
-export async function cartRecGov(context, job, log) {
+import { runCartLadder, cartOutcomeForDb, CARTED } from './cart-retry.mjs';
+
+/**
+ * ONE attempt: load the page, form the range, click Add to Cart, verify the cart.
+ *
+ * Returns `{outcome, clicked, note}`. `clicked` is the fact the ladder needs most — it is
+ * what decides whether the NEXT round must re-read the cart before it is allowed to add
+ * again. It is set the instant the CTA is pressed, before anything that can throw, because
+ * a click followed by an exception is exactly the case where the cart is in doubt.
+ */
+async function attemptCart(context, job, log) {
   const url = job.bookingUrl.split('#')[0];
   const page = await context.newPage();
   // Capture the reservation/cart API calls so a silent failure tells us WHY (a 4xx
@@ -39,6 +61,19 @@ export async function cartRecGov(context, job, log) {
       netlog.push(`← ${res.status()} ${req.method()} ${res.url().replace(/^https?:\/\/[^/]+/, '')}${body ? ` | ${body}` : ''}`);
     } catch { /* ignore */ }
   });
+  // WHAT rec.gov ITSELF SAID, carried out of this function.
+  //
+  // The netlog has been printed to the box console since it was written, and the box
+  // console rolls in about eighty-nine minutes — so on 2026-09-23 "why did the add not
+  // take?" had no answer ten hours later, about the paid feature. The last write response
+  // is the decisive line (an anti-bot `ok:false`, a 4xx rule violation, a 403), and it
+  // rides back with the outcome into `bot_events`.
+  const lastWriteResponse = () => {
+    for (let i = netlog.length - 1; i >= 0; i--) if (netlog[i].startsWith('←')) return netlog[i].slice(0, 240);
+    return null;
+  };
+  let clicked = false;
+  const done = (outcome, note = null) => ({ outcome, clicked, note: note ?? (clicked ? lastWriteResponse() : null) });
 
   const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const ariaDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return `${MONTHS[m - 1]} ${d}, ${y}`; };
@@ -90,6 +125,14 @@ export async function cartRecGov(context, job, log) {
         await page.mouse.click(cell.x, cell.y);
         return 'clicked';
       }
+      // NO DATE CELLS AT ALL IS A DIFFERENT FACT FROM "THESE DATES ARE NOT IN THE
+      // CALENDAR", and until 2026-09-23 both returned 'not-found' → `dates-not-found`.
+      // With nothing painted, `min`/`max` stay ±Infinity, neither arrow branch fires,
+      // `moved` stays false, and the loop returned on the FIRST pass without ever
+      // waiting — a calendar that had not finished rendering reported as a campground
+      // that does not offer these nights. One is a transient worth a fresh page load and
+      // the other is terminal; collapsing them is why the retryable case looked terminal.
+      if (!Number.isFinite(min) && !Number.isFinite(max)) return 'unpainted';
       let moved = false;
       if (Number.isFinite(max) && target > max) moved = await clickArrow('Next');
       else if (Number.isFinite(min) && target < min) moved = await clickArrow('Previous');
@@ -122,15 +165,16 @@ export async function cartRecGov(context, job, log) {
     if ((await selCount()) === 0 && !(await ctaInfo())) {
       // sanity: is the calendar even here?
       const painted = await page.evaluate(() => Array.from(document.querySelectorAll('[aria-label]')).some((b) => /,\s*20\d\d/.test(b.getAttribute('aria-label') || '')));
-      if (!painted) return 'calendar-not-loaded';
+      if (!painted) return done('calendar-not-loaded');
     }
 
     // Select the date range with REAL mouse clicks; retry until it forms.
     let formed = false, sel = 0;
     for (let attempt = 0; attempt < 4 && !formed; attempt++) {
       const ci = await clickDate(job.startDate);
-      if (ci === 'not-found') return 'dates-not-found';
-      if (ci === 'booked') return 'already-booked';
+      if (ci === 'unpainted') return done('calendar-not-loaded');
+      if (ci === 'not-found') return done('dates-not-found');
+      if (ci === 'booked') return done('already-booked');
       await page.waitForTimeout(700);
       await clickDate(job.endDate);
       await page.waitForTimeout(800);
@@ -139,12 +183,17 @@ export async function cartRecGov(context, job, log) {
       if (!formed) await page.waitForTimeout(600);
     }
     log(`  · rec.gov: ${job.campgroundName} — range sel=${sel}`);
-    if (!formed) return `range-not-formed(sel=${sel})`;
+    if (!formed) return done(`range-not-formed(sel=${sel})`);
 
     const cta = await ctaInfo();
-    if (!cta || cta.disabled || !cta.ok) return 'cta-not-ready';
+    if (!cta || cta.disabled || !cta.ok) return done('cta-not-ready');
     await page.mouse.move(cta.x, cta.y);
     await page.waitForTimeout(150);
+    // SET BEFORE THE CLICK, NOT AFTER. Everything below here can throw, and a click
+    // followed by an exception is the single case where the cart is most in doubt — the
+    // one where the next round must read before it adds. Setting it afterwards would
+    // clear that doubt by losing it.
+    clicked = true;
     await page.mouse.click(cta.x, cta.y);
     await page.waitForTimeout(2000);
 
@@ -166,20 +215,67 @@ export async function cartRecGov(context, job, log) {
     const v = await verifyCart(context, log);
     if (v === 'ok') {
       log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — confirmed in the account cart`);
-      return 'carted';
+      return done(CARTED);
     }
     if (v === 'signin') {
       log(`  ✗ ${job.campgroundName} — rec.gov session has expired; reconnect needed.`);
-      return 'session-expired';
+      return done('session-expired');
     }
+    // `v` RIDES OUT WITH THE OUTCOME. It used to be printed here and thrown away, and it
+    // is the difference between "rec.gov says the cart is empty, a re-add is safe" and
+    // "we could not tell, so re-adding might book this campsite twice".
     log(`  ✗ ${job.campgroundName} — clicked Add to Cart but the cart is still empty (${v}) — add didn't take`);
     if (netlog.length) { log(`  ⓘ write API calls during add:`); for (const n of netlog.slice(-12)) log(`      ${n}`); }
-    return 'add-not-confirmed';
+    return done(`add-not-confirmed(${v})`);
   } catch (err) {
     log(`  ✗ rec.gov error for ${job.campgroundName}: ${err.message}`);
-    return 'error';
+    return done('error', String(err.message ?? err).slice(0, 240));
   } finally {
     await page.close().catch(() => {});
+  }
+}
+
+/**
+ * The whole cart attempt for one job: the bounded ladder over `attemptCart`.
+ *
+ * Returns `{outcome, detail}` — `outcome` is what goes in `autocart_jobs.cart_outcome`
+ * (EXACTLY `'carted'` on success; see cart-retry.mjs) and `detail` is the per-round trail
+ * for `bot_events`.
+ *
+ * IT DOES NOT THROW. A throw here would skip `reportResult` entirely and leave the user's
+ * alert waiting out the poller's full 35-second deadline, so every ending — including a
+ * bug in this file — comes back as an outcome string.
+ */
+export async function cartRecGov(context, job, log, io = {}) {
+  try {
+    const r = await runCartLadder({
+      addOnce: () => attemptCart(context, job, log),
+      // THE RETRY'S CART RE-READ IS BOUNDED AND THE ONE INSIDE AN ATTEMPT IS NOT, on purpose.
+      // `verifyCart`'s default 30s navigation is fine at the END of an attempt — the ladder
+      // has already decided nothing more will start — but BETWEEN rounds it sits inside the
+      // 25s budget, and one hung cart page would push the whole ladder past the poller's 35s
+      // deadline and make the retry and the fallback alert run at the same time. Bounded to
+      // ~10s worst case, and a timeout answers 'unknown', which means NOT re-adding.
+      readCart: () => verifyCart(context, log, { gotoTimeoutMs: 6_000, polls: 8 }),
+      wait: (ms) => new Promise((res) => setTimeout(res, ms)),
+      log,
+      ...io,
+    });
+    return {
+      outcome: cartOutcomeForDb(r),
+      detail: {
+        campground: job.campgroundName,
+        campsiteId: job.campsiteId ?? null,
+        stay: `${job.startDate}→${job.endDate}`,
+        outcome: r.outcome,
+        rounds: r.rounds,
+        elapsedMs: r.elapsedMs,
+        trail: r.trail,
+      },
+    };
+  } catch (err) {
+    log(`  ✗ rec.gov cart ladder failed for ${job.campgroundName}: ${err.message}`);
+    return { outcome: 'error', detail: { ladderError: String(err.message ?? err).slice(0, 240) } };
   }
 }
 
@@ -189,11 +285,15 @@ export async function cartRecGov(context, job, log) {
 //   'empty'   → cart page loaded and says it's empty (add didn't take)
 //   'signin'  → cart bounced to sign-in (the rec.gov session has expired)
 //   'unknown' → no definitive signal in time (treat as not-carted; fail closed)
-async function verifyCart(context, log) {
+//
+// 'empty' AND 'unknown' ARE NOT THE SAME ANSWER and the caller must never merge them
+// again: 'empty' is rec.gov stating a fact, 'unknown' is us failing to read one. The
+// retry may re-add on the first and may only re-READ on the second.
+async function verifyCart(context, log, { gotoTimeoutMs = 30000, polls = 14 } = {}) {
   const page = await context.newPage();
   try {
-    await page.goto('https://www.recreation.gov/cart', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    for (let i = 0; i < 14; i++) {
+    await page.goto('https://www.recreation.gov/cart', { waitUntil: 'domcontentloaded', timeout: gotoTimeoutMs });
+    for (let i = 0; i < polls; i++) {
       const url = (page.url() || '').toLowerCase();
       if (/sign-?in|\/login/.test(url)) return 'signin';
       const txt = (await page.evaluate(() => document.body.innerText || '')).toLowerCase();

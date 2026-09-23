@@ -22,6 +22,13 @@
  *                 that is a request loop, the top path here names the endpoint. `reason`
  *                 says which of the three took it. Never a query, never a body.
  *
+ *   `recgov-cart` the rec.gov auto-cart bot finished a job — every round of the cart ladder,
+ *                 what each one did, how long it took, and the last thing rec.gov's own write
+ *                 API said. `cart_outcome` holds one string because three SQL predicates read
+ *                 that column; this holds the account. On 2026-09-23 "why did the add not
+ *                 take?" was unanswerable ten hours later about the feature people pay for,
+ *                 because the netlog existed only in a box console that rolls in ~89 minutes.
+ *
  *   `mem-dump`    rc-keepwarm asked Chromium's own memory-infra tracer who owns the shared
  *                 memory in each of its processes — once as a baseline and once when the rc
  *                 family crosses the ramp threshold. The committed-region walk named the CLASS
@@ -40,7 +47,7 @@
  */
 import { mutate, query } from '@/lib/db/client';
 
-export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts', 'mem-dump', 'cart-burst'] as const;
+export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts', 'mem-dump', 'cart-burst', 'recgov-cart'] as const;
 export type BotEventKind = (typeof BOT_EVENT_KINDS)[number];
 const KINDS = new Set<string>(BOT_EVENT_KINDS);
 
@@ -939,5 +946,79 @@ export function spinSiteReading(
       + `code, neither reaching ${Math.round(SPIN_SITE_DOMINANCE * 100)}%.${tight}${top} That is a real `
       + 'reading and not a failure — it says the thread is not sitting in one place — but it does not choose '
       + 'between a native loop and a script one, so do not quote it as either.',
+  };
+}
+
+/**
+ * WHAT ONE rec.gov CART JOB ACTUALLY DID — the reading `cart_outcome` alone cannot give.
+ *
+ * `autocart_jobs.cart_outcome` answers "did it cart?" and nothing else. From 2026-09-23 the
+ * bot runs a bounded LADDER (`scripts/auto-cart-bot/cart-retry.mjs`) rather than one attempt,
+ * and that makes three new questions live, all of which decide different work:
+ *
+ *   - **did the retry earn its keep?** A `carted` after more than one round is the whole
+ *     justification for spending fifteen seconds of the user's head start. Nothing else counts
+ *     it, and if the answer is "never" the budget should be spent differently.
+ *   - **did the ladder run at all, or decline?** A single-round failure is AMBIGUOUS in exactly
+ *     the way this codebase pays for most often: `already-booked` on round one is the ladder
+ *     working perfectly (the site was gone; retrying it would be nonsense), and a bug that
+ *     classified every outcome as terminal looks IDENTICAL from the outside. So the decline
+ *     reason is printed, never inferred from the round count.
+ *   - **what did rec.gov say?** The last write-API response is carried out of the browser with
+ *     the outcome, because the box console rolls in ~89 minutes and on 2026-09-23 the question
+ *     had no answer ten hours later.
+ *
+ * AN ABSENT TRAIL REPORTS ITSELF. A row from a box that predates the ladder, or one whose
+ * detail was dropped, must not render as "one round, no reason" — that is a real reading about
+ * a real job, and this file's most expensive habit is letting those two look the same.
+ */
+export type RecgovCartKind = 'carted' | 'carted-on-retry' | 'gave-up' | 'not-retried' | 'unreadable';
+
+export function recgovCartReading(
+  row: { outcome?: unknown; rounds?: unknown; elapsedMs?: unknown; trail?: unknown } | null | undefined,
+): { kind: RecgovCartKind; text: string } {
+  const outcome = typeof row?.outcome === 'string' ? row.outcome : '';
+  const rounds = Number(row?.rounds);
+  const trail = Array.isArray(row?.trail) ? (row.trail as Record<string, unknown>[]) : [];
+  const secs = Number.isFinite(Number(row?.elapsedMs)) ? `${(Number(row?.elapsedMs) / 1000).toFixed(1)}s` : 'an unrecorded time';
+  const last = trail.length ? trail[trail.length - 1] : null;
+  const why = typeof last?.why === 'string' && last.why ? last.why : null;
+  const note = typeof last?.note === 'string' && last.note ? last.note : null;
+  const said = note ? ` rec.gov's last write answer: ${note}` : ' No write response was captured.';
+
+  if (!outcome || !Number.isFinite(rounds) || rounds < 1) {
+    return {
+      kind: 'unreadable',
+      text: 'this row carries no ladder trail. It is a job that happened, not a job that did'
+        + ' nothing — either the box predates the cart ladder or the detail was dropped in'
+        + ' transit. Do not count it in either column.',
+    };
+  }
+  if (outcome === 'carted') {
+    if (rounds > 1) {
+      return {
+        kind: 'carted-on-retry',
+        text: `CARTED ON ROUND ${rounds} after ${secs}. Under the old one-shot bot this job would`
+          + ' have fallen through to a "book it yourself" alert. This row is the retry paying for'
+          + ' itself, and it is the number to quote when the budget is questioned.',
+      };
+    }
+    return { kind: 'carted', text: `carted on the first round in ${secs} — the ordinary good case.` };
+  }
+  if (rounds > 1) {
+    return {
+      kind: 'gave-up',
+      text: `the ladder RAN — ${rounds} rounds over ${secs} — and still ended '${outcome}'.`
+        + ` It stopped because: ${why ?? 'no reason was recorded'}.${said}`
+        + ' So this is not an unretried failure; the retry is working and rec.gov is refusing.',
+    };
+  }
+  return {
+    kind: 'not-retried',
+    text: `ONE ROUND ONLY, ending '${outcome}' after ${secs}, and the ladder declined to go again:`
+      + ` ${why ?? 'NO REASON WAS RECORDED, which is itself the finding — a ladder that declines'
+      + ' silently is indistinguishable from one that is broken'}.${said}`
+      + ' A terminal outcome here is correct behavior; an unclassified one is a bug in the'
+      + ' classification, and the reason above is what tells them apart.',
   };
 }
