@@ -53,6 +53,40 @@ const AUTOCART_ENTITLED = `(
                 AND (s.tier = 'autocart' OR s.grandfathered))
 )`;
 
+/**
+ * IS THIS SUBSCRIPTION CANCELLING? — ONE definition, because there were three.
+ *
+ * ## The bug this exists for
+ *
+ * Stripe expresses a pending cancellation in **two independent fields**, and a non-null
+ * `cancel_at` does **not** imply `cancel_at_period_end`. Every gate here read the FLAG
+ * alone, so a subscriber who had genuinely cancelled — with a date Stripe had already
+ * set — rendered as an ordinary `active` customer in the user list, in the detail page
+ * and in the dashboard's churn count, all three agreeing and all three wrong.
+ *
+ * Measured 2026-09-23, the whole `subscriptions` table: exactly ONE row carries a
+ * `cancel_at`, it is `active`, and its flag is **false**. That is the subscriber the
+ * badge could not see, leaving on **2026-10-08**.
+ *
+ * ## The status clause is not decoration
+ *
+ * A dead row keeps whatever killed it. `admin/page.tsx` already carried a comment
+ * warning that a long-dead row can hold `cancel_at_period_end = true` from the
+ * cancellation that ended it and be counted as a churn in progress for ever — and
+ * widening to `cancel_at IS NOT NULL` makes that MORE likely, since a cancelled
+ * subscription almost always has a date. So the liveness check moves INTO the
+ * definition rather than being left to each caller to remember.
+ *
+ * (Today it would not have fired: both `canceled` rows have no `cancel_at` at all. That
+ * is a property of five rows on one afternoon, not a guarantee, and it is exactly the
+ * kind of thing this file should not depend on.)
+ *
+ * @param t alias of the subscription row — `sub` for the `LIVE_SUB` lateral.
+ */
+export const CANCELLING = (t = 'sub') =>
+  `(${t}.status IN ('active','trialing')
+    AND (COALESCE(${t}.cancel_at_period_end, false) OR ${t}.cancel_at IS NOT NULL))`;
+
 /** The LIVE subscription, preferred over any lapsed sibling row. */
 const LIVE_SUB = `LEFT JOIN LATERAL (
   SELECT s.status, s.tier, s.grandfathered, s.stripe_customer_id,
@@ -106,7 +140,7 @@ export async function listAdminUsers(): Promise<AdminUserRow[]> {
            sub.status                    AS sub_status,
            sub.tier                      AS sub_tier,
            sub.grandfathered             AS grandfathered,
-           COALESCE(sub.cancel_at_period_end, false) AS cancelling,
+           ${CANCELLING()}              AS cancelling,
            sub.cancel_at::text           AS cancel_at,
            COALESCE(w.live, 0)           AS live_watches,
            COALESCE(w.total, 0)          AS total_watches,
@@ -214,7 +248,7 @@ export async function getAdminUser(id: string): Promise<AdminUserDetail | null> 
             sub.status                  AS sub_status,
             sub.tier                    AS sub_tier,
             sub.grandfathered           AS grandfathered,
-            COALESCE(sub.cancel_at_period_end, false) AS cancelling,
+            ${CANCELLING()}              AS cancelling,
             sub.cancel_at::text         AS cancel_at,
             sub.stripe_customer_id      AS stripe_customer_id,
             COALESCE(w.live, 0)         AS live_watches,
