@@ -2733,9 +2733,9 @@ async function warmResident() {
     let browserLifeSince = 0;
     let memDump = { baseline: false, ramp: false, inFlight: false, landed: false, graceUntil: null };
     /**
-     * THE RESIDENT PAGE'S REQUESTS, counted from the moment the page exists. Attached where
-     * `residentPage = page` is assigned, so a reopen — a new context, a new page — gets a new
-     * counter and "lifetime" means the life of THIS browser. Read in the bail, at the teardown
+     * THIS BROWSER'S REQUESTS — the whole CONTEXT's, since #26, not just the resident tab's.
+     * Attached where the context is built, so a reopen gets a new counter and "lifetime"
+     * means the life of THIS browser. Read in the bail, at the teardown
      * and on a hung close; see rc-request-count.mjs for what it may and may not record.
      */
     const requestCounter = createRequestCounter();
@@ -3397,8 +3397,16 @@ async function warmResident() {
         slowestAliveMs: 0,
         silent: 0,
       };
-      // Re-attached on every reopen: a browser life is a new context and a new page.
-      requestCounter.attach(page);
+      // THE CONTEXT, NOT THE PAGE (#26). A page binding saw only the resident tab, so every
+      // request the trip's own tabs made was invisible to the counter whose whole job is to
+      // say what this browser was doing. Re-attached on every reopen: a browser life is a
+      // new context. NEVER also attach the page — the context already fires for its pages,
+      // and a counter that silently doubles is worse than one that undercounts.
+      //
+      // This does NOT make the counter see a WEDGED page: page-wedge.mjs measured both
+      // bindings seeing zero of a wedged page's fetches. A flat counter during a ramp still
+      // does not mean a quiet ramp.
+      requestCounter.attach(ctx);
       mark('initial RC load');
       await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
       // Before anything can go wrong with it. A failure returns null and the trip falls back

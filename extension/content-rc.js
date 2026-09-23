@@ -63,6 +63,9 @@
   // fails .NET model validation with a ValidationProblemDetails on `shoppingCartKey`,
   // which is what the probe's first --cart run hit and read as a CAPTCHA.
   const NO_CART = '00000000-0000-0000-0000-000000000000';
+  /** RC's cart read-back. Same endpoint `lib/rc-precart-script`'s verifier uses; declared
+   *  here because THIS file needs it on the failure path, which never reaches the cart page. */
+  const CART_LOAD = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart';
 
   // -------------------------------------------------------------------------
   // ADOPT-CART PATH (2026-08-05). The one below builds a cart in the user's own
@@ -525,6 +528,24 @@
         }
 
         setState('failed');
+        // WHAT WAS IN THE CART AT THE MOMENT RC REFUSED (2026-09-23).
+        //
+        // `#M450` was carted by the bot at T+0.1s, the bot's release returned HTTP 200, and
+        // the user's precart was declined anyway at minute 27.5. Two candidates — a
+        // competitor took it inside the exposure window, or RC had not propagated our own
+        // release — and the data could not separate them, because the ONLY cart read-back
+        // this script does runs on the cart PAGE, which a failure never reaches. A decline
+        // therefore produced no cart reading at all.
+        //
+        // One reading separates them:
+        //   0 entries  -> we never held it; the site was gone when we asked
+        //   1 entry    -> we DID hold it and the refusal was a re-submit over our own entry
+        //
+        // Its own stage, never `cart-verified`: that one means "we carted and then confirmed
+        // it", and a failure reusing it would read as a success in every readout that greps
+        // for the phrase. Best-effort and never awaited into the user's path — a diagnostic
+        // that delays the one screen somebody is watching is not worth having.
+        void readCartAfterFailure(res.status, apiError);
         // THE SENTENCE AND THE DIAGNOSTIC ARE DIFFERENT AUDIENCES. `explain` says what
         // happened and what to do; the status code, RC's own words and the attempt count go
         // to `data-detail`, where the epilogue picks them up. Nothing is lost — it stops
@@ -624,6 +645,55 @@
    * this repo's two-facts-of-different-ages shape, in the one place built to explain a
    * failure.
    */
+  /**
+   * READ THE CART BACK AFTER A REFUSAL — the reading `#M450` needed and nobody had.
+   *
+   * Deliberately separate from the cart-page verification: that one only runs at
+   * `/customers/shoppingcart`, which a failed hand-off never reaches. Same endpoint, same
+   * shape, different question — "what did RC think we held when it said no?"
+   *
+   * NEVER THROWS AND NEVER BLOCKS. It is called with `void` from the failure branch, so a
+   * slow or dead RC cannot hold up the screen the user is reading. An unreadable answer is
+   * reported as unreadable, never as an empty cart: `entries: null` and `entries: 0` are
+   * opposite facts and this file has paid for merging them before.
+   */
+  async function readCartAfterFailure(status, apiError) {
+    try {
+      const key = _cartKey && _cartKey !== NO_CART ? _cartKey : (ls('shoppingCartKey') || '');
+      if (!key || !capturedToken) return;
+      const r = await fetch(CART_LOAD, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json', accesstoken: capturedToken,
+          authorization: 'Bearer ' + capturedToken, installationsidentity: 'cali', storeid: '111',
+        },
+        body: JSON.stringify({ shoppingCartKey: key }),
+      });
+      const text = await r.text();
+      let entries = null;
+      try {
+        let res = JSON.parse(text);
+        res = res && res.Result ? res.Result : res;
+        const list = res && res.CartEntry ? (res.CartEntry.$values || res.CartEntry) : null;
+        if (Array.isArray(list)) entries = list.length;
+      } catch (e) { /* entries stays null — "could not read", not "empty" */ }
+      // REPORTED THROUGH THE CONSOLE HOOK, because that is this file's only channel —
+      // `lib/rc-precart-script` forwards any `console.log` starting `[CampHawk RC]` as a
+      // `log` stage, and it SCRUBS the message on the way. There is no `report()` here; an
+      // earlier draft of this helper called one and would have thrown a ReferenceError on
+      // the first refusal, i.e. exactly when it was needed.
+      //
+      // `entries=null` is printed as `null`, never as 0: "we could not read the cart" and
+      // "the cart is empty" are opposite facts and this file has merged them before.
+      console.log('[CampHawk RC] cart-after-failure:'
+        + ' entries=' + entries
+        + ' cartStatus=' + r.status
+        + ' refusedStatus=' + status
+        + ' refusedBecause=' + String(apiError || '').slice(0, 120));
+    } catch (e) { /* a diagnostic must never become the failure it is diagnosing */ }
+  }
+
   function setStatus(t, detail) {
     if (!statusEl) return;
     statusEl.textContent = t;

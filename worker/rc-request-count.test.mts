@@ -218,7 +218,18 @@ test('the counter is attached where residentPage is assigned, so every reopen re
   const firstAwait = KW.indexOf('await ', at);
   assert.ok(firstAwait > at, 'no await follows the assignment — this guard is measuring nothing');
   const after = KW.slice(at, firstAwait);
-  assert.match(after, /requestCounter\.attach\(page\)/,
+  /*
+   * RE-ANCHORED 2026-09-23 ON THE CALL, NOT ITS ARGUMENT (#26). This pinned
+   * `requestCounter.attach(page)`. The counter now attaches the CONTEXT — Playwright emits
+   * the same events there, and a page binding saw only the resident tab while the trip's
+   * own tabs went uncounted. The POSITION rule this test exists for is unchanged and is
+   * what still matters: attach after the assignment and BEFORE `page.goto(RC_HOME)`.
+   *
+   * The target is asserted separately, in `worker/bot-batch.test.mts`, along with the rule
+   * that it is attached to exactly ONE of the two — a context handler already fires for its
+   * pages, so binding both would silently double every resident request.
+   */
+  assert.match(after, /requestCounter\.attach\((?:ctx|page)\)/,
     'attach must follow the assignment and PRECEDE the first await — a counter attached after '
     + 'page.goto misses the load, and one never attached counts nothing and reads as a quiet page');
   const created = KW.indexOf('const requestCounter = createRequestCounter(');

@@ -924,7 +924,25 @@ async function runPass() {
             // product has, and worse than the mislabel.
             if (key) {
               check = { found: true, entryKey: key, count: 1, status: back.status };
-              log(`  (cart read back by CONTENTS for ${h.unitName ?? h.unitId} — the matcher missed it)`);
+              /*
+               * AND SAY WHY THE MATCHER MISSED, because this branch is the only moment the
+               * evidence exists (2026-09-23). "Why `findCartEntry` misses a cart RC says is
+               * ours" has been open since 2026-09-21 with a null `locked` as an unconfirmed
+               * candidate — and every occurrence so far has been recorded as the fallback
+               * firing and nothing about the inputs that failed.
+               *
+               * Two facts settle it and both are already in hand here: whether `locked` was
+               * null (nothing to match ON), and which fields the entries actually carry
+               * (nothing to match AGAINST — the module header claims there is no unit
+               * field). KEY NAMES ONLY, never values: this repo published an OAuth code and
+               * a password by collecting things that then needed scrubbing.
+               *
+               * NO MECHANISM IS CLAIMED. This records the two readings; the next miss says
+               * which, or neither.
+               */
+              log(`  (cart read back by CONTENTS for ${h.unitName ?? h.unitId} — the matcher missed it;`
+                + ` locked=${locked === null ? 'NULL' : 'present'}`
+                + ` entryFields=${JSON.stringify(check.shape ?? Object.keys(only ?? {}).sort().slice(0, 40))})`);
             }
           }
         }

@@ -809,6 +809,46 @@ export async function rehearsalHistory(limit = 14): Promise<RehearsalLogRow[]> {
   ).catch(() => []);
 }
 
+/**
+ * WHEN DID A REHEARSAL LAST ACTUALLY RUN ITS BODY? — not "when did we last write a row".
+ *
+ * ## The bug (2026-09-21, seen in the box's own log)
+ *
+ * `recordRehearsal` sets `ran_at = NOW()` on every call **including a skip**, and the feed
+ * handed that timestamp to `shouldRehearse` as `hoursSinceLastRun`. So a skip satisfied the
+ * minimum gap that exists to stop rehearsals stacking up, and the next decision read:
+ *
+ *     03:00 · skip  the session is live — a rehearsal would prove nothing     (correct)
+ *     03:07 · skip  rehearsed 0h ago
+ *
+ * The thing it had "rehearsed 0h ago" **was that skip**. And the 03:07 decision followed the
+ * box update — the event that ENDS the RC session and replaces the code — so the one
+ * rehearsal that would have been informative was declined on the strength of a non-event.
+ * The last real PASS was 2026-09-21 03:01.
+ *
+ * ## Why this reads the LOG rather than adding a column
+ *
+ * `rc_login_rehearsal_log` (migration 063) already records every call with `skipped_why`,
+ * indexed on `ran_at DESC`. An `attempted_at` column on the singleton would say the same
+ * thing and would spend main's last migration number to do it.
+ *
+ * `skipped_why IS NULL` is exactly "the body ran" — a rehearsal that ran and FAILED is still
+ * a rehearsal, and still resets the gap. That is deliberate: the gap exists to ration
+ * logins from an address whose anti-bot posture cost twelve hours once, and a failed login
+ * spent that budget just as a passing one did.
+ *
+ * Null when nothing has ever run the body, which leaves `hoursSinceLastRun` null and lets
+ * the rehearsal proceed — the direction that produces evidence rather than suppressing it.
+ */
+export async function lastRehearsalAttempt(): Promise<RehearsalRow | null> {
+  const [row] = await query<RehearsalRow>(
+    `SELECT ran_at::text, ok, detail, skipped_why FROM rc_login_rehearsal_log
+      WHERE skipped_why IS NULL
+      ORDER BY ran_at DESC LIMIT 1`,
+  ).catch(() => []);
+  return row ?? null;
+}
+
 export async function lastRehearsal(): Promise<RehearsalRow | null> {
   const [row] = await query<RehearsalRow>(
     `SELECT ran_at::text, ok, ok_at::text, detail, skipped_why FROM rc_login_rehearsal WHERE id = 1`,

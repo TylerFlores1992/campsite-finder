@@ -269,9 +269,31 @@ export async function findCartEntry(requestCtx, headers, cartKey, { placeId, fac
          facilityId != null && Number(e.FacilityId) === Number(facilityId)) ||
         (unitId != null && JSON.stringify(e).includes(String(unitId))),
     );
-    return { found: !!hit, entryKey: hit?.CartEntryKey ?? null, count: list.length, status };
+    /*
+     * ON A MISS, SAY WHAT THE ENTRIES ACTUALLY LOOKED LIKE (2026-09-23).
+     *
+     * Why `findCartEntry` misses a cart RC says is ours has never been established. The
+     * module's own header states that RC's cart entries carry no unit field, which makes
+     * the `JSON.stringify(e).includes(unitId)` fallback unable to work — so when
+     * `PlaceId`/`FacilityId` are also absent there is nothing left to match on. That is a
+     * CANDIDATE and nobody has confirmed it, because a miss recorded `found: false` and
+     * nothing about the rows it looked at.
+     *
+     * KEY NAMES ONLY, NEVER VALUES. This repo published an OAuth code on 2026-08-09 and a
+     * password on 08-16, both by collecting something that then had to be scrubbed. A list
+     * of field names cannot carry either, and it answers the question completely: if the
+     * entries have no `PlaceId`, the matcher could never have worked and the candidate is
+     * confirmed in one reading.
+     *
+     * Only on a MISS with a non-empty list — a hit needs no explaining, and an empty cart is
+     * already fully described by `count: 0`.
+     */
+    const shape = (!hit && list.length)
+      ? [...new Set(list.flatMap((e) => Object.keys(e ?? {})))].sort().slice(0, 40)
+      : null;
+    return { found: !!hit, entryKey: hit?.CartEntryKey ?? null, count: list.length, status, shape };
   } catch {
-    return { found: false, entryKey: null, count: 0, status };
+    return { found: false, entryKey: null, count: 0, status, shape: null };
   }
 }
 
