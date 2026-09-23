@@ -138,7 +138,32 @@ export function createRequestCounter({
    * shape a retry storm has.
    * @returns {() => void} detach
    */
-  function attach(page) {
+  /**
+   * ATTACH TO A CONTEXT, NOT A PAGE (#26, 2026-09-23).
+   *
+   * Playwright emits `request`/`response`/`requestfailed` on BOTH `Page` and
+   * `BrowserContext`, with the same handler shape — so this takes either. The caller passes
+   * the CONTEXT, because a page-level binding sees only that one tab and the trip opens
+   * others; every request they made was invisible to the counter that exists to say what
+   * this browser was doing.
+   *
+   * ONE TARGET ONLY, NEVER BOTH. A context handler already fires for its pages, so
+   * attaching to the context AND the resident page would count every resident request
+   * twice — and a counter that silently doubles is worse than one that undercounts, because
+   * the undercount is the thing everybody already suspects.
+   *
+   * ## WHAT THIS DOES NOT FIX, stated because the obvious reading is wrong
+   *
+   * It does **not** make the counter see a WEDGED page. `page-wedge.mjs` measured
+   * `page.on('request')` and `ctx.on('request')` BOTH seeing zero of a wedged page's
+   * fetches while it was demonstrably making hundreds — Playwright's request events route
+   * through the page's own target, so the counter is blind for the same reason every CDP
+   * instrument is. A flat counter during a ramp still does not mean a quiet ramp.
+   *
+   * Nor is it established that this sees SERVICE WORKER requests; nobody has measured that
+   * here, and it is not claimed.
+   */
+  function attach(target) {
     const handler = (req) => {
       try { record(typeof req?.url === 'function' ? req.url() : String(req)); } catch { /* never throw into Playwright */ }
     };
@@ -148,13 +173,13 @@ export function createRequestCounter({
     const onFailed = (req) => {
       try { recordAnswer(typeof req?.url === 'function' ? req.url() : String(req), FAILED_KEY); } catch { /* never throw into Playwright */ }
     };
-    page.on('request', handler);
-    page.on('response', onResponse);
-    page.on('requestfailed', onFailed);
+    target.on('request', handler);
+    target.on('response', onResponse);
+    target.on('requestfailed', onFailed);
     return () => {
-      try { page.off('request', handler); } catch { /* gone */ }
-      try { page.off('response', onResponse); } catch { /* gone */ }
-      try { page.off('requestfailed', onFailed); } catch { /* gone */ }
+      try { target.off('request', handler); } catch { /* gone */ }
+      try { target.off('response', onResponse); } catch { /* gone */ }
+      try { target.off('requestfailed', onFailed); } catch { /* gone */ }
     };
   }
 

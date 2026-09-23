@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, beatIsFromRunner, isRealUnitId, type HoldRequest } from '@/lib/rc-holds';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, lastRehearsalAttempt, reportCartFailure, nextHoldRelease, holdAtRisk, beatIsFromRunner, isRealUnitId, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { markBotUpdateApplied, noteBotUpdateAttempt, claimBotUpdate } from '@/lib/bot-update';
@@ -132,7 +132,7 @@ export async function GET(req: NextRequest) {
   // row it never reads. At 08:00:00 the answer that carts a site is the only thing this
   // response is for.
   const wantRehearsal = req.nextUrl.searchParams.get('rehearsal') === '1';
-  const [cart, stale, claims, nextRelease, control, rehearsal] = await Promise.all([
+  const [cart, stale, claims, nextRelease, control, rehearsal, rehearsalAttempt] = await Promise.all([
     dueHolds(lead), expireStaleHolds(), pendingClaims(),
     // For the keep-warm, not the runner: it signs in shortly before this, because RC
     // issues no renewable session and a token only lasts an hour. See rc-autologin.mjs.
@@ -153,6 +153,10 @@ export async function GET(req: NextRequest) {
     // act on it. See lib/bot-control.
     botControlFor('rc-hold-runner'),
     wantRehearsal ? lastRehearsal() : Promise.resolve(null),
+    // THE GAP IS MEASURED FROM THE LAST ATTEMPT THAT RAN THE BODY, never from the last row
+    // written. A skip used to stamp `ran_at` and so satisfied the minimum gap it was
+    // supposed to be measured against — see `lastRehearsalAttempt`.
+    wantRehearsal ? lastRehearsalAttempt() : Promise.resolve(null),
   ]);
 
   // `claim` is separated from `release` on purpose. A stale release is merely overdue;
@@ -216,7 +220,8 @@ export async function GET(req: NextRequest) {
     // on exit and `update.bat` restarts everything, so a process-local timestamp would let
     // a restart loop re-run the login as often as it crashed. That is the shape that cost
     // twelve hours of IP block on 2026-08-06.
-    lastRehearsalAt: rehearsal?.ran_at ?? null,
+    // NOT `rehearsal?.ran_at` — that is the last row WRITTEN, which a skip also writes.
+    lastRehearsalAt: rehearsalAttempt?.ran_at ?? null,
   });
 }
 
