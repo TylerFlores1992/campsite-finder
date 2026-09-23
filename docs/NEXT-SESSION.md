@@ -12,27 +12,53 @@ correction is itself the record; here it is just weight.
 
 ## 0. FIRST: WHERE 2026-09-23 LEFT IT
 
-Five PRs landed on 09-22/23 — **#392** (beta closed + copy), **#393** (docs), **#394** (the
-sixth Apple rejection), **#395** (cancellation badge + telemetry flush), **#396** (`released`
-outcome + #22), **#397** (rehearsal + #26 + three diagnostics). Master is `21a0d1b`, **and the
-mini-PC is on the same sha** — updated on demand at 21:43 PT in 23 seconds, `bot-ask git-status`
-confirming `HEAD 21a0d1b on master`. `/api/health/status`: 3/3 shards held, heartbeat 3s,
-`autocart.bot_version` **ok**.
+Six PRs landed 09-22/23 — **#392** (beta closed + copy), **#393** (docs), **#394** (the sixth
+Apple rejection), **#395** (cancellation badge + telemetry flush), **#396** (`released`
+outcome + #22), **#397** (rehearsal + #26 + three diagnostics), **#398** (docs). Master is
+`793e788`; the **mini-PC is on `21a0d1b`**, and the gap is those two Markdown files and
+nothing else.
 
-**READ THE FLEET, DO NOT QUOTE THAT PARAGRAPH.** It was true at 04:44Z on 09-23 and a reading
-goes stale faster than the conclusion drawn from it.
+**READ THE FLEET, DO NOT QUOTE ANY OF THIS.** Everything below was true at a stated instant and
+a reading goes stale faster than the conclusion drawn from it — which happened to this very
+section overnight, twice.
 
-**THREE INSTRUMENTS ARE NOW RUNNING AND NOBODY HAS READ THEM YET.** `#M450`, `findCartEntry`
-and `update-guard` were all marked *mechanism not established*; #397 added one recorded field
-each rather than a theory. **The next session's cheapest win is to read those logs after the
-next refusal, not to build anything.** `CLAUDE.md`'s Open block says what each reading means.
+**THE ONE NON-OK CHECK IS COSMETIC, AND CLEARING IT IS DANGEROUS.**
+`autocart.bot_version` warns on a **docs-only** gap and says so in its own detail. The two
+actions that would clear it — `rc-login.bat` and a box update — both destroy the live RC
+session, and at 05:58 PT a release was **2.01 hours** away with **five live holds**.
+`CLAUDE.md` → *"A DOCS-ONLY VERSION GAP WARNS…"* carries the one-line candidate fix and why it
+must not be merged inside a release window.
 
-**WHAT WAS DELIBERATELY NOT DONE, on the owner's instruction:** nothing about the three paying
-Auto-Cart subscribers; nothing about Google Cloud (the owner verified it does not affect this
-project); nothing about Apple beyond waiting on the resubmission.
+**THE RC SESSION REPAIRED ITSELF, IN SIXTEEN SECONDS.** The 04:44Z `okta=GONE(404)` — written
+up here as *"~18 minutes of margin, the expensive ~12-minute sign-in"* — was gone by 05:14:39Z
+via an unattended `auto-login` that cost **16 s**. See `CLAUDE.md` for what that does and does
+not establish.
 
-**AND MIGRATION 079 IS STILL FREE** — three repairs that looked like they needed a column did
-not. It is the last of main's block; past it, claim a new one out loud in `docs/LANES.md`.
+**AND THE CHECK NAMED `autocart.rc_login` DOES NOT REPORT THE AUTO-LOGIN.** It reads the
+**rehearsal** singleton. A successful auto-login appears only in `bot_events` as
+`tab-close {label:"auto-login"}` with its `tripMs`. **Read that table before concluding
+anything about how a session was restored** — the health check alone nearly produced a
+confident, wrong account here.
+
+**THE 2026-09-23 08:00 PT RELEASE SUCCEEDED, AND IT IS THE FIRST ONE THAT HAS.** `#M403`
+carted at **T+1s**, the user's own session took it, `cart read back: 1 entry`, bot released at
+08:09:48 PT. `holdOutcome` printed **`carted by user`** rather than the bare timestamp the old
+`??` would have shown. Of the other six: one (`#L053`) was refused by RC from the first attempt
+and retried the full 20-minute window; five were offers nobody requested and expired.
+
+**DO NOT READ THAT AS THE INSTRUMENTS HAVING REPORTED.** A precart refused at the first step
+never reaches a cart read-back, so neither #397 diagnostic fired. The four items they serve are
+still waiting on a refusal that happens AFTER a cart.
+
+**THREE INSTRUMENTS ARE RUNNING AND STILL UNREAD.** `#M450`, `findCartEntry` and `update-guard`
+each got one recorded field in #397 rather than a theory. **The cheapest next win is to read
+those logs after the next refusal, not to build anything.**
+
+**DELIBERATELY NOT DONE, on the owner's instruction:** nothing about the three paying Auto-Cart
+subscribers; nothing about Google Cloud (verified as not affecting this project); nothing about
+Apple beyond waiting on the resubmission.
+
+**MIGRATION 079 IS STILL FREE** — four repairs that looked like they needed a column did not.
 
 ## 0a. THE RC HOLD BETA IS CLOSED, AND THE HAND-OFF FAILED THE MORNING IT CLOSED
 
@@ -448,28 +474,32 @@ real logins from a blocked address.
 
 ---
 
-## 1. State — re-verified 2026-09-23, 04:44 UTC (21:44 PT 09-22)
+## 1. State — re-verified 2026-09-23, 12:58 UTC (05:58 PT)
 
 | | |
 |---|---|
-| master | `21a0d1b` (**#397**). Before it `b7e13cd` (#396), `1749cac` (#395). **Verify against `origin/master`; this line ages.** |
-| open issues | **none.** |
-| open PRs | **none** at the time of writing — #396 and #397 merged serially, each with its own green master `Verify` and `Deploy worker`. |
-| mini-PC | **`21a0d1b`** — level with web. Updated on demand at 21:43 PT, applied in **23 seconds**, note `updated and verified`. Confirmed by `bot-ask git-status`, **never** `autocart.bot_version`. |
-| health | overall `degraded`; the single non-ok check is `autocart.rc_session`, which is the **ordinary state between releases**. |
-| fleet | heartbeat **3s**, **14 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines**. Read after both worker deploys completed, not during. |
-| holds | **4 `offered`**, all for **2026-09-23 08:00 PT**. That was 10.3h out when the box was updated — clear of `update-guard`'s 6h refusal. |
-| RC session | token rejected, `okta=GONE(404)`. **Ordinary between releases**; `maybeAutoLogin` at T−30 is the designed repair, and the bot signed in unattended 1h43m earlier. But the next sign-in is the **expensive kind** (~12 min), so the margin to 08:00 is ~18 minutes. **Do NOT print `rc-login.bat` over it.** |
-| instruments | **three new ones, all unread** — see §0. |
-| the leak | **DIAGNOSED, CONTAINED, DURATION CURED — still NOT eliminated.** §2. Unchanged. |
-| migrations | highest **`078`**. **`079` is the ONLY number main has left** and the 09-23 batch did not spend it, though three repairs looked like they would. Past 079, claim a new block out loud in `docs/LANES.md` first. Side lane `080+`. |
-| Google Cloud | **closed — the owner verified it does not affect this project.** Do not re-raise it. |
+| master | `793e788` (**#398**, docs). Code head is `21a0d1b` (**#397**). **Verify against `origin/master`; this line ages.** |
+| open issues / PRs | **none.** |
+| mini-PC | **`21a0d1b`**, confirmed by `bot-ask git-status`. Behind web by `CLAUDE.md` + `docs/NEXT-SESSION.md` and **nothing else** — proved with a path-scoped `git diff 21a0d1b..793e788 -- worker/ src/ scripts/ .github/ mini-pc/ extension/`, which is empty. |
+| health | overall `degraded`, and the **only** non-ok check is `autocart.bot_version` on that docs gap. See §0 — clearing it is the dangerous option, not the safe one. |
+| fleet | heartbeat **1s**, **14 watches**; `poller.shards` **3/3 held**; `poller.capacity` **8/12 across 3 machines**. |
+| RC session | **`ok` — accepts the session for 7h43m**, `okta=ALIVE` to 2026-09-24T00:40Z, token exp in 30m (`renewed=no`, `src=live` — the SPA re-mints; that is normal). |
+| holds | **5 live (`offered`) + 2 `requested`**, all for **2026-09-23 08:00 PT** — **2.01 h** away at the time of reading. |
+| rehearsal | real `ok=true` runs on **09-21, 09-22 and 09-23** (03:01Z). Healthy nightly; #397's fix means a skip no longer satisfies the gap. |
+| instruments | **three, all unread** — §0. |
+| the leak | **DIAGNOSED, CONTAINED, DURATION CURED — still NOT eliminated.** §2. A `ramp-scan` fired 04:44:18Z (`rcMb 1876`, `ramFreeMb 8449`) with no action needed. |
+| migrations | highest **`078`**; **`079` is the only number main has left** and the 09-23 batch did not spend it. Side lane `080+`. |
+| Google Cloud | **closed — verified as not affecting this project.** Do not re-raise. |
 
-**RELEASE TIMES ARE PACIFIC WALL-CLOCK STRINGS, AND `Date.parse` GETS THEM WRONG BY SEVEN
-HOURS.** `rc_hold_requests.release_at` is **`text`**, zone-less, compared everywhere against
-`NOW() AT TIME ZONE 'America/Los_Angeles'` (`src/lib/rc-holds.ts`). Reading `2026-09-23T08:00:00`
-with `Date.parse` treats it as UTC and reported the release as **3.3h away when it was 10.3h**.
-Compute it in SQL, in Pacific, the way the code does — this decides whether you may touch the box.
+**TWO TRAPS THIS STATE TABLE ITSELF WALKED INTO OVERNIGHT, both worth more than the rows above:**
+
+1. **`release_at` IS ZONE-LESS PACIFIC `text`, AND `Date.parse` IS WRONG BY SEVEN HOURS.**
+   Reading `2026-09-23T08:00:00` as UTC reported the release **3.3 h away when it was 10.3 h**.
+   This number gates whether you may end the RC session, so **compute it in SQL, in Pacific**,
+   the way `src/lib/rc-holds.ts` does.
+2. **THE HEALTH CHECK ALONE CANNOT SAY HOW A SESSION WAS RESTORED.** `autocart.rc_login` reads
+   the **rehearsal**, so it under-reported freshness by 2h13m and hid a successful auto-login
+   entirely. `bot_events` → `tab-close {label:"auto-login"}` is the record.
 
 ## 2. The leak — DIAGNOSED, CONTAINED, AND THE DURATION CURED. **IT IS NOT ELIMINATED.** Read before touching anything memory-related.
 
