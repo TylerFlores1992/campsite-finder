@@ -1193,6 +1193,39 @@ release. At **05:14:39Z** — 31 minutes later, unprompted — `bot_events` reco
   was written up as *"~18 minutes of margin"*; the margin was never spent. **Re-read before
   acting on a session reading — shape #6, arriving through a doc written eight hours earlier.**
 
+**THE WHOLE CHAIN WORKED END TO END ON 2026-09-23, THE FIRST TIME SINCE THE BETA CLOSED.**
+`#M403` (Carpinteria SB — San Miguel) was **carted at T+1s**, the user's own session took it,
+and the readout printed:
+
+```
+#M403  released   carted 15:00:01Z  T+1s   claimed: 'carted by user'
+  ✓ Added to cart — opening your cart…     → carted by the user's own session
+  cart read back: 1 entry — RC holds this under the key WE asked with
+  RC rendered in 0.9s
+```
+
+- **IT IS THE FIRST READING THAT EXERCISES #396's DERIVATION IN THE HAPPY DIRECTION.** Under
+  `claimed_at ?? released_at` this row would have printed a bare timestamp; `holdOutcome` says
+  **`carted by user`**, which is the fact. `released` with no `claimed_at` really is ambiguous,
+  and this is the branch that resolves to a WIN — do not re-read the 09-21 losses as the rule.
+- **`findCartEntry` MATCHED**, so it is not broken in general and `#R359` was specific. That
+  narrows the open item; it does not close it.
+- **THE CLIENT-REPORT CHANNEL DELIVERED FIVE FIELDS — FOR A SUCCESS.** That is not evidence
+  about the failure path #395 was aimed at. **A terminal hand-off failure arriving is still
+  unproven**; do not promote this to "the telemetry hole is closed".
+
+**AND A GENUINELY-GONE UNIT IS RETRIED ~110 TIMES, BECAUSE ONE STRING CARRIES TWO MEANINGS.**
+`#L053` was refused from the first attempt with *"The unit is not available for the date(s)
+specified"* and the runner re-submitted every ~11 s until `HOLD_GRACE_MIN` (20) closed the
+window — roughly 110 real round-trips against RC from the household IP whose anti-bot posture
+cost twelve hours once. **This is correct behaviour, not a bug**, and that is the point worth
+recording: that sentence means *"it has not released yet"* (retry is right — RC demonstrably
+releases EARLY) **and** *"a competitor already took it"* (retry is futile), and **nothing in
+the response distinguishes them.** A discriminator would have to come from outside RC's reply,
+so the policy has no choice but to spend the full window. Shape #1 in the provider's own
+vocabulary rather than in ours. **Do not "fix" it by shortening the window** — that is what
+catches a late release.
+
 **AND `autocart.rc_login` REPORTS THE REHEARSAL, NOT THE AUTO-LOGIN (2026-09-23).** It reads the
 `rc_login_rehearsal` singleton (`src/app/api/health/status/route.ts`), so its sentence *"the bot
 signed in unattended Nh ago"* describes the **rehearsal's** sign-in and nothing else. At 12:58Z
@@ -1774,6 +1807,10 @@ the only number main has left, and nothing in the 09-23 batch spent it.**
 - **The commit residual has no watcher.** Every arm reads free RAM or private bytes; the burst
   spends neither. Four options with their predicted readings are in the leak file under "THE
   RESIDUAL IS COMMIT, AND NOTHING WATCHES IT" — **option B (the pagefile) is OFF, measured.**
+- **THE FLOW SUCCEEDED END TO END ON 2026-09-23 — `#M403`, carted at T+1s, claimed by the
+  user, `cart read back: 1 entry`.** First clean success since the beta closed. It does NOT
+  close the three items below: a success exercises neither diagnostic (a precart refused at
+  the first step never reaches a cart read-back) and says nothing about the failure path.
 - **`#M450`'s hand-off decline is unexplained — but the reading that separates the two
   candidates is now being taken.** Healthy session, won at T+0.1s, declined anyway at minute
   27.5; a competitor inside the exposure window and RC not yet propagating our own release

@@ -40,6 +40,16 @@ not establish.
 anything about how a session was restored** — the health check alone nearly produced a
 confident, wrong account here.
 
+**THE 2026-09-23 08:00 PT RELEASE SUCCEEDED, AND IT IS THE FIRST ONE THAT HAS.** `#M403`
+carted at **T+1s**, the user's own session took it, `cart read back: 1 entry`, bot released at
+08:09:48 PT. `holdOutcome` printed **`carted by user`** rather than the bare timestamp the old
+`??` would have shown. Of the other six: one (`#L053`) was refused by RC from the first attempt
+and retried the full 20-minute window; five were offers nobody requested and expired.
+
+**DO NOT READ THAT AS THE INSTRUMENTS HAVING REPORTED.** A precart refused at the first step
+never reaches a cart read-back, so neither #397 diagnostic fired. The four items they serve are
+still waiting on a refusal that happens AFTER a cart.
+
 **THREE INSTRUMENTS ARE RUNNING AND STILL UNREAD.** `#M450`, `findCartEntry` and `update-guard`
 each got one recorded field in #397 rather than a theory. **The cheapest next win is to read
 those logs after the next refusal, not to build anything.**
