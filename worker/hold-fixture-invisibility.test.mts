@@ -58,10 +58,47 @@ before(async () => {
   // run's rows are seconds old and protected while real litter is minutes old.
   await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_tfi%'
                  AND offered_at < NOW() - interval '10 minutes'`).catch(() => {});
-  const [u] = await query<{ id: string }>(`SELECT id FROM users LIMIT 1`);
+  /**
+   * ITS OWN PHONELESS USER (#22, 2026-09-23) — this borrowed `SELECT id FROM users LIMIT 1`.
+   *
+   * ## It was not broken. It was one row-order change away from being broken.
+   *
+   * Measured today, that query returns `test-user-001`, which has no phone — so the suite
+   * has been safe by accident rather than by construction. `LIMIT 1` with **no ORDER BY**
+   * has no guaranteed order in Postgres: a vacuum, a page split or a plan flipping to an
+   * index-only scan can change which row comes back, on a day nobody touched this file.
+   *
+   * The day it returns a real subscriber WITH a phone, this suite hangs a hold releasing in
+   * one minute off them and drives `holdAtRisk` — which is what `alarmIfSessionUnusable`
+   * calls on every feed poll — so CI rings the owner's phone, twice, forty-five seconds
+   * apart, on every pull request. A test whose blast radius depends on row ordering is not
+   * one you get to keep because it happens to pass.
+   *
+   * ## Why it is created and NOT deleted
+   *
+   * Two runs can overlap (one push fires both a `push` and a `pull_request` workflow, which
+   * this repo measures at 3-301 s of overlap). Deleting the user in teardown would pull the
+   * row out from under a concurrent run's watches mid-flight. So it is upserted, shared and
+   * left: ONE permanent sentinel row, which `REAL_USER` (`u.id LIKE 'user\_%'`) already
+   * excludes from every admin count, and which `countTestUsers` counts on purpose. The
+   * WATCH is still per-run and still deleted.
+   */
+  const FIXTURE_USER = '__tfi-user';
+  await mutate(
+    `INSERT INTO users (id, email) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+    [FIXTURE_USER, `${FIXTURE_USER}@example.invalid`],
+  );
+  const [u] = await query<{ id: string; has_phone: boolean }>(
+    `SELECT id, (phone IS NOT NULL) AS has_phone FROM users WHERE id = $1`, [FIXTURE_USER]);
   const [c] = await query<{ id: string }>(
     `SELECT id FROM campgrounds WHERE source = 'reservecalifornia' ORDER BY id LIMIT 1`);
-  assert.ok(u && c, 'need a user and an RC campground to hang fixtures off');
+  assert.ok(u && c, 'need the fixture user and an RC campground to hang fixtures off');
+  // THE POINT OF THE WHOLE CHANGE, ASSERTED RATHER THAN ASSUMED. If somebody ever gives
+  // this row a phone number, the suite regains exactly the reach it was given its own user
+  // to lose — and it should say so here rather than at 08:00 on somebody's handset.
+  assert.equal(u.has_phone, false,
+    `${FIXTURE_USER} must have no phone — holdAtRisk drives the alarm, and this suite ` +
+    'deliberately owns a user nothing can be delivered to');
   userId = u.id; campgroundId = c.id;
   const [w] = await mutate<{ id: string }>(
     `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, active)
