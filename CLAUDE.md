@@ -1029,6 +1029,119 @@ of the second condition. The names are unreachable: the log's visible window is 
   flagged them would produce four hundred hits and be deleted). Neither can fail a typecheck
   or a test, which is exactly why they are gates.
 
+## THE DELIVERY CANARY WAS STARVED BY ITS OWN SCHEDULER (2026-09-24, #401)
+
+All three `delivery:*` checks were WARN on the health page with nothing broken: the last run
+had SUCCEEDED, 30.3 hours earlier, against a 27.6h staleness threshold. The canary had simply
+not run again.
+
+- **THE GATE IS CORRECT AND STAYS.** `runDeliveryCanary` reads the last REAL send out of
+  `alert_canary` and returns early if it is younger than `0.9 x interval` (21.6h). That gate is
+  the only thing between a reboot loop and a burst of real texts to the owner's phone.
+- **THE POLLER THEN RAN TWO CLOCKS AGAINST EACH OTHER.** It called the canary once at boot AND
+  armed `setInterval(deliveryCanary, CANARY_DELIVERY_INTERVAL_MS)` — a 24h timer whose clock
+  restarts with the process. A worker deploy inside the gate window makes the boot call a no-op
+  **and** re-arms the 24h timer from the restart. The chain, off the deploy log: the canary ran
+  at **2026-09-22 18:50:36Z**, three minutes after that day's deploy (its boot call found a row
+  >21.6h old and fired); deploys at **09-23 04:21:06Z and 04:31:30Z** then each found a ~9.6h-old
+  row, skipped, and re-armed — pushing the next tick to **09-24 04:31Z**. **Any deploy cadence
+  faster than 21.6h starves it permanently**, and this repo ran **ten worker deploys in the seven
+  days before the fix** (#401's own commit message says six; the deploy log says ten, and the log
+  is the authority).
+- **THE OBVIOUS SUSPECT WAS CHECKED FIRST AND CLEARED — KEEP IT CLEARED.** `worker/fly.toml`
+  sets `CANARY_DELIVERY_INTERVAL_MS = "86400000"` and `src/lib/health-thresholds.ts` sets
+  `DELIVERY_INTERVAL_MS = 24h`. They agree and always did. There is no drift and no
+  misconfiguration; a guard now fails if they ever disagree.
+- **THE SCHEDULE WAS DERIVED FROM PROCESS UPTIME, WHICH IS NOT A FACT ABOUT THE CANARY.** That
+  is the house's most-repeated shape one level up from where it usually appears — not an absent
+  reading rendered as a negative, but a reading of the WRONG SUBJECT rendered as the right one.
+  The durable record of when the canary last ran is in the database; the timer was consulting
+  how long this process had been alive.
+- **THE FIX: the timer ASKS, the DB gate ANSWERS.** `deliveryCanaryCheckMs()` (hourly, clamped
+  to `[1s, 0.2 x interval]`) is what `setInterval` gets. A restart is itself an ask, so restarts
+  cannot starve it; between restarts the ask is frequent enough that the answer cannot be missed.
+  **Worst case is `0.9I + check` = `1.1I`, strictly inside `DELIVERY_STALE_MS` (`1.15I`)** — so a
+  healthy fleet cannot warn on `delivery:*` for the reason it was warning. Pinned against the
+  real constants in `worker/canary-schedule.test.mts` rather than restated.
+- **PROVED IN PRODUCTION, NOT ONLY IN THE SUITE.** The deploy landed 01:25-01:30Z; all three
+  canaries fired at **01:28:34Z** and the checks went green. That is the behaviour, not a test
+  about it.
+- **DO NOT** arm the delivery canary on the send interval again; **do not** set
+  `CANARY_DELIVERY_CHECK_MS` to the interval (it is clamped, and the clamp is guarded); **do
+  not** replace the boot call — it is what makes a restart an ask.
+- **AND THE FLOOR IS NOT DECORATION.** `Math.max(1000, ...)` survived the first mutation round
+  because no test reached it: `CANARY_DELIVERY_CHECK_MS=0` is already caught a line earlier by
+  the `> 0` sanitisation, and every sane interval puts the ceiling far above a second. The
+  exposure is the INTERVAL, which nothing sanitises downward — one typo in `fly.toml` and the
+  poller arms a 20ms `setInterval` against Postgres. **A mutation that survives is a test case
+  you do not have, not a guard you do not need.**
+
+## rec.gov AUTO-CART IS A BOUNDED LADDER NOW, NOT ONE ATTEMPT (2026-09-24, #402)
+
+Job `7c0c524f`, 2026-09-23: the poller queued Silver Lake June Lake 84671 at 04:05:39.4, the bot
+reported `add-not-confirmed` **11.4s later**, the reconciler re-checked the site 200ms after that
+and found it **STILL OPEN**, and the paid feature sent a "book it yourself" alert having tried
+**exactly once**. `add-not-confirmed` is **12 of ~78 real jobs since 2026-07-18** against 39
+carted — a recurring mode, not a one-off.
+
+- **WHY A RETRY WAS NOT SAFE BEFORE, AND IT IS SHAPE #1 ON THE PAID FEATURE.** `verifyCart`
+  answers `'ok' | 'empty' | 'signin' | 'unknown'` and `cartRecGov` collapsed **`empty`** and
+  **`unknown`** into one string. `empty` is rec.gov stating the add did not take — a re-add
+  cannot duplicate anything. `unknown` is fourteen polls giving no signal — a blind re-add there
+  is how one campsite lands in one person's cart twice.
+- **THE INVARIANT, AND IT IS THE ONLY ONE THAT CANNOT BE TRADED.** A re-add only ever follows a
+  POSITIVE `empty` reading, or a round that never clicked Add to Cart. On `unknown` the retry
+  re-READS the cart and never re-adds. **This is not only about duplicates:** rec.gov holds a
+  carted site ~15 min and marks its own calendar cell unavailable, so a blind second round would
+  read `already-booked`, which the reconciler resolves `silent` — **no alert at all for a site
+  sitting in the user's own cart.**
+- **THE 25s BUDGET IS NOT POLITENESS.** `RECONCILE_DELAY_SEC` is 35s **from detection** and fires
+  whether or not the bot has spoken. If the ladder is still carting then and wins, the user has
+  been told "still open, book it" and arrives to find the site taken **by their own cart hold** —
+  which reads as a false alert. Exactly one of the two may win and the ladder must finish first:
+  2s pickup + 25s ladder + ~1s report = ~28s against 35s. A guard reads BOTH numbers out of
+  `poller.ts` and `bot.mjs` rather than restating them. **Do not shorten the margin.**
+- **AND THE BUDGET IS SPENT FROM PICKUP, NOT FROM LADDER START.** `withBrowser` waits up to two
+  minutes for the user's profile lock — one browser per profile — so a second opening for the
+  same person in one poller cycle queues behind the first. A 25s wait then a 25s ladder is 50s
+  against a 35s deadline, i.e. the collision above, for job two. Measured on the **box's own
+  clock**: the roster feed carries no `detected_at`, and a server timestamp would put the
+  mini-PC's clock skew on the path between a queued hold and a missed cart. **A spent budget
+  still makes one attempt** — the budget bounds the RETRY, never the attempt.
+- **THE POLICY LIVES IN `scripts/auto-cart-bot/cart-retry.mjs` BECAUSE `recgov.mjs` NEEDS A
+  HEADED BROWSER TO RUN AT ALL.** Every effect is injected, so the decision that can double-cart
+  is exercised by a fake. A pure `shouldRetry()` with the sequencing left in a 200-line
+  Playwright driver would be the fix-present-and-inert shape.
+- **FOUR SMALLER FIXES, EACH FOUND WHILE BUILDING IT.** `calendar-not-loaded` split out of
+  `dates-not-found` (with nothing painted, `clickDate`'s min/max stay ±Infinity, neither arrow
+  branch fires, and it returned on the FIRST pass without ever waiting — a mid-render calendar
+  reported as a campground that does not offer these nights). `clicked` is set BEFORE the CTA
+  click, because a click followed by an exception is exactly when the cart is most in doubt. A
+  **decorated** `session-expired` now still clears the login marker — `cartOutcomeForDb` appends
+  `[N rounds, Xs]` to a multi-round failure and `bot.mjs` matched the bare string, so a session
+  that died in round 2's cart re-read would have left the app reading "connected" over a dead
+  session and routed every later opening into the silent auto-cart lane. `'carted'` stays an
+  EXACT equality test on purpose — three SQL predicates read that literal.
+- **`bot_events` KIND `recgov-cart` IS WHERE "WHY DID THE ADD NOT TAKE?" LIVES NOW.** Every round
+  and rec.gov's last write-API response, on the POST the bot already makes, **after** the text
+  message has gone out. The netlog had existed only in a box console that rolls in ~89 minutes,
+  so on 2026-09-23 the question was unanswerable ten hours later about the feature people pay
+  for. `recgovCartReading` + a `bot-events-readout` section print `carted-on-retry`, which is the
+  ONLY place this budget's price is ever weighed against what it bought.
+- **A SINGLE-ROUND FAILURE IS AMBIGUOUS AND MUST NOT RENDER AS ONE THING.** `already-booked` on
+  round one is the ladder working perfectly; a bug that classified every outcome as terminal looks
+  IDENTICAL from outside. The decline REASON is recorded and printed, never inferred from the
+  round count.
+- **ADDING ANY `bot_events` KIND FIRES A WORKER DEPLOY**, however web-side it looks: the
+  allow-list lives in `src/lib/bot-events.ts` (not in `paths:`) but its by-value guard lives under
+  `worker/`, which is the first `paths:` entry. Two PRs here have claimed the opposite in their
+  own bodies.
+- **THE PRICE IS NOT YET MEASURED.** A retried job's fallback alert lands ~28s after detection
+  instead of ~13s — fifteen seconds of the user's own head start, spent on the ~15% of jobs whose
+  first attempt already failed, **on the strength of one incident**. `carted-on-retry` is the
+  number that settles whether it was worth it and **it is currently zero, because no job has run
+  under the ladder yet**. Read it before defending or removing the budget.
+
 ## The house failure shapes — stated once, so they are not re-derived
 
 Nearly every expensive mistake in this repo is one of six. Most of the archives are the same
@@ -1052,7 +1165,8 @@ six wearing different clothes; if you catch yourself about to write one up as no
    A guard inside the loop it guards against; a pure function nothing calls; `void 0 && f()`
    passing an `indexOf` anchor; `if (false)`. **Ask what would have to run for this to matter,
    and pin it structurally.** Nine-plus recorded instances.
-3. **A GUARD ANCHORED ON THE WRONG THING.** ~30 recorded instances. A window measured in
+3. **A GUARD ANCHORED ON THE WRONG THING.** ~34 recorded instances, four of them added on
+   2026-09-24 alone. A window measured in
    CHARACTERS or LINES is a guess about layout and breaks on a new comment (four times). An
    `indexOf` that misses returns **-1**, and `slice(-1)` then passes vacuously for ever — so
    assert the anchor was found. A regex matching the DECLARATION rather than the call site; a
@@ -1838,7 +1952,7 @@ Full write-up is `docs/PLAY-STORE.md` §0e (side lane's file).
 ## Open / next session
 
 **Start at `docs/NEXT-SESSION.md`.** This section is a short list of what is genuinely open on
-2026-09-23. Everything older is in `docs/ARCHIVE-OPEN-BLOCKS.md` (the dated handover blocks,
+2026-09-24. Everything older is in `docs/ARCHIVE-OPEN-BLOCKS.md` (the dated handover blocks,
 newest first) or in the subject archives the router points at. **A dated block that is no
 longer state was MOVED, not deleted** — see `docs/PRUNE-LEDGER.md`.
 
@@ -1851,7 +1965,25 @@ tick); `npx tsx scripts/bot-ask.mts git-status` for the mini-PC's sha (**never**
 sections first. (`…-status-iij2xm.md` §1 is folded in as of 2026-09-22;
 `…-setup-f7bpe2.md` is the older lane's §1-§30.)
 Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the authority) — **079 is
-the only number main has left, and nothing in the 09-23 batch spent it.**
+the only number main has left, and neither the 09-23 nor the 09-24 batch spent it.**
+
+#### Landed 2026-09-24, and what each one now WAITS on
+- **#401 — the delivery canary is unstarved, and it is proven in production** (fired 01:28:34Z,
+  all three checks green). Nothing waits on it. The section above carries the standing DO-NOTs.
+- **#402 — the rec.gov cart ladder is live on master AND on the box (`c798cea`), and NO JOB HAS
+  RUN UNDER IT YET.** What waits is the READING, not more work: `npx tsx
+  scripts/bot-events-readout.mts` prints a `rec.gov CART JOBS` section, and
+  **`carted-on-retry` is the only number that says whether the 15 seconds of the user's head
+  start bought anything.** An empty list there while `autocart_jobs` has rows over the same
+  hours means the box is older than the ladder — that is a reading, not silence.
+- **AND ONE #397 DIAGNOSTIC HAS ALREADY ANSWERED, WHICH RETIRES A SUSPICION RATHER THAN
+  CONFIRMING ONE.** `update-guard`'s new `updateRequested=<bool>` field is in the live
+  `applied_note`: *"SKIP - outside the quiet window (19:00 PT …) - feed answered,
+  updateRequested=false"*. **The feed ANSWERED and said no update was requested**, so that skip
+  belongs to the unrequested scheduled-task run and not to any requested update. It is the
+  measured form of the 09-23 correction: **there is still no established instance of the
+  `requested` bypass failing.** Three measurements of it WORKING now — 23s, 23s and **25s
+  (2026-09-24 02:10 UTC, 19:10 PT)** — all far outside the 2:00-5:00 window.
 
 #### Open, and each one is a decision rather than a task
 - **The three paying Auto-Cart subscribers lost the RC hold offer on 2026-09-22 and nobody has
