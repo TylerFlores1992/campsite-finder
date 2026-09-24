@@ -10,63 +10,80 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
-## 0. FIRST: WHERE 2026-09-23 LEFT IT
+## 0. FIRST: WHERE 2026-09-24 LEFT IT
 
-Six PRs landed 09-22/23 — **#392** (beta closed + copy), **#393** (docs), **#394** (the sixth
-Apple rejection), **#395** (cancellation badge + telemetry flush), **#396** (`released`
-outcome + #22), **#397** (rehearsal + #26 + three diagnostics), **#398** (docs). Master is
-`793e788`; the **mini-PC is on `21a0d1b`**, and the gap is those two Markdown files and
-nothing else.
+Two PRs landed 09-24 — **#401** (the delivery canary starvation) and **#402** (the rec.gov cart
+ladder). Master is `c798cea`, **the mini-PC is on `c798cea` too**, and there is no version gap.
+Both fired worker deploys; both fleets came back green (`poller.shards` 3/3, heartbeat seconds).
 
-**READ THE FLEET, DO NOT QUOTE ANY OF THIS.** Everything below was true at a stated instant and
-a reading goes stale faster than the conclusion drawn from it — which happened to this very
+**READ THE FLEET, DO NOT QUOTE ANY OF THIS.** Everything below was true at a stated instant and a
+reading goes stale faster than the conclusion drawn from it — which has happened to this very
 section overnight, twice.
 
-**THE ONE NON-OK CHECK IS COSMETIC, AND CLEARING IT IS DANGEROUS.**
-`autocart.bot_version` warns on a **docs-only** gap and says so in its own detail. The two
-actions that would clear it — `rc-login.bat` and a box update — both destroy the live RC
-session, and at 05:58 PT a release was **2.01 hours** away with **five live holds**.
-`CLAUDE.md` → *"A DOCS-ONLY VERSION GAP WARNS…"* carries the one-line candidate fix and why it
-must not be merged inside a release window.
+**THE ONLY NON-OK CHECK AT 02:11Z WAS `autocart.rc_session`, AND IT IS THE ORDINARY STATE.**
+*"RC rejects the current token — normal between releases, the token only lives ~1h"*. A box update
+ENDS the RC session (it closes the Chromium the token lives in), and this one was applied
+deliberately, ~12.8h before the 08:00 PT release. `CLAUDE.md` records that the repair fires by
+itself and that `maybeAutoLogin` at T−30 is the last of several — **do not reach for
+`rc-login.bat`**, which force-kills the Chromium the token lives in and has been a false alarm at
+least twice.
 
-**THE RC SESSION REPAIRED ITSELF, IN SIXTEEN SECONDS.** The 04:44Z `okta=GONE(404)` — written
-up here as *"~18 minutes of margin, the expensive ~12-minute sign-in"* — was gone by 05:14:39Z
-via an unattended `auto-login` that cost **16 s**. See `CLAUDE.md` for what that does and does
-not establish.
+**THE DELIVERY CANARY WAS STARVED AND IS NOT ANY MORE — PROVED IN PRODUCTION, NOT IN THE SUITE.**
+All three `delivery:*` checks were WARN with nothing broken: the last run had SUCCEEDED 30.3 hours
+earlier, because the poller armed a 24h `setInterval` from BOOT while the DB gate skipped any run
+younger than 21.6h. Six worker deploys that week; every one pushed the next run a further day out.
+The deploy landed 01:25-01:30Z and all three canaries fired at **01:28:34Z**. `CLAUDE.md` →
+*"THE DELIVERY CANARY WAS STARVED BY ITS OWN SCHEDULER"* carries the standing DO-NOTs.
 
-**AND THE CHECK NAMED `autocart.rc_login` DOES NOT REPORT THE AUTO-LOGIN.** It reads the
-**rehearsal** singleton. A successful auto-login appears only in `bot_events` as
-`tab-close {label:"auto-login"}` with its `tripMs`. **Read that table before concluding
-anything about how a session was restored** — the health check alone nearly produced a
-confident, wrong account here.
+**THE rec.gov CART LADDER IS LIVE ON BOTH HALVES AND NO JOB HAS RUN UNDER IT YET.** The bot used
+to make exactly one cart attempt; it now runs a bounded ladder inside a 25-second budget that is
+spent from PICKUP, so it always finishes before the poller's independent 35-second fallback alert.
+**What is owed is a READING, not more work:**
 
-**THE 2026-09-23 08:00 PT RELEASE SUCCEEDED, AND IT IS THE FIRST ONE THAT HAS.** `#M403`
-carted at **T+1s**, the user's own session took it, `cart read back: 1 entry`, bot released at
-08:09:48 PT. `holdOutcome` printed **`carted by user`** rather than the bare timestamp the old
-`??` would have shown. Of the other six: one (`#L053`) was refused by RC from the first attempt
-and retried the full 20-minute window; five were offers nobody requested and expired.
+```
+npx tsx scripts/bot-events-readout.mts        # -> a "rec.gov CART JOBS" section
+```
 
-**DO NOT READ THAT AS THE INSTRUMENTS HAVING REPORTED.** A precart refused at the first step
-never reaches a cart read-back, so neither #397 diagnostic fired. The four items they serve are
-still waiting on a refusal that happens AFTER a cart.
+`carted-on-retry` is the **only** number that says whether the ~15 seconds of the user's own head
+start bought anything, and it is currently **zero because nothing has exercised the ladder**. An
+empty list there while `autocart_jobs` has rows over the same hours means a box older than the
+ladder — that is a reading, not silence.
+
+**THE 2026-09-23 08:00 PT RELEASE SUCCEEDED, AND IT IS THE FIRST ONE THAT HAS.** `#M403` carted at
+**T+1s**, the user's own session took it, `cart read back: 1 entry`, bot released at 08:09:48 PT.
+`holdOutcome` printed **`carted by user`** rather than the bare timestamp the old `??` would have
+shown. Of the other six: one (`#L053`) was refused by RC from the first attempt and retried the
+full 20-minute window; five were offers nobody requested and expired.
+
+**DO NOT READ THAT AS THE INSTRUMENTS HAVING REPORTED.** A precart refused at the first step never
+reaches a cart read-back, so neither #397 diagnostic fired. The four items they serve are still
+waiting on a refusal that happens AFTER a cart.
+
+**ONE #397 DIAGNOSTIC HAS ANSWERED, AND IT RETIRES A SUSPICION RATHER THAN CONFIRMING ONE.** The
+live `applied_note` now reads *"SKIP - outside the quiet window (19:00 PT …) - feed answered,
+**updateRequested=false**"*. The feed answered and said no update was requested — so that skip
+belongs to the unrequested scheduled-task run, not to any requested update, and **there is still
+no established instance of the `requested` bypass failing.** Measured working three times now
+(23s, 23s and **25s at 19:10 PT on 09-24**), all far outside the 2:00-5:00 window.
 
 **ONE RUN IS SCHEDULED FOR 2026-09-24 07:45 PT AND IT IS THE PRIORITY WHEN IT FIRES.**
-`scripts/rc-release-window.mts --record` against that morning's facilities — it must be
-LAUNCHED BEFORE 07:58:30 PT because it polls from T−90s. It answers the one question the
-09-23 release left open (`#L053`: did the night ever go free?). **Scheduled ONCE, on the
-owner's instruction — tomorrow only, nothing recurring.** Re-derive the facility list at fire
-time from the queued holds; yesterday's was `357,359,360`. Verified reachable 2026-09-23:
-direct RDR, HTTP 200 in 724 ms.
+`scripts/rc-release-window.mts --record` against that morning's facilities — it must be LAUNCHED
+BEFORE 07:58:30 PT because it polls from T−90s. It answers the one question the 09-23 release left
+open (`#L053`: did the night ever go free?). **Scheduled ONCE, on the owner's instruction —
+tomorrow only, nothing recurring.** Re-derive the facility list at fire time from the queued
+holds; yesterday's was `357,359,360`. Verified reachable 2026-09-23: direct RDR, HTTP 200 in
+724 ms. There were **5 holds `offered`** for that release when last read.
 
 **THREE INSTRUMENTS ARE RUNNING AND STILL UNREAD.** `#M450`, `findCartEntry` and `update-guard`
-each got one recorded field in #397 rather than a theory. **The cheapest next win is to read
-those logs after the next refusal, not to build anything.**
+each got one recorded field in #397 rather than a theory — and `update-guard`'s has now been read
+(above). **The cheapest next win is to read the other two after the next refusal, not to build
+anything.**
 
 **DELIBERATELY NOT DONE, on the owner's instruction:** nothing about the three paying Auto-Cart
 subscribers; nothing about Google Cloud (verified as not affecting this project); nothing about
 Apple beyond waiting on the resubmission.
 
-**MIGRATION 079 IS STILL FREE** — four repairs that looked like they needed a column did not.
+**MIGRATION 079 IS STILL FREE** — five repairs that looked like they needed a column did not.
 
 ## 0a. THE RC HOLD BETA IS CLOSED, AND THE HAND-OFF FAILED THE MORNING IT CLOSED
 
