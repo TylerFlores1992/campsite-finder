@@ -7158,6 +7158,52 @@ that lands in the trip's own renderer is INVISIBLE to it, by construction.
     is still free; a forced one spends a password submission from an address that has eaten a
     twelve-hour block, and the box is holding a real user's campsite until 15:00.
 
+###### THE 14:30 PREDICTION ABOVE WAS FALSIFIED — FOUR TIMES, ON EVERY 08:00 RELEASE MORNING (read 2026-09-24)
+The entry above said, before the event: *"expect a ~10-second cookie-answered sign-in, no ramp,
+no `wedge-recycle` … A ramp here would itself be the finding."* **It ramped on 09-17 and on every
+08:00 release morning since (09-21, 09-22, 09-23).** Nothing reported it, because
+`bot-events-readout.mts` was returning zero rows for every kind from 09-21 to 09-24 (a filter bug,
+fixed in #404 — see `CLAUDE.md`). Read straight off `bot_events`:
+
+```
+            mem-dump=ramp  bail:ramp   ramp-scan rcMb   tab-closes after (auto-login, ~41 s, flat ramMb)
+09-17       14:32          14:32:56    3168             4   14:34:00 -> 14:37:06
+09-21       14:31:36       14:31:51    3500             6   14:32:56 -> 14:38:03
+09-22       14:31:36       14:31:50    3914             5   14:32:55 -> 14:37:03
+09-23       14:32:21       14:32:21    3985             5   14:33:26 -> 14:37:33
+```
+
+- **ORDER IS THE EVIDENCE.** The ramp is seen 96-131 s after 14:30:00, the ramp arm kills the
+  browser, and **there is no `tab-close` for anything that started at 14:30** — the trip's
+  `finally` never ran. That fits the third outcome listed above (*"the trip never returns at all →
+  the ramp arm at a 120 s stall"*). **Every `tab-close` recorded that morning comes AFTER the bail,
+  from the fresh browser, and every one is flat** (`ramMb` −540 to +43).
+- **SO THE ATTRIBUTION IS STILL NOT ESTABLISHED, AND THIS DOES NOT SUPPLY ONE.** `ramp-scan`
+  carries `maxPid`/`maxType: renderer` and nothing that names a tab, so "the throwaway tab's
+  renderer" and "the resident page's renderer, woken by the trip" both fit. **The discriminator is
+  a `tail-log rc-keepwarm:400` pulled within ~20 minutes of a 14:30 trip, or the alloc trail's
+  per-target lines at ~14:31** — nobody has taken either.
+- **AND THE "COOKIE-ANSWERED TRIPS NEVER RAMP" PREMISE IS WHAT FALLS.** The prediction rested on
+  Okta being ALIVE at 14:30 and the 08-21 cell (*11 s, +24 MB, never observed to ramp*). Whether
+  Okta was alive on these four mornings was not checked here, so this is recorded as the
+  prediction failing, **not** as "cookie-answered trips ramp".
+- **THE REPEATED TRIPS ARE THEIR OWN OPEN ITEM.** The fresh browser makes 4-6 auto-login trips a
+  minute apart, ~41 s each, the last ~45 s. On 09-17 `session_live_since` moved to the LAST one,
+  so the earlier ones did not stick. Why is not established.
+- **CONTAINED EVERY TIME.** Free RAM never below 6.3 GB, a live session by ~T−23, and 09-23 carted
+  at T+1 s. The cost is a killed browser 28 minutes before a release and 4-6 Okta trips from the
+  household IP.
+
+**THE CENSUS SINCE THE CURE SHIPPED (09-16 21:50:59Z → 09-24 03:00Z):**
+- **`wedge-recycle`: 7** — 09-17 09:50, 09-17 17:44, 09-18 15:19, 09-19 09:01, 09-20 09:01,
+  09-22 03:07, 09-23 04:44. Every row carrying the field reads `silent = strikes = 3`: no flapping.
+  About one a day, against the "three firings" still quoted elsewhere.
+- **`bail:ramp`: 5** — the four above, plus **09-23 17:38**, which preceded two `renewal` trips in
+  the same shape.
+- **Nothing since the 02:10Z box update on 09-24** — but that is ~1.5 h, and 09-24's release has
+  **no requested hold**, so the T−30 auto-login may not run at all. **A quiet 14:30 on a morning
+  with nothing to cover is not the ramp stopping.**
+
 ###### `line > gate` IS ORDERING AND READS LIKE CONTAINMENT — AND THE FIRST MUTATION FOR IT WAS A NO-OP
 Two defects in the guards above, both found by mutation-testing them twenty minutes after writing
 them, and both are shapes this file has paid for before in other costumes.

@@ -1081,8 +1081,17 @@ not run again.
 Job `7c0c524f`, 2026-09-23: the poller queued Silver Lake June Lake 84671 at 04:05:39.4, the bot
 reported `add-not-confirmed` **11.4s later**, the reconciler re-checked the site 200ms after that
 and found it **STILL OPEN**, and the paid feature sent a "book it yourself" alert having tried
-**exactly once**. `add-not-confirmed` is **12 of ~78 real jobs since 2026-07-18** against 39
-carted — a recurring mode, not a one-off.
+**exactly once**.
+- **~~`add-not-confirmed` is 12 of ~78 real jobs since 2026-07-18 — a recurring mode, not a
+  one-off.~~ THAT OVERSTATES IT, AND THE BREAKDOWN IS THE CORRECTION (measured 2026-09-24).**
+  All 95 `autocart_jobs` since 07-18: **8 of the 12 are from the bring-up week (07-18/19)**, when
+  the bot carted 2 of 19. Since 07-27 — the bot working — there are **4 in ~9 weeks**, and only
+  **2 were still open** when the reconciler re-checked (09-08, 09-23). With the two
+  `cta-not-ready` rows that carry no timings, the retry-winnable population is **2-4 jobs in 9
+  weeks: about one every two to four weeks.**
+- **THE OWNER'S DECISION (2026-09-24): KEEP THE RETRY.** Cheap insurance on a failure that used
+  to cost the user the site. It cannot be shown to pay for itself for months; **judge it after
+  5-10 eligible jobs**, not after one quiet week.
 
 - **WHY A RETRY WAS NOT SAFE BEFORE, AND IT IS SHAPE #1 ON THE PAID FEATURE.** `verifyCart`
   answers `'ok' | 'empty' | 'signin' | 'unknown'` and `cartRecGov` collapsed **`empty`** and
@@ -1136,11 +1145,75 @@ carted — a recurring mode, not a one-off.
   allow-list lives in `src/lib/bot-events.ts` (not in `paths:`) but its by-value guard lives under
   `worker/`, which is the first `paths:` entry. Two PRs here have claimed the opposite in their
   own bodies.
+- **THE PRICE IS SMALL AND ONLY PAID ON ALREADY-FAILED JOBS.** First attempts take **8.7 / 10.6 /
+  12.5 s** (p10/p50/p90 detection→report, carted jobs), which leaves room for exactly ONE retry
+  inside the 25 s budget, not two. The sites it would have been spent on were confirmed still
+  open at the time, so the ~13-15 s later fallback alert rarely loses one.
 - **THE PRICE IS NOT YET MEASURED.** A retried job's fallback alert lands ~28s after detection
   instead of ~13s — fifteen seconds of the user's own head start, spent on the ~15% of jobs whose
   first attempt already failed, **on the strength of one incident**. `carted-on-retry` is the
   number that settles whether it was worth it and **it is currently zero, because no job has run
   under the ladder yet**. Read it before defending or removing the budget.
+
+## THE T−30 AUTO-LOGIN RAMPS EVERY RELEASE MORNING, AND THE CURE CANNOT SEE IT (2026-09-24)
+
+`docs/CHROMIUM-LEAK.md` → *"THE CURE WATCHES ONE RENDERER OF TWO"* (09-17) predicted, in writing,
+before the event: the 14:30 auto-login would be a ~10 s cookie-answered sign-in, **no ramp**, and
+*"a ramp here would itself be the finding."* **It ramped that morning and on every 08:00 release
+morning since.**
+
+```
+            ramp seen   bail:ramp   rcMb   then: auto-login trips (one a minute, all flat)
+09-17       14:32:00    14:32:56    3168   4  (14:34 -> 14:37)
+09-21       14:31:36    14:31:51    3500   6  (14:32:56 -> 14:38:03)
+09-22       14:31:36    14:31:50    3914   5  (14:32:55 -> 14:37:03)
+09-23       14:32:11    14:32:21    3985   5  (14:33:26 -> 14:37:33)
+```
+
+- **THE RAMP PRECEDES EVERY RECORDED TRIP.** It is seen 96-131 s after 14:30:00 (T−30), the
+  backstop kills the browser, and **no `tab-close` exists for whatever started at 14:30** — the
+  `finally` that emits one never ran. That is the file's third listed outcome (*"the trip never
+  returns at all → the ramp arm at a 120 s stall"*), and it fits the timing. **A candidate, not a
+  mechanism**: which renderer ramped is NOT established — `ramp-scan` carries `maxPid` and nothing
+  that names a tab. The discriminator is `tail-log rc-keepwarm:400` pulled within ~20 minutes of a
+  14:30 trip, or the alloc trail's per-target lines at 14:31.
+- **THE "COIN FLIP, 1 OF 3" READING OF THE T−30 AUTO-LOGIN IS STALE.** It fired on all four of the
+  latest 08:00 releases. Whether it fires still turns on where the last renewal landed; recent
+  mornings are simply all on one side of that line.
+- **THE RELEASE STILL WORKED.** The fresh browser's 5-6 trips put a live session up by ~T−23 each
+  time, and 09-23 carted at T+1 s. **So this is contained, not harmless**: it is a browser killed
+  28 minutes before a release, plus 5-6 Okta trips from the household IP whose anti-bot posture
+  cost twelve hours once. **WHY IT TAKES 5-6 TRIPS IS NOT ESTABLISHED EITHER** — each is ~41 s,
+  flat `ramMb`, and the last (~45 s) is the one that sticks.
+- **THE NON-RELEASE RAMP** — 09-23 17:38 — preceded two `renewal` trips the same way. Same shape,
+  different trigger.
+- **DO NOT** read a quiet 14:30 on a morning with **no requested hold** as the ramp having stopped:
+  with nothing to cover, `maybeAutoLogin` may not run at all.
+
+## THE bot-events READOUT WAS BLIND FOR THREE DAYS, AND THAT IS WHY NOBODY SAW THE ABOVE (2026-09-24, #404)
+
+`scripts/bot-events-readout.mts` printed **"none in this window" for every kind from 2026-09-21 to
+2026-09-24**, over a table holding 102 rows in 72 hours. `recentBotEvents`'s test-row filter was
+`source NOT LIKE '\_\_%' ESCAPE '\'` with **single backslashes inside a template literal**; a
+template literal drops the backslash from `\_`, so Postgres received `'__%' ESCAPE ''` — two
+wildcards matching every source of two or more characters, i.e. every real bot row.
+- **IT LANDED IN #386, TITLED "TWO READOUTS THAT RENDER AN ABSENCE AS A FACT".** Its guard asserted
+  a regex over the **source text**, which did contain the backslashes — it checked what was
+  written, not what ran. Its companion (*"a fixture row is invisible to the readout"*) passed
+  **vacuously**: every row was invisible. Shape #3 with the anchor one layer of string processing
+  away from its subject, and shape #1 as the output.
+- **THE WINDOW IS THE EXPENSIVE PART.** It covers exactly the three release mornings whose T−30
+  auto-login ramped, the retry ladder's first day, and every cart burst since 09-21. **Any
+  conclusion drawn from an EMPTY readout between 09-21 20:48Z and 09-24 is void** — re-read the
+  table.
+- **FIXED WITH NO `LIKE` AT ALL:** `NOT_A_FIXTURE_SQL` = `left(source, 2) IS DISTINCT FROM '__'`.
+  A NULL source is kept — absent is not a fixture. The guards now run the REAL string: the
+  exported predicate against literal sources, and the readout's default read compared with the
+  unfiltered one over **real production rows**, refusing to pass as `0 === 0`. The original bug
+  restored byte for byte fails it.
+- **ONE INSTANCE.** A scan for undoubled `\_`/`\%` in live code across `src/`, `worker/` and
+  `scripts/` found no other. **In a template literal, a SQL backslash must be written twice** — or
+  avoided, which is better.
 
 ## The house failure shapes — stated once, so they are not re-derived
 
@@ -1165,8 +1238,9 @@ six wearing different clothes; if you catch yourself about to write one up as no
    A guard inside the loop it guards against; a pure function nothing calls; `void 0 && f()`
    passing an `indexOf` anchor; `if (false)`. **Ask what would have to run for this to matter,
    and pin it structurally.** Nine-plus recorded instances.
-3. **A GUARD ANCHORED ON THE WRONG THING.** ~34 recorded instances, four of them added on
-   2026-09-24 alone. A window measured in
+3. **A GUARD ANCHORED ON THE WRONG THING.** ~35 recorded instances, five of them added on
+   2026-09-24 alone — the newest a regex over SOURCE TEXT that a template literal rewrote before
+   it ran (#404). A window measured in
    CHARACTERS or LINES is a guess about layout and breaks on a new comment (four times). An
    `indexOf` that misses returns **-1**, and `slice(-1)` then passes vacuously for ever — so
    assert the anchor was found. A regex matching the DECLARATION rather than the call site; a
@@ -1254,7 +1328,10 @@ Damage is therefore hard-capped by Chromium at 32 GiB of COMMIT. **Contained, no
 flag), the drain is Chromium's, and the wedge is RC's own promise loop. What we have is a
 **cure for the DURATION**: probe the resident page with a *bounded* `page.evaluate` and after
 three consecutive no-answers **close the page** (not reload — a reload on a wedged page hangs
-past its own timeout). It has fired in production three times.
+past its own timeout). **It has fired SEVEN times (09-17 → 09-23), about once a day, every
+recorded one `silent = strikes = 3` — no flapping.** And it has MISSED five ramps, four of them
+the same one: **every 08:00 release morning since 09-21 (and 09-17), the T−30 auto-login ramps**
+— see `## THE T−30 AUTO-LOGIN RAMPS EVERY RELEASE MORNING` below.
 
 **DO NOT:**
 - **Rebuild any of these — each was measured blind for a knowable reason.** The heap trail
@@ -1971,11 +2048,14 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
 - **#401 — the delivery canary is unstarved, and it is proven in production** (fired 01:28:34Z,
   all three checks green). Nothing waits on it. The section above carries the standing DO-NOTs.
 - **#402 — the rec.gov cart ladder is live on master AND on the box (`c798cea`), and NO JOB HAS
-  RUN UNDER IT YET.** What waits is the READING, not more work: `npx tsx
-  scripts/bot-events-readout.mts` prints a `rec.gov CART JOBS` section, and
-  **`carted-on-retry` is the only number that says whether the 15 seconds of the user's head
-  start bought anything.** An empty list there while `autocart_jobs` has rows over the same
-  hours means the box is older than the ladder — that is a reading, not silence.
+  RUN UNDER IT YET** (the last `autocart_jobs` row is the 09-23 04:05 incident itself). **The
+  owner decided to KEEP it** on the historical rate — about one winnable job every two to four
+  weeks. What waits is the READING: `npx tsx scripts/bot-events-readout.mts` prints a `rec.gov
+  CART JOBS` section, and `carted-on-retry` is the number that settles it after 5-10 eligible
+  jobs. An empty list there while `autocart_jobs` has rows over the same hours means the box is
+  older than the ladder — that is a reading, not silence.
+- **#404 — the readout itself was blind from 09-21 to 09-24** (above). It reads real rows again;
+  an empty section from before the fix is void, not quiet.
 - **AND ONE #397 DIAGNOSTIC HAS ALREADY ANSWERED, WHICH RETIRES A SUSPICION RATHER THAN
   CONFIRMING ONE.** `update-guard`'s new `updateRequested=<bool>` field is in the live
   `applied_note`: *"SKIP - outside the quiet window (19:00 PT …) - feed answered,
@@ -2006,8 +2086,10 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
   survives it — the failure mode is a red `android-release` step reading *"The caller does not
   have permission"*, and the fix is minutes.
 - **The leak is diagnosed, contained and NOT fixed.** `base::SharedMemorySecurityPolicy`'s
-  32 GiB cap is the ceiling, and the page-wedge cure has fired three times in production —
-  which is a capability demonstrated, not a rate. **`docs/CHROMIUM-LEAK.md`, and read the
+  32 GiB cap is the ceiling. Since the page-wedge cure shipped (09-16 21:50Z) it has fired
+  **7 times** and **5 ramps got past it** (`bail:ramp`, 3.2-4.0 GB in the RC renderer, free RAM
+  never under 6.3 GB) — contained every time, fixed never. **Four of the five are the T−30
+  auto-login on a release morning**, and which renderer ramps there is NOT established. **`docs/CHROMIUM-LEAK.md`, and read the
   router's DO-NOT list before building any instrument.**
 - **The commit residual has no watcher.** Every arm reads free RAM or private bytes; the burst
   spends neither. Four options with their predicted readings are in the leak file under "THE
