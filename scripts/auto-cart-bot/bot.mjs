@@ -17,6 +17,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { cartRecGov } from './recgov.mjs';
+import { normaliseCartReport, cartFamily, CART_BUDGET_MS } from './cart-retry.mjs';
 import { noteReserveCalifornia } from './reservecalifornia.mjs';
 import { recgovLoginState } from './session.mjs';
 import { attemptLoginWithCreds } from './recgov-login.mjs';
@@ -97,18 +98,27 @@ async function reportConnected(userId, connected = true) {
 // Report the outcome of a cart attempt back to CampHawk. This is what gates the
 // user's alert: 'carted' → "it's in your cart" text; anything else → the server
 // re-verifies and only alerts if the site is genuinely still open (no false hope).
-async function reportResult(jobId, outcome) {
+//
+// `detail` IS THE PER-ROUND TRAIL AND IT RIDES THIS SAME REQUEST ON PURPOSE. It is the
+// answer to "why did the add not take?", which on 2026-09-23 had none ten hours later
+// because the only copy was in a box log that rolls in ~89 minutes. One POST rather than
+// two: a second call is a second thing that can fail, and this one is already on the
+// critical path so nothing is delayed by carrying a few hundred extra bytes. The server
+// stores it in `bot_events` — `cart_outcome` keeps only the outcome string, because three
+// SQL predicates read that column.
+async function reportResult(jobId, outcome, detail = null) {
   if (!jobId) return;
   try {
     await fetch(`${CAMPHAWK_URL}/api/auto-cart/result`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId, outcome }),
+      body: JSON.stringify({ jobId, outcome, ...(detail ? { detail } : {}) }),
     });
   } catch (e) {
     log(`  couldn't report cart result: ${e.message}`);
   }
 }
+
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
 const siteKey = (userId, bookingUrl) => `${userId}::${bookingUrl.split('#')[0]}`;
 
@@ -533,16 +543,66 @@ async function processJob({ user, job }) {
     await reportResult(job.id, 'skipped-not-logged-in');
     return;
   }
+  // THE BUDGET IS SPENT FROM HERE, NOT FROM WHEN THE BROWSER OPENS.
+  //
+  // `withBrowser` WAITS UP TO TWO MINUTES for this user's profile lock — one browser per
+  // profile, so a second opening for the same person in the same poller cycle queues behind
+  // the first. The ladder's whole safety argument is that it finishes before the poller's
+  // independent 35-second fallback alert; a ladder that starts its 25-second budget AFTER a
+  // 25-second wait breaks that argument for job two, and then the retry and the alert are on
+  // the air together — the user is told "still open, book it" and arrives to find the site
+  // taken by their own cart hold.
+  //
+  // MEASURED ON THE BOX'S OWN CLOCK, DELIBERATELY. The roster feed carries no `detected_at`,
+  // and deriving a deadline from a server timestamp would put the mini-PC's clock skew on the
+  // path between a queued hold and a missed cart. The wait this corrects for is local, so the
+  // measurement is local: two readings from one clock, which cannot disagree.
+  const pickedUpAt = Date.now();
   log(`  ⧉ opening browser for ${who}…`);
   // Run the cart HEADED. rec.gov's anti-bot gate ("abnormal activity") rejects
   // headless Chromium (fingerprinted as automation) — the add returns 200 with
   // ok:false. A real headed browser on the residential mini PC passes the gate.
-  const outcome = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log), { headless: false });
-  await reportResult(job.id, outcome);
+  //
+  // `withBrowser` THROWS on a busy profile ('profile busy (broker)'), and that throw used
+  // to escape to `pump`'s catch with nothing reported — so the one job that could not even
+  // start was also the one whose alert waited the full 35 seconds. Caught here and reported
+  // as an error, which makes the job reconcilable within a second instead.
+  let report;
+  try {
+    report = normaliseCartReport(
+      await withBrowser(
+        user.userId,
+        // Evaluated AFTER the profile lock is acquired, so this reads the real wait. A budget
+        // of zero still runs round one — `runCartLadder` always makes one attempt and only
+        // then asks whether it may go again. Never carting is worse than carting late.
+        (ctx) => cartRecGov(ctx, job, log, { budgetMs: Math.max(0, CART_BUDGET_MS - (Date.now() - pickedUpAt)) }),
+        { headless: false },
+      ),
+    );
+  } catch (e) {
+    log(`  ⚠ ${who}: couldn't open the browser — ${e.message}`);
+    report = { outcome: 'error', detail: { browserError: String(e.message ?? e).slice(0, 240) } };
+  }
+  // TWO COMPARISONS, TWO RULES, AND THEY ARE DIFFERENT ON PURPOSE.
+  //
+  // `cartOutcomeForDb` appends the round count to a FAILURE that took more than one round
+  // (`add-not-confirmed(empty) [3 rounds, 24.1s]`) and NEVER to a success. So:
+  //   - 'carted' stays an exact equality test against the literal — the same literal three
+  //     SQL predicates use. If it ever stops being exact, this line is where the 20-minute
+  //     re-cart mute silently stops working, so it must break loudly rather than widen.
+  //   - 'session-expired' is matched on the FAMILY, because it CAN arrive decorated: round 1
+  //     ends `add-not-confirmed(empty)` and round 2's cart re-read bounces to sign-in, which
+  //     is `session-expired [2 rounds, 14.2s]`. An equality test there would silently skip
+  //     clearing the ready marker and `reportConnected(false)` — so the app would keep
+  //     showing "connected" over a dead session and every later opening would be routed into
+  //     the silent auto-cart lane and never alert. Found by re-reading this diff, not by a
+  //     test; the test that pins it was written afterwards.
+  const outcome = report.outcome;
+  await reportResult(job.id, outcome, report.detail);
   if (outcome === 'carted') {
     carted.set(key, Date.now());
     saveMap(CARTED_FILE, carted, CARTED_TTL_MS);
-  } else if (outcome === 'session-expired') {
+  } else if (cartFamily(outcome).name === 'session-expired') {
     // The cart page bounced to sign-in — the session really died. Clear the marker
     // and flip the app's connected state off so the user is prompted to reconnect.
     try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
