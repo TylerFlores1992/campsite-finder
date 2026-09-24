@@ -113,8 +113,15 @@ const liveness = readFileSync(new URL('./rc-token-liveness.ts', import.meta.url)
 test('the close goes through the shared rule, not rc-handoff\'s own captured check', () => {
   assert.match(handoff, /rcCloseAction\(\{/,
     'the message handler must delegate the close decision');
-  assert.match(liveness, /export function rcCloseAction[\s\S]{0,900}stage !== 'rc-session'[\s\S]{0,400}loggedIn === true/,
-    "rcCloseAction must gate on RC's own rc-session signal");
+  // RC's own signal is still the gate — folded now, because it and the census that carries
+  // the token's expiry arrive as separate reports (2026-09-24). The fold reads `loggedIn`
+  // strictly from `rc-session`, and the close refuses without it.
+  assert.match(liveness, /export function foldSignInFacts[\s\S]{0,600}stage === 'rc-session'[\s\S]{0,80}loggedIn === true/,
+    "the fold must take loggedIn from RC's own rc-session signal, strictly true");
+  assert.match(liveness, /export function rcCloseAction[\s\S]{0,400}if \(!facts\.loggedIn\) return 'wait'/,
+    'rcCloseAction must refuse to close without RC saying signed in');
+  assert.match(handoff, /facts = foldSignInFacts\(facts, r\.stage, r\.detail\)/,
+    'the handler must fold every report before asking — a rule fed one report at a time is the 09-24 loop');
   // The regression, stated as the thing that must NOT be there: a bare captured test
   // gating the close. Comments quoting the old form are stripped first so the guard is
   // never "fixed" by deleting the explanation of why it exists.

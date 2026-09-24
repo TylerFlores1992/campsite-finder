@@ -60,10 +60,45 @@ test('RC reporting signed in closes the sign-in window, with reason `session`', 
   shell.fire('loadstop', { url: 'https://www.reservecalifornia.com/park/690/612' });
 
   shell.report('rc-session', { loggedIn: true, at: 'https://www.reservecalifornia.com/park/690/612' });
+  // Not yet: the census carrying the token's expiry is the NEXT report (2026-09-24).
+  assert.equal(shell.closes.length, 0, 'rc-session alone must wait for the census');
+  shell.report('session', { storedToken: 'jwt', storedExpiresInSec: 3400 });
 
   assert.equal(shell.closes.length, 1, 'the window must be taken down');
   const close = reports.find((r) => r.stage === 'close');
   assert.equal((close?.detail as { reason?: string })?.reason, 'session');
+});
+
+test('THE 09-24 LOOP, DRIVEN: signed in over a DEAD token keeps the window open until a fresh sign-in', async (t) => {
+  // The phone's own sequence, report for report: RC's persisted customerId says signed in,
+  // the census says the stored token died 23 hours ago. The old host closed on the first
+  // report and the claim screen, reading the second, asked again — for ever.
+  t.after(() => mock.timers.reset());
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const shell = stubShell();
+  const reports: { stage: string; detail?: unknown }[] = [];
+  await openHandoff(true, (r) => reports.push(r));
+  shell.fire('loadstop', { url: 'https://www.reservecalifornia.com/park/6/360' });
+
+  shell.report('rc-session', { loggedIn: true, sso: true, at: 'https://www.reservecalifornia.com/park/6/360' });
+  shell.report('session', { storedToken: 'jwt', storedExpiresInSec: -82680, rcLoggedIn: true });
+  mock.timers.tick(10 * 60_000);
+  assert.equal(shell.closes.length, 0, 'a dead token under a live-looking customerId must not close the window');
+
+  // The sign-in script clears the stale session and reloads; RC renders signed out, the
+  // census is empty — still no close, an absence is not proof of life.
+  shell.report('stale-reset', { cleared: ['ssoAccessToken', 'customerId'], waitedMs: 12000 });
+  shell.fire('loadstop', { url: 'https://www.reservecalifornia.com/park/6/360' });
+  shell.report('rc-session', { loggedIn: false, sso: false });
+  shell.report('session', { storedToken: 'none', storedExpiresInSec: null });
+  assert.equal(shell.closes.length, 0);
+
+  // The fresh sign-in completes: a live token, then RC's step two writes customerId.
+  shell.report('token', LIVE_TOKEN);
+  assert.equal(shell.closes.length, 0, 'a token alone is step one — never a close');
+  shell.report('rc-session', { loggedIn: true, sso: true });
+  assert.equal(shell.closes.length, 1, 'signed in with a live token: now the window goes');
+  assert.equal((reports.find((r) => r.stage === 'close')?.detail as { reason?: string })?.reason, 'session');
 });
 
 test('a LIVE token does NOT close the window — that was the defect, on every page', async (t) => {
@@ -107,6 +142,7 @@ test('the close is idempotent — a rebroadcast must not close a dead ref twice'
   await openHandoff(true, (r) => reports.push(r));
   shell.fire('loadstop', { url: 'https://www.reservecalifornia.com/park/690/612' });
   shell.report('rc-session', { loggedIn: true });
+  shell.report('session', { storedToken: 'jwt', storedExpiresInSec: 3400 });
   shell.report('rc-session', { loggedIn: true });
   assert.equal(shell.closes.length, 1);
   assert.equal(reports.filter((r) => r.stage === 'close').length, 1);

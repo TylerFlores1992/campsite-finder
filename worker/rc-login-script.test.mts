@@ -1265,3 +1265,162 @@ test('with NO challenge the ordinary allowance is unchanged', async () => {
   const r = await late.run();
   assert.equal(r.stage, 'password', 'past the allowance with no challenge is still a failure');
 });
+
+// ── A STALE SESSION IS CLEARED, ONCE, AND ONLY ON POSITIVE EVIDENCE (2026-09-24) ─────────
+//
+// On 2026-09-24 a phone's stored token had been dead for 23 hours while RC's persisted
+// `customerId` still drew the page signed in — so RC rendered no Log in control, there was no
+// form to fill, and the sign-in window bounced until a carted campsite was lost. The fix: when
+// the full wait finds nothing to press, RC says signed in, no live token has been seen AND the
+// stored token decodes as expired, clear the stale session and reload so RC draws its control.
+// These drive the REAL script, with storage that records every removal.
+
+const DEAD = 'DEAD.TOKEN.x', LIVE_T = 'LIVE.TOKEN.x', MUSH = 'not-a-jwt';
+
+function staleSessionPage(opts: {
+  ls: Record<string, string>;
+  ss?: Record<string, string>;
+  signedIn?: boolean;
+  rcLoggedIn?: boolean;
+  ssThrows?: boolean;
+  controls?: Btn[];
+}) {
+  const ctx = loginSandbox();
+  const ls = { ...opts.ls };
+  const ss = { ...(opts.ss ?? {}) };
+  const removed: string[] = [];
+  let reloads = 0;
+  const said: [string, Record<string, unknown>][] = [];
+  const wrap = (b: Btn) => ({
+    get innerText() { return b.visible ? b.name : ''; },
+    get textContent() { return b.name; },
+    get offsetParent() { return b.visible ? {} : null; },
+    getBoundingClientRect: () => (b.visible ? { width: 90, height: 24 } : { width: 0, height: 0 }),
+    click() { b.clicks += 1; },
+  });
+  ctx.localStorage = {
+    get length() { return Object.keys(ls).length; },
+    key: (i: number) => Object.keys(ls)[i] ?? null,
+    getItem: (k: string) => (k in ls ? ls[k] : null),
+    removeItem: (k: string) => { removed.push(k); delete ls[k]; },
+    setItem: (k: string, v: string) => { ls[k] = v; },
+  };
+  ctx.sessionStorage = {
+    getItem: (k: string) => { if (opts.ssThrows) throw new Error('denied'); return k in ss ? ss[k] : null; },
+    setItem: (k: string, v: string) => { if (opts.ssThrows) throw new Error('denied'); ss[k] = v; },
+  };
+  ctx.location = { reload: () => { reloads += 1; }, hostname: 'www.reservecalifornia.com', pathname: '/park/6/360' };
+  ctx.document = {
+    querySelector: () => null,
+    querySelectorAll: (sel: string) => (sel === 'a, button' ? (opts.controls ?? []).map(wrap) : []),
+  };
+  ctx.window = {
+    __camphawkRc: {
+      send: (s: string, d: Record<string, unknown>) => { said.push([s, d]); },
+      signedIn: () => opts.signedIn === true,
+      rcLoggedIn: () => (opts.rcLoggedIn ?? ('customerId' in ls)),
+      jwtFacts: (t: string) => (t === DEAD ? { decodable: true, expiresInSec: -82680 }
+        : t === LIVE_T ? { decodable: true, expiresInSec: 3000 } : { decodable: false, expiresInSec: null }),
+    },
+  };
+  ctx.HTMLInputElement = function () {};
+  ctx.HTMLTextAreaElement = function () {};
+  vm.runInContext(loginScript(), ctx);
+  return {
+    said, removed, ls, ss,
+    reloads: () => reloads,
+    stages: () => said.map((s) => s[0]),
+    run: async () => {
+      await (vm.runInContext('window.__chRcLogin("a@b.com", "hunter2!")', ctx) as Promise<unknown>);
+      await new Promise((r) => setTimeout(r, 5)); // let the deferred reload fire
+    },
+  };
+}
+
+const STALE_LS = {
+  customerId: '12345', customerName: 'Tyler', customerDetail: '{}',
+  ssoAccessToken: DEAD, accessToken: DEAD,
+  '@secure.s.okta-token-storage': 'ENCODED-BLOB', '@secure.s.okta-cache-storage': 'ENCODED',
+  'okta-original-uri-storage': '/park/6/360',
+  shoppingCartKey: 'cart-abc', camphawk_rc_probe: '{"opens":117}',
+};
+
+test('THE 09-24 CASE: RC signed in over a DEAD token, nothing to press -> cleared once, reloaded', async () => {
+  const p = staleSessionPage({ ls: STALE_LS });
+  await p.run();
+  const reset = p.said.find((s) => s[0] === 'stale-reset');
+  assert.ok(reset, `the reset must report; got ${JSON.stringify(p.stages())}`);
+  assert.equal(p.reloads(), 1, 'and reload exactly once, so RC can draw its Log in control');
+  // What RC's own sign-in writes, and the okta store matched ANYWHERE in the name.
+  for (const k of ['customerId', 'customerName', 'customerDetail', 'ssoAccessToken', 'accessToken',
+    '@secure.s.okta-token-storage', '@secure.s.okta-cache-storage', 'okta-original-uri-storage']) {
+    assert.ok(p.removed.includes(k), `${k} must be cleared`);
+  }
+  // And NOTHING else — the cart key and our own marker are not the session.
+  assert.ok(!p.removed.includes('shoppingCartKey'), 'the cart key is not part of the stale session');
+  assert.ok(!p.removed.includes('camphawk_rc_probe'), 'our own marker is not RC state');
+  // Key NAMES are reported, never values.
+  const blob = JSON.stringify(reset![1]);
+  for (const v of [DEAD, 'ENCODED-BLOB', '12345', 'Tyler']) assert.ok(!blob.includes(v), `a value leaked: ${v}`);
+  assert.ok(!p.stages().includes('signin-missing'), 'a stale session is not a missing control');
+  const verdict = p.said.find((s) => s[0] === 'login-result');
+  assert.equal(verdict?.[1].stage, 'stale-reset', 'the run ends on a NAMED path, not a failure');
+  assert.equal(verdict?.[1].ok, true, 'a reset is not a failed sign-in — it must not put an error on the claim screen');
+});
+
+test('ONCE per window: a second run after the reset reports the miss instead of clearing again', async () => {
+  const p = staleSessionPage({ ls: STALE_LS, ss: { camphawk_stale_reset: '1' } });
+  await p.run();
+  assert.ok(!p.stages().includes('stale-reset'), 'a reload must never loop the reset');
+  assert.equal(p.reloads(), 0);
+  assert.equal(p.removed.length, 0, 'nothing is cleared twice');
+  assert.ok(p.stages().includes('signin-missing'), 'the miss is still reported as a miss');
+});
+
+test('a LIVE stored token is never cleared', async () => {
+  const p = staleSessionPage({ ls: { ...STALE_LS, ssoAccessToken: LIVE_T, accessToken: LIVE_T } });
+  await p.run();
+  assert.equal(p.removed.length, 0, 'a working session must never be touched');
+  assert.equal(p.reloads(), 0);
+});
+
+test('an UNDECODABLE or absent token is "could not tell" and is never cleared', async () => {
+  for (const ls of [
+    { ...STALE_LS, ssoAccessToken: MUSH, accessToken: MUSH },
+    { customerId: '12345' },
+  ]) {
+    const p = staleSessionPage({ ls });
+    await p.run();
+    assert.equal(p.removed.length, 0, `unknown must not round to dead: ${JSON.stringify(Object.keys(ls))}`);
+    assert.equal(p.reloads(), 0);
+  }
+});
+
+test('RC signed OUT is not a stale session — there is a control to find, not a session to clear', async () => {
+  const p = staleSessionPage({ ls: { ssoAccessToken: DEAD }, rcLoggedIn: false });
+  await p.run();
+  assert.equal(p.removed.length, 0);
+  assert.ok(!p.stages().includes('stale-reset'));
+});
+
+test('a live token seen in the page wins over a dead stored copy', async () => {
+  // RC renewing on its own inside the wait is the healthy case the wait exists to allow.
+  const p = staleSessionPage({ ls: STALE_LS, signedIn: true });
+  await p.run();
+  assert.equal(p.removed.length, 0, 'a session that renewed itself must not be thrown away');
+});
+
+test('a Log in control that does appear is pressed, and nothing is cleared', async () => {
+  const b = btn('Log in / Sign up');
+  const p = staleSessionPage({ ls: STALE_LS, controls: [b] });
+  await p.run();
+  assert.equal(b.clicks, 1);
+  assert.equal(p.removed.length, 0, 'the reset is for when there is NOTHING to press');
+});
+
+test('storage that cannot be read fails towards doing NOTHING', async () => {
+  const p = staleSessionPage({ ls: STALE_LS, ssThrows: true });
+  await p.run();
+  assert.equal(p.removed.length, 0, 'an unguardable reset could loop — so it must not run');
+  assert.equal(p.reloads(), 0);
+});

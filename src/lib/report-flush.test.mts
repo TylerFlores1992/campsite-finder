@@ -39,10 +39,27 @@ test('a verdict-bearing stage flushes IMMEDIATELY, not on the debounce', () => {
   const s = code(CLAIMFLOW);
   assert.match(s, /FLUSH_NOW_STAGES\.has\(r\.stage\)/,
     'onReport must branch on the stage before queueing');
-  // The branch must actually FLUSH and RETURN — falling through would re-arm the timer
-  // and put the report back in the queue it was meant to skip.
-  assert.match(s, /FLUSH_NOW_STAGES\.has\(r\.stage\)\)\s*\{[\s\S]{0,220}flushReports\(\);[\s\S]{0,40}return;/,
-    'the immediate branch must call flushReports and return');
+  // The branch must FLUSH, and must not re-arm the debounce — that would put the report back
+  // in the queue it was meant to skip. So the debounce lives in the ELSE.
+  assert.match(s, /FLUSH_NOW_STAGES\.has\(r\.stage\)\)\s*\{[\s\S]{0,220}flushReports\(\);\s*\}\s*else\s*\{[\s\S]{0,400}flushTimer\.current = setTimeout\(flushReports/,
+    'the immediate branch must flush, and only the other branch may arm the timer');
+});
+
+test('THE FLUSH MUST NOT END THE HANDLER — the stages it sends still have to be READ (2026-09-24)', () => {
+  // The first version ended this branch in `return`, and the guard above REQUIRED it. So from
+  // #395 (2026-09-22) every flush-now stage was sent and then ignored: the `closed` downgrade
+  // and the `status` "added to cart" check below it never ran. A guard pinning the send and
+  // not the meaning enforced the regression it sat beside.
+  const s = code(CLAIMFLOW);
+  const at = s.indexOf('FLUSH_NOW_STAGES.has(r.stage)');
+  assert.ok(at > -1, 'anchor lost — this guard is measuring nothing');
+  const closedAt = s.indexOf("r.stage === 'closed'", at);
+  const statusAt = s.indexOf("(r.stage === 'status' || r.stage === 'banner')", at);
+  assert.ok(closedAt > at && statusAt > at, 'the closed and status handlers must sit after the flush branch');
+  // Between the flush branch and those handlers, nothing may leave the callback early.
+  const between = s.slice(at, Math.min(closedAt, statusAt));
+  assert.doesNotMatch(between, /\breturn\b/,
+    'a return between the flush and the stage handlers skips them for exactly the stages that carry verdicts');
 });
 
 test('`status` is in the set — it is the stage that carried the lost 401', () => {
@@ -93,4 +110,26 @@ test('THE ARITHMETIC THAT MADE THE MARGIN ZERO — pinned from both files', () =
 test('the flush still uses keepalive — an immediate flush is worth nothing if it dies with the page', () => {
   assert.match(code(CLAIMFLOW), /keepalive: true/,
     'a flush started as the webview closes must still go out');
+});
+
+test('A STALE-SESSION RESET RE-OPENS THE PER-PAGE GUARD, ONCE (2026-09-24)', () => {
+  // The sign-in script clears an expired session RC still draws as signed in and reloads the
+  // SAME page, so RC renders its Log in control. `afterLoad` refuses a page it has already
+  // acted on — so without clearing that guard the reloaded page gets no script, nobody presses
+  // Log in, and the window sits on RC's home page with the user signed out. Bounded to ONE
+  // clear, so a looping reset cannot re-arm the credential budget for ever.
+  const s = code(CLAIMFLOW);
+  const fn = s.indexOf('async function signInToRc(');
+  assert.ok(fn > -1, 'anchor lost — this guard is measuring nothing');
+  const end = s.indexOf('\n  }\n', fn);
+  assert.ok(end > fn, 'end of signInToRc not found');
+  const body = s.slice(fn, end);
+  assert.match(body, /const pages = new Set<string>\(\)/, 'the per-page guard is what gets cleared');
+  assert.match(body,
+    /if \(r\.stage === 'stale-reset' && !resetSeen\) \{\s*resetSeen = true;\s*pages\.clear\(\);\s*\}\s*onReport\(r\);/,
+    'the first stale-reset must clear the page guard, then still reach onReport');
+  assert.match(body, /let resetSeen = false;/, 'the once-bound must start false for each window');
+  // And the guard it clears must be the one afterLoad consults.
+  assert.match(body, /if \(pages\.has\(key\) \|\| pages\.size >= MAX_LOGIN_PAGES\) return null;/,
+    'afterLoad must still refuse a page already acted on');
 });

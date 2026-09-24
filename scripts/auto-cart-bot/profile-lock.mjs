@@ -30,12 +30,46 @@ const STALE_MS = 10 * 60 * 1000;
 
 const lockPath = (profileDir) => path.join(profileDir, LOCK_FILE);
 
-/** Who holds this profile right now, or null. Stale locks read as free. */
+/**
+ * Is the process that wrote this lock still running?
+ *
+ * `process.kill(pid, 0)` sends nothing — it only asks the OS whether the pid exists. ESRCH is
+ * the one answer that means "no such process"; anything else (EPERM above all: it exists and
+ * belongs to someone else) is treated as ALIVE, and so is a pid we cannot read. Failing
+ * towards "still held" is the safe direction: the worst it costs is the old wait, while
+ * failing the other way would open a second Chromium on a profile somebody is using.
+ */
+export function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try { process.kill(pid, 0); return true; } catch (err) { return err?.code !== 'ESRCH'; }
+}
+
+/**
+ * Who holds this profile right now, or null. Stale locks read as free — and so do locks
+ * whose writer is PROVABLY GONE.
+ *
+ * ## A DEAD HOLDER'S LOCK USED TO HOLD FOR UP TO TEN MINUTES, AND IT COST TWICE
+ *
+ * The lock is renewed by its holder's own timer, so when the holder dies the only thing that
+ * ever freed it was STALE_MS. Everything in between was a wait on nobody:
+ *
+ *   - **2026-09-16**: the keep-warm died at 00:03 UTC, was restarted at 00:04, and printed
+ *     `profile busy (rc-keepwarm)` five times over seven and a half minutes — against its OWN
+ *     predecessor's lock — with the RC session down the whole time.
+ *   - **2026-09-24**: a user pressed claim at 15:12:24 UTC and the hold runner then waited out
+ *     its full 60s lock wait before forcing a lock held by `rc-keepwarm (pid 10928, already
+ *     gone)`. The site was handed over at 15:13:27, sixty-five seconds after the user asked,
+ *     and the user did not get it.
+ *
+ * STALE_MS is right for a holder we cannot see. A pid the OS says does not exist is not that:
+ * it is a fact, and a dead process cannot be corrupted by a second Chromium. So it is free now.
+ */
 export function profileLockHolder(profileDir) {
   try {
     const raw = fs.readFileSync(lockPath(profileDir), 'utf8');
     const { owner, at, pid } = JSON.parse(raw);
     if (!at || Date.now() - new Date(at).getTime() > STALE_MS) return null;
+    if (pid && pid !== process.pid && !pidAlive(pid)) return null;
     return { owner, pid, at };
   } catch {
     return null; // no file, unreadable, or garbage — treat as free
