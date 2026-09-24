@@ -83,6 +83,16 @@ The steps, and the three ways the bot can get in the way:
    `claimed_at = NOW()`, and read it back. **Never close it on inference**: a booked grid slice
    after RC's cart lapsed could be a competitor.
 
+**HOW LONG A HOLD LASTS — two clocks, and only one is ours.** The bot lets go of an unclaimed
+hold at `carted_at + 45 min` (`expireStaleHolds(45)`). **RC's own cart timer can drop it sooner**
+and we cannot extend it: the live figures are a bundle-read ~15 min and a single observation of
+45, so **plan on ~15**. On 2026-09-24 the owner was offered two changes and **declined both**:
+- exempting their own account from the 45-min release;
+- "re-holding" past RC's timer, which is unproven and would need a live experiment on a real
+  site.
+
+Do not re-propose either without new evidence about RC's timer.
+
 Two scheduled check-ins carry this: 07:00 PT (session health, hold REQUESTED not merely offered)
 and 08:20 PT (the row, and step 5).
 
