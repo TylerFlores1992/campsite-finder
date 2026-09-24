@@ -45,6 +45,47 @@ docs-only gap and says so in its own detail, so **this docs PR brings the warnin
 said leave it. `CLAUDE.md` carries the one-line fix (`botVersionLevel`'s `behind` branch) and why it
 lands after a release, never before.
 
+### CHECKING OUT ON THE BOX — the owner's plan for the 09-25 group site
+
+The owner will request the group-site hold, and after the bot carts it at 08:00 will **complete
+checkout on the mini-PC over RustDesk** instead of the phone hand-off. **That removes the hand-off
+entirely**: no release, no ~2.5 s exposure window, no phone sign-in. It is sound because of three
+facts, each read from code rather than assumed:
+
+- **The cart is bound to the bot's SESSION**, so a second session reads it as 0 entries (proven
+  2026-08-06). So checkout MUST happen in **the bot's own Chromium window**, the one on the
+  `rc-profile` user-data-dir. Not the owner's Chrome, and not a fresh browser.
+- **That window's RC cart page shows the hold**, because `precartInPage` writes the minted key into
+  `localStorage["shoppingCartKey"]` (the "adoption case that works"; a human has confirmed it on
+  RC's cart page before). If several holds cart in parallel, only the LAST key is adopted, so the
+  page may show a different cart. It is one hold tomorrow.
+- **The reservation lands in whichever RC account the box is signed into**, with that account's
+  customer name as occupant. That is fine only if it is the owner's own account; the owner knows,
+  and no session should assume it.
+
+The steps, and the three ways the bot can get in the way:
+
+1. **Wait for the cart.** `rc-holds-readout.mts` shows `carted`, or the runner console says
+   `✓ held`. **Right after the release the RUNNER owns the profile and the keep-warm's window is
+   closed** (it yields). Wait until the keep-warm's window is back, then open a **new tab** in it
+   and go to RC's cart.
+2. **Do NOT tap Claim on the phone.** A claim makes the bot RELEASE the entry to hand it over, and
+   then the box's cart no longer has it. Pick one path.
+3. **Check out fast.** RC's own cart lapse is ~15 min (bundle read; one observation said 45).
+4. **If the window closes mid-checkout, nothing is lost.** Any later runner pass (another user's
+   claim or release), a `wedge-recycle` or a `bail:ramp` closes the whole browser. The cart lives
+   on RC's side under the session, and the token is on disk in the profile, so reopen RC in the
+   relaunched window and carry on.
+5. **Tell the session once it is booked.** The row stays `carted`, and `expireStaleHolds(45)` will
+   send the runner to release it at `carted_at + 45 min`. What `remove/cartentry` does to a
+   completed reservation is **not established**. It is almost certainly a harmless refusal, but do
+   not find out. On the owner's word, set that one row to `status = 'claimed'`,
+   `claimed_at = NOW()`, and read it back. **Never close it on inference**: a booked grid slice
+   after RC's cart lapsed could be a competitor.
+
+Two scheduled check-ins carry this: 07:00 PT (session health, hold REQUESTED not merely offered)
+and 08:20 PT (the row, and step 5).
+
 ### What each 09-24 change now waits on
 
 1. **The delivery canary — nothing.** Fired at 01:28:34Z, three minutes after its deploy, and
