@@ -64,8 +64,18 @@ const DELIVERY_CHECK_DEFAULT_MS = 60 * 60 * 1000;
 
 const DELIVERY_INTERVAL_DEFAULT_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Exactly the two variables this schedule reads. Deliberately narrower than `ProcessEnv`
+ * (which carries an index signature, so a typo'd key in a test would type-check against it)
+ * — hence the one cast on each default below.
+ */
+export type CanaryScheduleEnv = {
+  CANARY_DELIVERY_INTERVAL_MS?: string | undefined;
+  CANARY_DELIVERY_CHECK_MS?: string | undefined;
+};
+
 /** The send interval (`CANARY_DELIVERY_INTERVAL_MS`; `worker/fly.toml` sets 24h). */
-export function deliveryCanaryIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+export function deliveryCanaryIntervalMs(env: CanaryScheduleEnv = process.env as CanaryScheduleEnv): number {
   const raw = Number(env.CANARY_DELIVERY_INTERVAL_MS ?? DELIVERY_INTERVAL_DEFAULT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : DELIVERY_INTERVAL_DEFAULT_MS;
 }
@@ -76,7 +86,7 @@ export function deliveryCanaryIntervalMs(env: NodeJS.ProcessEnv = process.env): 
  * send interval reinstates the starvation above, and one who sets it to 0 turns a
  * `setInterval` into a busy loop against Postgres.
  */
-export function deliveryCanaryCheckMs(env: NodeJS.ProcessEnv = process.env): number {
+export function deliveryCanaryCheckMs(env: CanaryScheduleEnv = process.env as CanaryScheduleEnv): number {
   const ceiling = deliveryCanaryIntervalMs(env) * DELIVERY_CHECK_CEILING_FRACTION;
   const raw = Number(env.CANARY_DELIVERY_CHECK_MS ?? DELIVERY_CHECK_DEFAULT_MS);
   const wanted = Number.isFinite(raw) && raw > 0 ? raw : DELIVERY_CHECK_DEFAULT_MS;
