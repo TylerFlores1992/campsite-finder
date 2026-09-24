@@ -2128,6 +2128,12 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
   the served `/api/rc-precart` bundle and the box (`43be89f`), all read back. **What waits is the
   next real hand-off**: read its `client_reports` for a `stale-reset` stage and a close with a
   live token. See *"THE 09-24 HAND-OFF: CARTED AT T−0.94s AND STILL LOST"*.
+- **09-25 08:00 PT: THE OWNER WILL CHECK OUT ON THE BOX, NOT THROUGH THE HAND-OFF.** They will
+  complete checkout of the group site over RustDesk, in the bot's own Chromium window, so #406's
+  phone path may **not** be exercised that morning. Do not read a quiet `client_reports` as #406
+  failing. Runbook and its three hazards: `docs/NEXT-SESSION.md` §0, *"CHECKING OUT ON THE BOX"*.
+  **The one cleanup it needs:** after the owner confirms the booking, set the row to `claimed`
+  before `carted_at + 45 min`, or the runner goes to release a booked site.
 - **#401 — the delivery canary is unstarved, and it is proven in production** (fired 01:28:34Z,
   all three checks green). Nothing waits on it. The section above carries the standing DO-NOTs.
 - **#402 — the rec.gov cart ladder is live on master AND on the box (`c798cea`), and NO JOB HAS
