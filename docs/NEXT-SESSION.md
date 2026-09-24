@@ -29,6 +29,13 @@ waited 60s on a lock whose pid was dead. Full account: `CLAUDE.md` → *"THE 09-
   before the window closed.
 - **Next release: 2026-09-25 08:00 PT** (one hold `offered` when last read). Compute hours to
   release in SQL, in Pacific.
+- **THE BOX UPDATE AT 16:45Z ENDED THE RC SESSION, AS EVERY UPDATE DOES.** By ~17:30Z
+  `autocart.rc_session` warned *"no token at all — signed out; okta session GONE (404)"*, forecasting
+  the expensive ~12-minute sign-in. **This is the ordinary state after an update, not a fault.** The
+  09-23 precedent: the same GONE repaired itself 31 minutes later in 16 s, through the warm-up path,
+  with no human. **Before 07:30 PT on 09-25, read `/api/health/status`:** `okta=ALIVE` and a live
+  token mean the repair ran. Still GONE after 07:00 PT is the case to raise with the owner. Do NOT
+  run `rc-login.bat` over a live session.
 
 **READ THE FLEET, DO NOT QUOTE ANY OF THIS.** A reading goes stale faster than the conclusion
 drawn from it, and this section has been caught out overnight twice.
