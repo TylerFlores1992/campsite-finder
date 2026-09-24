@@ -16,8 +16,9 @@ import {
   profileHolderNote,
   acquireProfileLock, releaseProfileLock, releaseProfileLockIfMine,
   renewProfileLock, profileLockHolder,
-  requestProfile, profileRequested, clearProfileRequest, forceProfileLock,
+  requestProfile, profileRequested, clearProfileRequest, forceProfileLock, pidAlive,
 } from '../scripts/auto-cart-bot/profile-lock.mjs';
+import { spawn } from 'node:child_process';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ch-lock-'));
 const LOCK = '.camphawk-profile-lock';
@@ -128,13 +129,17 @@ test('a holder that ignores the request is forced out, but only after the wait',
   // cooperative protocol cannot survive a partner that has stopped cooperating, and the
   // 08:00 cart failed against a profile nothing could take.
   const dir = tmp();
+  // A WEDGED holder is ALIVE, so it is modelled by a real live process: a child we spawn
+  // and own. This used to be a pid that did not exist, which stopped modelling the case on
+  // 2026-09-24 — a dead pid's lock now reads as free (next test), so forcing it is moot.
+  // Never an invented pid: one that happened to exist would be killed.
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   try {
-    // A live holder with a pid that is not us and does not exist — the safe stand-in for
-    // "wedged process": process.kill throws ESRCH, which forceProfileLock treats as
-    // already-gone and proceeds. A REAL pid must not be invented in a test.
+    assert.ok(child.pid, 'the stand-in holder must have started');
     fs.writeFileSync(path.join(dir, LOCK), JSON.stringify({
-      owner: 'rc-keepwarm', pid: 999_999_998, at: new Date().toISOString(),
+      owner: 'rc-keepwarm', pid: child.pid, at: new Date().toISOString(),
     }));
+    assert.equal(profileLockHolder(dir)?.owner, 'rc-keepwarm', 'a LIVE holder still holds');
 
     // Too soon: the holder must be given the whole wait before we kill anything.
     assert.equal(forceProfileLock(dir, 'rc-hold-runner', Date.now(), 45_000), null,
@@ -143,10 +148,44 @@ test('a holder that ignores the request is forced out, but only after the wait',
     const reason = forceProfileLock(dir, 'rc-hold-runner', Date.now() - 60_000, 45_000);
     assert.ok(reason, 'after the wait, the profile is taken');
     assert.match(String(reason), /rc-keepwarm/, 'and says who it was taken from');
+    assert.match(String(reason), /killed/, 'a live wedged holder is stopped before its lock is taken');
+    assert.equal(profileLockHolder(dir)?.owner, 'rc-hold-runner');
+  } finally {
+    try { child.kill('SIGKILL'); } catch { /* already gone is the goal */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a lock whose writer is GONE is free at once — no wait on nobody (2026-09-24)', async () => {
+  // Measured twice. 2026-09-16: the keep-warm printed "profile busy (rc-keepwarm)" for seven
+  // and a half minutes against its own dead predecessor's lock, RC session down throughout.
+  // 2026-09-24: the hold runner waited its full 60s before forcing `rc-keepwarm (pid 10928,
+  // already gone)`, so a user's hand-over took 65 seconds and they lost the campsite.
+  const dir = tmp();
+  // A pid that certainly existed and certainly does not now: a child we started and waited out.
+  const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+  await new Promise((r) => child.on('exit', r));
+  try {
+    assert.ok(child.pid, 'the stand-in must have had a pid');
+    assert.equal(pidAlive(child.pid!), false, 'an exited process must read as gone');
+    fs.writeFileSync(path.join(dir, LOCK), JSON.stringify({
+      owner: 'rc-keepwarm', pid: child.pid, at: new Date().toISOString(),
+    }));
+    assert.equal(profileLockHolder(dir), null, 'a dead writer holds nothing');
+    assert.equal(acquireProfileLock(dir, 'rc-hold-runner'), true, 'so the next process takes it immediately');
     assert.equal(profileLockHolder(dir)?.owner, 'rc-hold-runner');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('an unreadable pid fails towards HELD, never towards free', () => {
+  // A wrong "free" opens a second Chromium on a profile in use, which corrupts the session;
+  // a wrong "held" only costs the old wait. So anything we cannot read counts as alive.
+  for (const pid of [0, -1, 1.5, NaN, undefined as unknown as number]) {
+    assert.equal(pidAlive(pid), true, String(pid));
+  }
+  assert.equal(pidAlive(process.pid), true, 'we are alive');
 });
 
 test('forcing never touches a free lock or our own', () => {

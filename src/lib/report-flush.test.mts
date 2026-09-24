@@ -39,10 +39,27 @@ test('a verdict-bearing stage flushes IMMEDIATELY, not on the debounce', () => {
   const s = code(CLAIMFLOW);
   assert.match(s, /FLUSH_NOW_STAGES\.has\(r\.stage\)/,
     'onReport must branch on the stage before queueing');
-  // The branch must actually FLUSH and RETURN — falling through would re-arm the timer
-  // and put the report back in the queue it was meant to skip.
-  assert.match(s, /FLUSH_NOW_STAGES\.has\(r\.stage\)\)\s*\{[\s\S]{0,220}flushReports\(\);[\s\S]{0,40}return;/,
-    'the immediate branch must call flushReports and return');
+  // The branch must FLUSH, and must not re-arm the debounce — that would put the report back
+  // in the queue it was meant to skip. So the debounce lives in the ELSE.
+  assert.match(s, /FLUSH_NOW_STAGES\.has\(r\.stage\)\)\s*\{[\s\S]{0,220}flushReports\(\);\s*\}\s*else\s*\{[\s\S]{0,400}flushTimer\.current = setTimeout\(flushReports/,
+    'the immediate branch must flush, and only the other branch may arm the timer');
+});
+
+test('THE FLUSH MUST NOT END THE HANDLER — the stages it sends still have to be READ (2026-09-24)', () => {
+  // The first version ended this branch in `return`, and the guard above REQUIRED it. So from
+  // #395 (2026-09-22) every flush-now stage was sent and then ignored: the `closed` downgrade
+  // and the `status` "added to cart" check below it never ran. A guard pinning the send and
+  // not the meaning enforced the regression it sat beside.
+  const s = code(CLAIMFLOW);
+  const at = s.indexOf('FLUSH_NOW_STAGES.has(r.stage)');
+  assert.ok(at > -1, 'anchor lost — this guard is measuring nothing');
+  const closedAt = s.indexOf("r.stage === 'closed'", at);
+  const statusAt = s.indexOf("(r.stage === 'status' || r.stage === 'banner')", at);
+  assert.ok(closedAt > at && statusAt > at, 'the closed and status handlers must sit after the flush branch');
+  // Between the flush branch and those handlers, nothing may leave the callback early.
+  const between = s.slice(at, Math.min(closedAt, statusAt));
+  assert.doesNotMatch(between, /\breturn\b/,
+    'a return between the flush and the stage handlers skips them for exactly the stages that carry verdicts');
 });
 
 test('`status` is in the set — it is the stage that carried the lost 401', () => {

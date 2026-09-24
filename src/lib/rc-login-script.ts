@@ -370,6 +370,76 @@ ${captchaProbeSource()}
     } catch (e) { return false; }
   }
 
+  /*
+     A STALE SESSION: RC SAYS SIGNED IN, AND ITS STORED TOKEN IS DEAD (2026-09-24).
+
+     RC boots its signed-in state from localStorage customerId, and that key survives the
+     token by weeks (the R359 trap, 2026-09-21). With it present RC draws the page SIGNED IN,
+     so it never renders its Log in control -- and the Log in CLICK is the one thing that
+     mints a fresh token (the bot has relied on it every release morning; a plain reload
+     re-acquires the same dead token from RC's server, 2026-08-22). So a phone holding a dead
+     token under a live-looking customerId has no way back in: no control to press, no form
+     to fill. On 2026-09-24 that phone's token had been dead for 23 hours and the user
+     watched the sign-in window bounce until the campsite was lost.
+
+     POSITIVE EVIDENCE ONLY. All three must hold: RC says signed in, no live token has been
+     seen in this page, and the STORED token decodes and is past its expiry. An undecodable
+     or absent token is "we could not tell" and never triggers this -- the house rule that
+     an unknown must not round to a verdict. It runs only AFTER the full signed-in wait, so
+     a session RC renews on its own in that window is never touched.
+
+     ONCE PER WINDOW, guarded in sessionStorage so a reload cannot loop it. A storage that
+     cannot be read counts as ALREADY DONE: failing towards doing nothing is the direction
+     that cannot hurt a working session.
+
+     WHAT IS CLEARED is what RC's own sign-in writes -- its two token copies, customerId and
+     the two customer keys beside it -- and the okta-auth-js store, matched ANYWHERE in the
+     name because RC wraps it as @secure.s.okta-* (the 2026-09-01 census lesson). COOKIES ARE
+     NEVER TOUCHED: they carry the Okta session that lets the click be answered without a
+     password, and the device id that keeps this looking like a phone Okta has seen before.
+     KEY NAMES ARE REPORTED, NEVER VALUES.
+
+     NO BACKTICKS IN THIS COMMENT -- it lives inside a template literal.
+  */
+  var CH_STALE_KEY = 'camphawk_stale_reset';
+  var CH_STALE_NAMES = ['ssoAccessToken', 'accessToken', 'customerId', 'customerName', 'customerDetail'];
+  function chStaleResetDone() {
+    try { return sessionStorage.getItem(CH_STALE_KEY) === '1'; } catch (e) { return true; }
+  }
+  function chStoredTokenDead() {
+    try {
+      var R = window.__camphawkRc;
+      if (!R || typeof R.jwtFacts !== 'function') return false;
+      var t = localStorage.getItem('ssoAccessToken') || localStorage.getItem('accessToken');
+      if (!t) return false;
+      var f = R.jwtFacts(t);
+      return !!(f && f.decodable && typeof f.expiresInSec === 'number' && f.expiresInSec <= 0);
+    } catch (e) { return false; }
+  }
+  function chStaleSession() {
+    try {
+      var R = window.__camphawkRc;
+      if (!R || typeof R.rcLoggedIn !== 'function' || !R.rcLoggedIn()) return false;
+      if (chSignedIn()) return false;
+      return chStoredTokenDead();
+    } catch (e) { return false; }
+  }
+  function chResetStaleSession() {
+    var cleared = [];
+    try {
+      sessionStorage.setItem(CH_STALE_KEY, '1');
+      var all = [];
+      for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k) all.push(k); }
+      for (var j = 0; j < all.length; j++) {
+        var key = String(all[j]);
+        if (CH_STALE_NAMES.indexOf(key) === -1 && key.toLowerCase().indexOf('okta-') === -1) continue;
+        localStorage.removeItem(key);
+        if (cleared.length < 16) cleared.push(key.slice(0, 40));
+      }
+    } catch (e) {}
+    return cleared;
+  }
+
   /**
    * React tracks its own value; a bare .value assignment is not seen by the form.
    *
@@ -590,6 +660,19 @@ ${captchaProbeSource()}
           // had not rendered yet" can be told apart — 0 candidates means the DOM was empty.
           //
           // Never the candidates' text: RC's header carries the signed-in user's own name.
+          // NOTHING TO PRESS, BECAUSE RC THINKS WE ARE SIGNED IN AND WE ARE NOT (2026-09-24).
+          // Clear the stale session and reload, so RC draws its Log in control and the next
+          // run of this script presses it. See chStaleSession for the evidence it needs.
+          // The reload is deferred so the report leaves the page before the page does.
+          else if (!chAtOkta && !chStaleResetDone() && chStaleSession()) {
+            var chCleared = chResetStaleSession();
+            if (chCleared.length) {
+              chSay('stale-reset', { cleared: chCleared, waitedMs: chWaited });
+              try { setTimeout(function () { try { location.reload(); } catch (e) {} }, 400); } catch (e) {}
+              return done(true, 'stale-reset', 'cleared an expired ReserveCalifornia sign-in; starting a fresh one');
+            }
+            chSay('signin-missing', { candidates: document.querySelectorAll('a, button').length, waitedMs: chWaited, atOkta: chAtOkta });
+          }
           else chSay('signin-missing', { candidates: document.querySelectorAll('a, button').length, waitedMs: chWaited, atOkta: chAtOkta });
         }
 

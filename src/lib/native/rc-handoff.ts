@@ -118,7 +118,7 @@
 
 // The one definition of "is this token evidence of a usable session?", shared with the
 // claim gate. NOT a native plugin, so a module-scope import is fine here.
-import { rcCloseAction } from '@/lib/rc-token-liveness';
+import { rcCloseAction, foldSignInFacts, NO_SIGN_IN_FACTS } from '@/lib/rc-token-liveness';
 
 export interface RcHandoff {
   /** The RC page to land on — the loop, never the park or the cart. See lib/booking-url. */
@@ -368,6 +368,11 @@ async function injectableWebView(): Promise<null | {
         close?: () => void;
       };
       let closedAlready = false;
+      // WHAT THIS WINDOW HAS BEEN TOLD — `rc-session` and the census that carries the token's
+      // expiry arrive as SEPARATE reports, and the close needs both (2026-09-24). Folded with
+      // the same token-life reader the claim screen uses, so the two can no longer disagree
+      // about whether a session is alive. See `foldSignInFacts`.
+      let facts = NO_SIGN_IN_FACTS;
       // HAS THIS WEBVIEW EVER RENDERED ANYTHING? The load watchdog and the `loaderror` arm
       // both turn on this one fact, and they need opposite things from it: the watchdog only
       // guards the FIRST load, and `loaderror` only acts BEFORE one. See each for why.
@@ -422,7 +427,8 @@ async function injectableWebView(): Promise<null | {
           // RC's own bundle. Closing before `customerId` is written leaves RC rendering signed
           // out over a locked campsite, on Android every time (its plugin kills the in-flight
           // request with `about:blank`) and on iOS whenever step two is slow.
-          const action = rcCloseAction({ closeOnToken, stage: r.stage, detail: r.detail });
+          facts = foldSignInFacts(facts, r.stage, r.detail);
+          const action = rcCloseAction({ closeOnToken, facts });
           if (action === 'close') closeOnce('session');
         });
         // Host-side facts the page cannot report about itself. `n: 0` marks them as ours;

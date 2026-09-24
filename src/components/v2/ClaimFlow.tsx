@@ -313,17 +313,25 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
      * `keepalive` on the fetch means an immediate flush survives the webview closing —
      * which a queued one, by definition, had not yet started.
      */
+    //
+    // ## AND THE FLUSH MUST NOT END THE HANDLER (2026-09-24)
+    //
+    // The first version of this branch ended in `return`, so every stage in
+    // `FLUSH_NOW_STAGES` was sent and then IGNORED: the `closed` downgrade and the
+    // `status` "added to cart" check below never ran again after #395. The flush is about
+    // WHEN a report is sent; what the report MEANS is decided further down, for every
+    // stage. So the two paths differ only in how they schedule the send.
     if (FLUSH_NOW_STAGES.has(r.stage)) {
       if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
       flushReports();
-      return;
+    } else {
+      // AND THE DEBOUNCE HAS A CEILING NOW. Without one, "quiet for 1500ms" is a condition a
+      // busy run can simply never meet, and the buffer grows until something else flushes it.
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      if (oldestPending.current == null) oldestPending.current = Date.now();
+      const waited = Date.now() - oldestPending.current;
+      flushTimer.current = setTimeout(flushReports, Math.max(0, Math.min(1500, MAX_REPORT_WAIT_MS - waited)));
     }
-    // AND THE DEBOUNCE HAS A CEILING NOW. Without one, "quiet for 1500ms" is a condition a
-    // busy run can simply never meet, and the buffer grows until something else flushes it.
-    if (flushTimer.current) clearTimeout(flushTimer.current);
-    if (oldestPending.current == null) oldestPending.current = Date.now();
-    const waited = Date.now() - oldestPending.current;
-    flushTimer.current = setTimeout(flushReports, Math.max(0, Math.min(1500, MAX_REPORT_WAIT_MS - waited)));
 
     // TOKEN LIFE, FROM WHICHEVER STAGE HAPPENS TO CARRY IT. `null` means this report said
     // nothing about it and must leave the last reading alone — an absent reading is not a
@@ -569,11 +577,21 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     setLoginStage(null);
     setRcCheck('opening');
     const pages = new Set<string>();
+    // THE STALE-SESSION RESET RELOADS A PAGE WE HAVE ALREADY ACTED ON (2026-09-24). The
+    // sign-in script clears an expired session RC still draws as signed in, then reloads so
+    // RC renders its Log in control — and the per-page guard below would refuse the script
+    // its turn on the reloaded page, leaving nobody to press it. So the reset clears the
+    // guard, ONCE: the script's own sessionStorage flag bounds it to one reset per window,
+    // and this bounds it again here, so the credential budget can reset at most once.
+    let resetSeen = false;
     try {
       await openRcHandoff(
         { url: bookingUrl.current },
         {
-          onReport,
+          onReport: (r: RcReport) => {
+            if (r.stage === 'stale-reset' && !resetSeen) { resetSeen = true; pages.clear(); }
+            onReport(r);
+          },
           closeOnToken: true,
           afterLoad: (at: string) => {
             // Origin + path, never the query: Okta's callback carries `?code=…&state=…`,

@@ -51,6 +51,7 @@
  * clears the warning. The honest remedy is to make `expired` sticky for the run, not to
  * refuse unknowns — refusing is what would lock out older bundles. Recorded in CLAUDE.md.
  */
+import { rcTokenLifeFromReport, type RcTokenLife } from './claim-gate';
 
 export type RcTokenLiveness = 'live' | 'expired' | 'unknown';
 
@@ -148,20 +149,81 @@ export type RcCloseAction = 'close' | 'wait';
  * shows a notice in the window ("when you see your name, tap Done") and the user closes it
  * — which is precisely the configuration the 08-31 hand bisect proved works.
  */
+/**
+ * WHAT THE SIGN-IN WINDOW HAS BEEN TOLD SO FAR — folded report by report.
+ *
+ * ## WHY A FOLD, AND NOT ONE REPORT AT A TIME (2026-09-24)
+ *
+ * `rcCloseAction` used to decide from the report in hand, and the report it closed on —
+ * `rc-session { loggedIn: true }` — is RC's persisted `customerId`, which SURVIVES THE TOKEN
+ * BY WEEKS. On 2026-09-24 a user's phone held a token dead for 23 hours under RC's own
+ * "signed in". The claim screen read that token (`rcTokenLifeFromReport` → `dead`) and asked
+ * them to sign in; the sign-in window opened, heard `loggedIn: true` first (it is report n2,
+ * the census that carries the expiry is n3), and closed before anything could be typed. The
+ * screen then saw the same dead token and asked again. **Two readers of one fact, and they
+ * disagreed** — the #R359 trap (2026-09-21) fixed in the gate and left open in the window.
+ * The user watched it bounce while the campsite sat in our cart, and lost it.
+ *
+ * So the window now reads token life through THE SAME FUNCTION the gate does, and it
+ * remembers: `rc-session` and the census arrive as separate reports, and the decision needs
+ * both. The fold's `life` keeps the last POSITIVE reading — exactly `ClaimFlow`'s
+ * `if (life) setTokenLife(life)` — so once a token has been seen dead, only a token seen
+ * ALIVE lets the window close. That is what keeps the two screens from disagreeing again.
+ */
+export type SignInWindowFacts = {
+  /** RC's own latest verdict: `!!localStorage.customerId`, strictly `true`. */
+  loggedIn: boolean;
+  /** Token life, last positive reading wins — `rcTokenLifeFromReport`, shared with the gate. */
+  life: RcTokenLife;
+  /** Has the `session` census — the report that carries the stored token's expiry — arrived? */
+  censusSeen: boolean;
+};
+
+export const NO_SIGN_IN_FACTS: SignInWindowFacts = { loggedIn: false, life: 'unknown', censusSeen: false };
+
+/** Fold one report into what the window knows. Pure; never throws on a malformed report. */
+export function foldSignInFacts(
+  prev: SignInWindowFacts,
+  stage: string,
+  detail: unknown,
+): SignInWindowFacts {
+  const d = detail && typeof detail === 'object' ? (detail as Record<string, unknown>) : null;
+  const next: SignInWindowFacts = { ...prev };
+  if (stage === 'rc-session' && d) next.loggedIn = d.loggedIn === true;
+  if (stage === 'session') next.censusSeen = true;
+  const life = rcTokenLifeFromReport(stage, d);
+  if (life) next.life = life;
+  return next;
+}
+
+/**
+ * THE WHOLE "may this sign-in window close now?" DECISION.
+ *
+ * Close when RC says it is signed in (`customerId`, the 09-01 rule — never on a token alone,
+ * which races RC's step two) AND the token is not known to be dead:
+ *
+ *   - `alive`   → close. The ordinary signed-in case, and the end of a fresh sign-in.
+ *   - `unknown` → close ONLY once the census has arrived. It is report n3, one step behind
+ *                 `rc-session`; closing on n2 is precisely how the 09-24 loop happened. A
+ *                 census that found no readable token is still "we could not tell", and the
+ *                 08-12 rule applies: an already-signed-in user must not be stranded.
+ *   - `dead`    → never. RC's `customerId` is lying about a session that cannot cart. The
+ *                 window stays open, and the sign-in script clears the stale session and
+ *                 signs in fresh (`rc-login-script.ts`, `stale-reset`).
+ *
+ * The cart path (`closeOnToken: false`) never closes, whatever it is told — there the window
+ * IS the job, and closing it for any reason kills the two cart POSTs it exists to make.
+ */
 export function rcCloseAction(opts: {
   closeOnToken: boolean;
-  stage: string;
-  detail: unknown;
+  facts: SignInWindowFacts;
 }): RcCloseAction {
-  const { closeOnToken, stage, detail } = opts;
-  // The cart path passes `closeOnToken: false` — there the window is the job, and closing
-  // it for any reason kills the two cart POSTs it exists to make.
+  const { closeOnToken, facts } = opts;
   if (!closeOnToken) return 'wait';
-  if (stage !== 'rc-session') return 'wait';
-  const d = detail as { loggedIn?: unknown } | null | undefined;
-  // STRICTLY `true`. A missing field is a bundle older than this rule and must not close;
-  // `false` is RC saying "not yet"; anything else is not a reading.
-  return d && d.loggedIn === true ? 'close' : 'wait';
+  if (!facts.loggedIn) return 'wait';
+  if (facts.life === 'alive') return 'close';
+  if (facts.life === 'unknown' && facts.censusSeen) return 'close';
+  return 'wait';
 }
 
 /**

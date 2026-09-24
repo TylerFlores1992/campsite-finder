@@ -11,15 +11,16 @@
  * both platforms closed on `timeout`. Android's plugin kills the in-flight request on close
  * (`about:blank`); iOS's only dismisses the view controller. That is the whole platform story.
  *
- * The rule now: close on `rc-session { loggedIn: true }` — RC's own `customerId` — and on
- * NOTHING else. No timer. These guard the decision (`rcCloseAction`), the readings, and
+ * The rule now: close on `rc-session { loggedIn: true }` — RC's own `customerId` — with a
+ * token not known to be dead (2026-09-24), and on NOTHING else. No timer. These guard the decision (`rcCloseAction`), the readings, and
  * that the host actually USES it. `rc-session-close.test.mts` drives the seam behaviourally.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  rcCloseAction, keepSignedInReading, signInPathReading, rcSessionReading,
+  rcCloseAction, foldSignInFacts, NO_SIGN_IN_FACTS,
+  keepSignedInReading, signInPathReading, rcSessionReading,
 } from '../src/lib/rc-token-liveness';
 
 const LIVE = { captured: true, expiresInSec: 3598 };
@@ -31,44 +32,94 @@ function code(path: string): string {
     .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 }
 
-// ── rcCloseAction ──────────────────────────────────────────────────────────────────────
+// ── rcCloseAction, over the folded facts ─────────────────────────────────────────────
+//
+// THE RULE GREW ONE CONDITION ON 2026-09-24, and the reason is a real loss. RC's `customerId`
+// — the `loggedIn` this closes on — outlives the token by weeks. A phone holding a token dead
+// for 23 hours reported `rc-session { loggedIn: true }` (n2) BEFORE the census carrying the
+// expiry (n3), the window closed on n2, the claim screen saw the dead token and asked again,
+// and the user watched it bounce until the campsite was gone. So the window now folds what it
+// is told, with the gate's own token-life reader, and closes only when RC says signed in AND
+// the token is not known to be dead.
 
-test("RC reporting signed in closes the window — that is the whole rule", () => {
-  assert.equal(rcCloseAction({
-    closeOnToken: true, stage: 'rc-session', detail: { loggedIn: true, at: 'https://www.reservecalifornia.com/park/690/612' },
-  }), 'close');
+/** Fold a sequence of reports the way the host does, then ask. */
+function after(reports: [string, unknown][], closeOnToken = true) {
+  let facts = NO_SIGN_IN_FACTS;
+  for (const [stage, detail] of reports) facts = foldSignInFacts(facts, stage, detail);
+  return rcCloseAction({ closeOnToken, facts });
+}
+const CENSUS_ALIVE = { storedToken: 'jwt', storedExpiresInSec: 3400 };
+const CENSUS_DEAD = { storedToken: 'jwt', storedExpiresInSec: -82680 };
+const CENSUS_NONE = { storedToken: 'none', storedExpiresInSec: null };
+const SIGNED_IN = { loggedIn: true, at: 'https://www.reservecalifornia.com/park/690/612' };
+
+test('THE 09-24 LOOP: RC says signed in over a DEAD token — the window must NOT close', () => {
+  // The exact order the phone sent: rc-session first, the census one report later.
+  assert.equal(after([['rc-session', SIGNED_IN]]), 'wait',
+    'n2 alone must not close — the census that says whether the token is alive has not arrived');
+  assert.equal(after([['rc-session', SIGNED_IN], ['session', CENSUS_DEAD]]), 'wait',
+    "customerId over a 23-hour-dead token is not a session — closing here is the loop");
+  // And the census arriving FIRST changes nothing.
+  assert.equal(after([['session', CENSUS_DEAD], ['rc-session', SIGNED_IN]]), 'wait');
+});
+
+test('once a token has been seen dead, only a token seen ALIVE lets the window close', () => {
+  // After the stale reset RC's census reads `storedToken: none` — an absence, which must not
+  // erase the dead reading, or the window closes onto the claim screen's still-dead gate and
+  // the loop is back. A fresh sign-in ends with a live token AND customerId: that closes.
+  const dead = [['rc-session', SIGNED_IN], ['session', CENSUS_DEAD]] as [string, unknown][];
+  assert.equal(after([...dead, ['rc-session', { loggedIn: false }], ['session', CENSUS_NONE], ['rc-session', SIGNED_IN]]), 'wait',
+    'an empty census after a reset is not proof of life');
+  assert.equal(after([...dead, ['token', LIVE], ['rc-session', SIGNED_IN]]), 'close',
+    'a fresh live token plus RC saying signed in is the end of the sign-in');
+});
+
+test('an already signed-in user with a LIVE token still closes at once', () => {
+  // The 08-12 case the rc-session rule exists for: a user who was signed in must not be left
+  // stranded on RC's page with nothing telling them to go back.
+  assert.equal(after([['rc-session', SIGNED_IN], ['session', CENSUS_ALIVE]]), 'close');
+  assert.equal(after([['token', LIVE], ['rc-session', SIGNED_IN]]), 'close');
+});
+
+test('no readable token closes only once the census has spoken', () => {
+  // "We could not tell" keeps the pre-09-24 behaviour — but not before the census, which is
+  // one report behind rc-session and is the only thing that could say "dead".
+  assert.equal(after([['rc-session', SIGNED_IN]]), 'wait');
+  assert.equal(after([['rc-session', SIGNED_IN], ['session', CENSUS_NONE]]), 'close');
 });
 
 test('RC reporting NOT signed in never closes, however live the token is', () => {
   // The 09-01 state exactly: an Okta token present, `customerId` absent. Closing here is the
   // defect — RC renders signed out over a locked campsite.
-  assert.equal(rcCloseAction({ closeOnToken: true, stage: 'rc-session', detail: { loggedIn: false } }), 'wait');
+  assert.equal(after([['token', LIVE], ['session', CENSUS_ALIVE], ['rc-session', { loggedIn: false }]]), 'wait');
 });
 
 test('a LIVE token is not a reason to close — on any page', () => {
-  // Every previous generation closed on this. A live token is step ONE of RC's sign-in, and
-  // it is captured off step two's own request, so closing on it races step two's response.
-  assert.equal(rcCloseAction({ closeOnToken: true, stage: 'token', detail: LIVE }), 'wait');
+  // A live token is step ONE of RC's sign-in, captured off step two's own request, so closing
+  // on it races step two's response.
+  assert.equal(after([['token', LIVE]]), 'wait');
+  assert.equal(after([['token', LIVE], ['session', CENSUS_ALIVE]]), 'wait');
 });
 
 test('the signal is STRICTLY true — a missing or malformed field never closes', () => {
-  // A bundle older than #249 sends no `rc-session` at all; a malformed one is not a reading.
   for (const detail of [null, undefined, {}, { loggedIn: 'true' }, { loggedIn: 1 }, { loggedIn: null }]) {
-    assert.equal(rcCloseAction({ closeOnToken: true, stage: 'rc-session', detail }), 'wait', JSON.stringify(detail));
+    assert.equal(after([['token', LIVE], ['rc-session', detail]]), 'wait', JSON.stringify(detail));
   }
+});
+
+test('RC flipping back to signed out re-opens the question', () => {
+  // `loggedIn` is RC's LATEST verdict, not a latch: RC's own interceptor signs out on a dead
+  // token (`customerLogOut`), and a window that remembered the earlier true would close on it.
+  assert.equal(after([['rc-session', SIGNED_IN], ['rc-session', { loggedIn: false }], ['session', CENSUS_ALIVE]]), 'wait');
 });
 
 test('the cart path never closes, whatever RC reports', () => {
-  // closeOnToken is false there because the window IS the job — closing it for any reason
-  // kills the two RC cart POSTs it exists to make.
-  for (const stage of ['rc-session', 'token', 'session']) {
-    assert.equal(rcCloseAction({ closeOnToken: false, stage, detail: { loggedIn: true, ...LIVE } }), 'wait', stage);
-  }
+  assert.equal(after([['rc-session', SIGNED_IN], ['token', LIVE], ['session', CENSUS_ALIVE]], false), 'wait');
 });
 
-test('no other stage is a close', () => {
-  for (const stage of ['session', 'banner', 'status', 'cart-verified', 'settle-timeout', 'injected']) {
-    assert.equal(rcCloseAction({ closeOnToken: true, stage, detail: { loggedIn: true } }), 'wait', stage);
+test('no other stage moves loggedIn', () => {
+  for (const stage of ['session', 'banner', 'status', 'cart-verified', 'settle-timeout', 'injected', 'token']) {
+    assert.equal(foldSignInFacts(NO_SIGN_IN_FACTS, stage, { loggedIn: true }).loggedIn, false, stage);
   }
 });
 
