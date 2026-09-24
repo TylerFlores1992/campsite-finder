@@ -12,6 +12,93 @@ correction is itself the record; here it is just weight.
 
 ## 0. FIRST: WHERE 2026-09-24 LEFT IT
 
+### EVENING (~22:10Z): an orchestrator pass — the child fleet audited, and one fix SCOPED
+
+**Nothing was dispatched and nothing is in flight.** Master is `b9672aa` (#410). No child holds
+the CI slot.
+
+**THE CHILD FLEET, READ OFF `list_sessions` AND THE PR LIST, NOT OFF THE CHILDREN'S SUMMARIES.**
+Seven finished children whose work is merged were **archived**: domain-skills (#383),
+recgov-login-census (#379), autocart-retry (#402), claude-md-prune (#382),
+app-manage-subscription (#370), renewal-backoff-escalation (#371), ios-camera-crash (#378) — each
+branch tip checked equal to its PR's merged head. Three children never delivered, and **none needs
+rebuilding**:
+
+| child | state | verdict |
+| --- | --- | --- |
+| `explore-availability-unknown` | BLOCKED, push denied 09-20, work lost | **done by #377** — a clean live search now shows 1 unknown among reservable campgrounds |
+| `recgov-login-password-step` | BLOCKED, `77fbcdf` never pushed | **done by #379** — its first commit `d9e041d` is that work, and #379 then fixed the cause |
+| `rdr-burst-source` | REVIEW_READY, no branch ever pushed | **not needed as written** — the leak file forbids blocking RC's requests before the cause is named, and records the burst as decoupled from the leak. The owner's call if it is ever wanted. |
+
+Those three and the second parent's `manifest` child are **still live, deliberately** — the owner
+did not ask for them to be archived.
+
+### THE SEARCH FAN-OUT — SCOPED, NOT BUILT. This is the whole scope.
+
+**The finding is in `CLAUDE.md` → Open, "EXPLORE'S rec.gov FAN-OUT".** In short: `/api/search`
+checks every rec.gov campground at once, and repeated wide searches trip a breaker that then blinds
+every search on that Vercel instance for 1-8 minutes. Measured by accident, and the measurement
+itself was the outage. **Do not reproduce it against production.**
+
+**Mechanism, read from the code (`src/app/api/search/route.ts`):**
+- `limit: limit * 3` — Explore sends no `limit`, so 50 → up to **150** campgrounds fetched. The
+  comment says "fetch extra so we can filter by availability", but nothing is ever filtered: all
+  150 are annotated and returned.
+- `Promise.allSettled(campgrounds.map(...))` — **every** check starts at once. rec.gov costs one
+  request per campground **per month the stay spans**, sequentially inside
+  `hasAvailabilityInRange`.
+- **No cache.** A radius chip, a date change or a filter tick is a full new fan-out for rows it
+  fetched seconds earlier.
+- The breaker (`src/lib/availability/recgov.ts`) is **process-local**: `RECGOV_BREAKER_TRIP` 3,
+  cooldown 60 s doubling to 8 min. On Vercel that means **per warm instance**, shared by every
+  request that instance serves.
+
+**The fix, web-side:**
+1. **A concurrency cap on the route's rec.gov checks** — N in flight, start ~8, as an env var.
+   Nearest first: results are sorted by distance, so the cards on screen resolve first.
+2. **Single-flight + a short TTL cache per (campground, month)**, per warm instance, ~60-120 s.
+   Two rules copied from `worker/recgov-scheduler.ts`: **an `unknown` is never cached**, and
+   **never overwrites** a real reading. A cached `false` must be exactly as fresh as a live one
+   would have been.
+3. **A deadline on the whole annotation** (~8 s). Anything not checked by then renders `unknown`,
+   **never `false`**. Without it, a cap turns a 200-mile search from "blinds the lambda" into
+   "takes 40 seconds".
+
+**THE ONE DECISION — IT COSTS A POLLER RESTART.** `hasAvailabilityInRange` calls
+`getAvailabilityFromRecGov` internally, so the cache can only be injected with an optional
+`fetchMonth` parameter on it, defaulting to today's behaviour. That edits
+`src/lib/availability/recgov.ts`, and **`src/lib/availability/**` is in `worker-deploy.yml`'s
+`paths:`**, so the merge restarts all three pollers.
+- The alternative, duplicating the range logic in a web-only file, keeps the deploy web-only but
+  forks the one function whose `null` versus `false` rule this repo paid for. **Recommended: take
+  the restart, and land it away from an 08:00 PT release** — not before 09-25 15:00Z.
+- **Do NOT put the cache inside `getAvailabilityFromRecGov`.** The poller's scheduler calls it
+  with its own `maxAgeMs`, and auto-cart asks for fresh reads; a module cache underneath would
+  serve the worker stale data it never asked for.
+
+**Out of scope:** a cross-instance cache (KV or DB); routing rec.gov through the worker (rejected
+2026-07-31 — it couples alerting and search into one failure domain); changing the breaker's
+thresholds; UI changes; the RC/UseDirect checks in the same fan-out (their client already
+coalesces).
+
+**Open question for the owner:** keep `limit * 3`? Dropping it to `limit` cuts the fan-out by
+two thirds **and cuts Explore's result count by the same amount**. That is a product change, not
+a performance fix, so it is not in the default scope.
+
+**Guards (pure, no database, so they cost no CI-slot hazard beyond the suite itself):** a fake
+fetcher that asserts the in-flight maximum never exceeds the cap; single-flight dedupes; an
+`unknown` is not cached and does not displace a real reading; the deadline yields `unknown` and
+never `false`; nearest checked first. Mutation-test each, and **assert the mutation applied**.
+
+**Verification after deploy, and the trap in it.** The only reproduction is the outage, so do not
+repeat the five-search burst. Take one ordinary search and read the unknown count, then a second
+identical search within the TTL and confirm it is faster. That shows the cache working. **It does
+not prove the cap holds under load, and should not be reported as if it did.**
+
+**Size and band:** one new module or parameter, a route edit, a test file — roughly 300-500
+lines. **Opus (`claude-opus-5`)**: the failure is silent, because an over-cautious cap reads as
+"rec.gov is flaky" and a cache that stores `unknown` reads as "booked".
+
 Landed 09-24: **#401** (the delivery canary starvation), **#402** (the rec.gov cart ladder),
 **#403** (docs), **#404** (the `bot_events` readout, blind since 09-21), **#405** (docs), and
 **#406** (the RC hand-off: sign-in loop, the #395 early return, the dead-pid lock wait). The

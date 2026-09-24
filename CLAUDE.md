@@ -2213,9 +2213,12 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
   `locked=NULL|present`. `NULL` confirms the standing null-`LockedShoppingCart` candidate;
   `present` refutes it and the key names say what the matcher is wrong about. **Still a
   candidate, not an answer — do not write a mechanism in before the log arrives.**
-- **The RC reconnect's NEXT step is unexplained.** #363 fixed the hidden-input timeout; the box
-  now submits the email and rec.gov renders **no password input at all** (`0 match(es), 0
-  visible`). That is a third state, not the old bug. **No mechanism is written in.**
+- ~~**The RC reconnect's NEXT step is unexplained.**~~ **EXPLAINED AND FIXED BY #379 (2026-09-20),
+  and this item predated it** (it also said "RC" and meant rec.gov). The `0 match(es), 0 visible`
+  after the email was the **newsletter form's** visible email box being filled, and its "Sign up"
+  button pressed, instead of the login modal's — `.first()` resolves in document order. #379
+  scopes every field to `[role="dialog"]` and clicks the opener first. **Unproven in anger:** no
+  real reconnect has run since the box took it. `docs/NEXT-SESSION.md` §0b already said so.
 - **CLOSED THE SAME NIGHT, AND THE MARGIN WAS NEVER SPENT.** The `okta=GONE(404)` at 04:44Z
   repaired itself at 05:14:39Z in **16 seconds**; at 12:58Z the session was `ok` for 7h43m with
   `okta=ALIVE`. Kept here only as the pointer to the entry above, which records what is
@@ -2238,6 +2241,27 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
   - **NOT SHIPPED, AND THE REASON IS THE FILE IT LIVES IN.** `src/lib/health-thresholds.ts` is
     in `worker-deploy.yml`'s `paths:`, so merging it **restarts all three pollers** — which is
     exactly what you must not do inside a release window. Land it after a release, never before.
+- **EXPLORE'S rec.gov FAN-OUT CAN BLIND SEARCH FOR EVERYONE ON A LAMBDA — SCOPED, NOT BUILT
+  (2026-09-24).** `/api/search` checks every rec.gov campground at once:
+  `Promise.allSettled(campgrounds.map(...))`, over `limit * 3` rows (Explore's default 50 → up to
+  **150**), one rec.gov request per campground-month, **no concurrency cap and no cache**. The
+  breaker in `src/lib/availability/recgov.ts` is **process-local** and trips on **3** throttles
+  for 60 s doubling to 8 min, so one wide search can blind every search on that warm instance.
+  - **MEASURED, AND I CAUSED IT.** A session fired five searches back to back (four at 100 mi,
+    one small), then four more: Bakersfield came back **100 reservable rec.gov `unknown` against
+    36 answered** (every source), Yosemite **192 against 56** (Upper/North/Lower Pines among
+    them). The same Bakersfield search **nine minutes later, alone**: **68 open, 67 booked, 1
+    unknown**. So a SINGLE 160-campground search does not trip it; **repeated wide searches
+    do** — which is what a person clicking radius and date chips produces. Production search
+    showed "couldn't check" on most rec.gov cards for a few minutes because of a measurement.
+    **Do not load-test `/api/search` against production to reproduce it** — the reproduction IS
+    the outage.
+  - **IT IS NOT THE #377 CASE.** That was first-come campgrounds (`reservable = false`),
+    correctly unknown and now badged. This is reservable ones, unknown because WE throttled.
+  - **Scope and the open questions are in `docs/NEXT-SESSION.md` §0.** The one decision in it:
+    the fix wants an optional fetcher on `hasAvailabilityInRange`, and `src/lib/availability/**`
+    is in `worker-deploy.yml`'s `paths:` — so it restarts the pollers and must land away from a
+    release window.
 - **MIGRATION 079 IS THE LAST OF MAIN'S BLOCK AND IS STILL FREE.** Three repairs that looked
   like they needed it did not: a `lost` hold status (derived instead — `src/lib/hold-outcome.ts`),
   a rehearsal `attempted_at` column (a different SOURCE, not a new column), and a `noted_at`
