@@ -148,6 +148,18 @@ test('the check period scales with a shortened interval rather than outrunning i
   assert.ok(check < HOUR * DELIVERY_GATE_FRACTION, `check ${check}ms must stay inside a 1h gate`);
 });
 
+test('a pathologically small interval still cannot produce a sub-second timer', () => {
+  // The first version of this file had no case reaching the floor, so deleting `Math.max(1000, …)`
+  // survived a mutation round: `CANARY_DELIVERY_CHECK_MS=0` is already caught one line earlier by
+  // the `> 0` sanitisation, and every sane interval puts the ceiling far above a second. The
+  // exposure is the INTERVAL, which nothing sanitises downward — `CANARY_DELIVERY_INTERVAL_MS = "100"`
+  // is one typo in fly.toml away, and the ceiling is a fraction of it, so the poller would arm a
+  // 20ms setInterval against Postgres. At this absurdity the floor deliberately wins over the
+  // below-the-gate invariant: hammering the database is the worse failure.
+  const check = deliveryCanaryCheckMs({ CANARY_DELIVERY_INTERVAL_MS: '100' });
+  assert.ok(check >= 1000, `a 100ms interval produced a ${check}ms timer`);
+});
+
 test('nonsense never becomes a busy loop or a NaN timer', () => {
   for (const bad of ['0', '-5', 'abc', '']) {
     const check = deliveryCanaryCheckMs({ CANARY_DELIVERY_CHECK_MS: bad });
