@@ -25,6 +25,64 @@ import { markExternalFetchResult } from './liveness';
 
 const PROBE_TIMEOUT_MS = 25_000;
 
+/**
+ * THE DELIVERY CANARY'S CADENCE COMES FROM THE DATABASE, NOT FROM PROCESS UPTIME.
+ *
+ * `runDeliveryCanary` below skips a run younger than `DELIVERY_GATE_FRACTION` of the
+ * interval, reading the last REAL send out of `alert_canary` — a durable record that
+ * survives a reboot. The poller used to arm it with `setInterval(deliveryCanary, INTERVAL)`
+ * from boot AND call it once at startup, which made those two clocks fight: a worker deploy
+ * inside the gate window skipped the startup run *and* pushed the next tick a further full
+ * interval out. Every deploy did it again.
+ *
+ * MEASURED 2026-09-23: six worker deploys in a week; the last real delivery canary was
+ * 2026-09-22 18:50:36Z and the next tick was not due until 2026-09-24 04:31Z — the canary
+ * was starved by its own scheduler, and `/api/health/status` was about to warn on a
+ * `delivery:*` age for a reason nobody would have guessed from the row. Nothing was wrong
+ * with the gate, the interval, or `fly.toml`; they agree and always did.
+ *
+ * So the timer ASKS on a short period and the DB gate ANSWERS. A restart is itself an ask
+ * (the poller still calls it once at boot), and between restarts the ask is frequent enough
+ * that the answer cannot be missed. This is the absent-reading shape one level up: the
+ * schedule was derived from how long THIS PROCESS had been alive, which is not a fact about
+ * when the canary last ran.
+ */
+export const DELIVERY_GATE_FRACTION = 0.9;
+
+/**
+ * Ceiling on the check period, as a fraction of the send interval. The canary fires at the
+ * first ask after the gate opens, so the latest it can land is
+ * `(DELIVERY_GATE_FRACTION + this) x interval`. At 0.9 + 0.2 = 1.1 that is strictly inside
+ * `DELIVERY_STALE_MS` (1.15 x interval) with margin to spare.
+ * `worker/canary-schedule.test.mts` pins the arithmetic against the real thresholds rather
+ * than restating it here.
+ */
+const DELIVERY_CHECK_CEILING_FRACTION = 0.2;
+
+/** Default check period: ask hourly. This is NOT the send cadence. */
+const DELIVERY_CHECK_DEFAULT_MS = 60 * 60 * 1000;
+
+const DELIVERY_INTERVAL_DEFAULT_MS = 24 * 60 * 60 * 1000;
+
+/** The send interval (`CANARY_DELIVERY_INTERVAL_MS`; `worker/fly.toml` sets 24h). */
+export function deliveryCanaryIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.CANARY_DELIVERY_INTERVAL_MS ?? DELIVERY_INTERVAL_DEFAULT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DELIVERY_INTERVAL_DEFAULT_MS;
+}
+
+/**
+ * How often to ASK whether a delivery send is due — never how often one is sent; the DB
+ * gate decides that. CLAMPED at both ends deliberately: an operator who sets this to the
+ * send interval reinstates the starvation above, and one who sets it to 0 turns a
+ * `setInterval` into a busy loop against Postgres.
+ */
+export function deliveryCanaryCheckMs(env: NodeJS.ProcessEnv = process.env): number {
+  const ceiling = deliveryCanaryIntervalMs(env) * DELIVERY_CHECK_CEILING_FRACTION;
+  const raw = Number(env.CANARY_DELIVERY_CHECK_MS ?? DELIVERY_CHECK_DEFAULT_MS);
+  const wanted = Number.isFinite(raw) && raw > 0 ? raw : DELIVERY_CHECK_DEFAULT_MS;
+  return Math.max(1000, Math.min(wanted, ceiling));
+}
+
 /** ISO date `n` days from now (UTC). */
 function isoInDays(n: number): string {
   return new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
@@ -210,12 +268,12 @@ export async function runDeliveryCanary(): Promise<void> {
   // Default matches what production actually sets in worker/fly.toml (24h). It used
   // to default to 6h, which nothing ran at — and `/api/health/status` had calibrated
   // its staleness threshold against that phantom cadence.
-  const intervalMs = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
+  const intervalMs = deliveryCanaryIntervalMs();
   const [last] = await query<{ last_run_at: string | null }>(
     `SELECT max(last_run_at)::text AS last_run_at FROM alert_canary
      WHERE key IN ('delivery:email', 'delivery:sms') AND detail NOT LIKE 'skipped%'`
   ).catch(() => [{ last_run_at: null }] as { last_run_at: string | null }[]);
-  if (last?.last_run_at && Date.now() - Date.parse(last.last_run_at) < intervalMs * 0.9) {
+  if (last?.last_run_at && Date.now() - Date.parse(last.last_run_at) < intervalMs * DELIVERY_GATE_FRACTION) {
     return; // a real delivery probe already ran this interval — don't re-send on reboot
   }
 

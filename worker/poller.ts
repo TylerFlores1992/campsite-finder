@@ -57,7 +57,7 @@ import { isUseDirectSource, supportsRcHold, USEDIRECT_PROVIDERS } from '../src/l
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
 import { bookingLink } from '../src/lib/booking-url';
 import { rcHoldBetaAllows, RC_HOLD_BETA_OPEN, RC_HOLD_BETA_USER_IDS } from '../src/lib/autocart-beta';
-import { runDetectionCanary, runDeliveryCanary } from './canary';
+import { runDetectionCanary, runDeliveryCanary, deliveryCanaryCheckMs } from './canary';
 import { claimNotification } from './claim';
 import { offerHold, rcBotUsable, holdWindowLoad } from '../src/lib/rc-holds';
 import { RC_HOLD_CAPACITY } from '../src/lib/limits';
@@ -1755,8 +1755,14 @@ async function main() {
   }
 
   // Alert-health canary — non-overlapping, best-effort (never throws into the loop).
+  // The delivery canary's CHECK period is not its cadence — see `deliveryCanaryCheckMs`.
+  // Both are printed because a boot line reading "delivery every 24.0h" was true of the
+  // cadence and false of the timer, which is precisely how the starvation stayed invisible.
+  const deliveryCheckMs = deliveryCanaryCheckMs();
   console.log(
-    `[poller] canary — detection every ${CANARY_DETECT_INTERVAL_MS / 1000}s, delivery every ${(CANARY_DELIVERY_INTERVAL_MS / 3_600_000).toFixed(1)}h`
+    `[poller] canary — detection every ${CANARY_DETECT_INTERVAL_MS / 1000}s, delivery every ` +
+      `${(CANARY_DELIVERY_INTERVAL_MS / 3_600_000).toFixed(1)}h (checked every ` +
+      `${(deliveryCheckMs / 60_000).toFixed(0)}m against the last real send in the DB)`
   );
   let detectRunning = false;
   const detectCanary = async () => {
@@ -1775,7 +1781,10 @@ async function main() {
   detectCanary();
   setInterval(detectCanary, CANARY_DETECT_INTERVAL_MS);
   deliveryCanary();
-  setInterval(deliveryCanary, CANARY_DELIVERY_INTERVAL_MS);
+  // ARM ON THE CHECK PERIOD, NOT THE SEND INTERVAL. Arming on the interval restarts the
+  // clock with the process, and the DB gate then skips the boot call — so a deploy cadence
+  // faster than the gate starves the canary for ever. See `worker/canary.ts`.
+  setInterval(deliveryCanary, deliveryCheckMs);
 
   // Self-heal watchdog — reboot the machine if the poller stops landing heartbeats
   // (a wedged-but-"started" machine; see WATCHDOG_STALE_MS + worker/liveness.ts).
