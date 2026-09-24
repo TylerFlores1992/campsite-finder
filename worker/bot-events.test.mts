@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { query, mutate } from '../src/lib/db/client';
 import {
   recordBotEvent, recentBotEvents, cleanText, cleanDetail, eventKind,
-  MAX_TEXT_CHARS, MAX_DETAIL_CHARS, BOT_EVENT_KINDS,
+  MAX_TEXT_CHARS, MAX_DETAIL_CHARS, BOT_EVENT_KINDS, NOT_A_FIXTURE_SQL,
 } from '../src/lib/bot-events';
 
 const SENTINEL = `__tbe-${process.pid}-${Date.now()}`;
@@ -146,46 +146,53 @@ test('a fixture row is invisible to the readout and visible to its own suite', a
 });
 
 /**
- * THE UNDERSCORE IS A WILDCARD, WHICH IS THE WHOLE REASON FOR THE `ESCAPE` CLAUSE.
+ * THE FILTER THIS REPLACES HID EVERY REAL ROW FOR THREE DAYS, AND ITS GUARD PASSED THE WHOLE TIME.
  *
- * Unescaped, `'__%'` matches ANY source of two or more characters — i.e. every real bot
- * row — and the readout would come back empty. An empty readout reads as "the bot did
- * nothing", which is this file's own subject: an absence rendered as a fact.
+ * It was `source NOT LIKE '\_\_%' ESCAPE '\'` with SINGLE backslashes inside a template
+ * literal. A template literal drops the backslash from an unknown escape like `\_`, so Postgres
+ * received `'__%' ESCAPE ''` — which matches every source of two or more characters, i.e. every
+ * real bot row — and `bot-events-readout.mts` printed "none in this window" from 2026-09-21 to
+ * 2026-09-24 over a table holding 102 rows in 72 hours. Two guards passed throughout:
  *
- * ASSERTED AGAINST POSTGRES, WITHOUT WRITING A ROW. The obvious version of this test
- * inserts an event with a short real-looking source like 'rc' and reads it back — and that
- * row is indistinguishable from a real bot event in the very readout this change exists to
- * clean up, for ever if the suite is killed before its cleanup (which is the exact scenario
- * being guarded). A test for "fixtures must not pollute the readout" must not pollute the
- * readout. The predicate is what matters and Postgres can be asked about it directly.
+ *   - the one below it asserted a REGEX over the SOURCE TEXT, which did contain the backslashes.
+ *     It checked what was written, not what ran. The guard-anchored-on-the-wrong-thing shape,
+ *     with the anchor one layer of string processing away from the subject;
+ *   - 'a fixture row is invisible to the readout' passed VACUOUSLY — every row was invisible.
+ *
+ * So both replacements run the REAL STRING. The first evaluates the exported predicate against
+ * literal sources; the second compares the readout's default read with the suite's unfiltered
+ * one over REAL production rows, which is the property the readout exists for: it must show the
+ * bot's rows, not merely hide the test's. Neither writes a real-looking row — the reason the
+ * original was written against source text at all, and still a good reason.
  */
-test('a real two-character source is not swallowed by the wildcard', async () => {
-  // TWO HALVES, AND THE FIRST ONE ALONE PROVED NOTHING. This test originally asserted the
-  // semantics with LITERALS — `'rc' NOT LIKE '__%'` — which is a true statement about
-  // Postgres and says nothing whatever about OUR query. Deleting the ESCAPE clause from
-  // `recentBotEvents` was a mutation that survived it completely. Verified, then fixed.
-  //
-  // So: assert the semantics (why it matters) AND the source (that we actually do it).
-  const [row] = await query<{ escaped: boolean; unescaped: boolean }>(
-    `SELECT ('rc' NOT LIKE '\\_\\_%' ESCAPE '\\') AS escaped,
-            ('rc' NOT LIKE '__%')                   AS unescaped`,
+test('the fixture predicate, as it actually runs, keeps real sources and drops sentinels', async () => {
+  const rows = await query<{ source: string | null; kept: boolean }>(
+    `SELECT source, ${NOT_A_FIXTURE_SQL} AS kept
+       FROM (VALUES ('rc'), ('rc-keepwarm'), ('recgov-bot'), ('_x'), ('__tbe-1'), (NULL::text)) AS v(source)`,
   );
-  assert.equal(row.escaped, true, "'rc' must survive the escaped predicate");
-  assert.equal(row.unescaped, false,
-    'and the unescaped form must be shown to swallow it, or this proves nothing');
+  const kept = Object.fromEntries(rows.map((r) => [String(r.source), r.kept]));
+  assert.equal(rows.length, 6, 'every probe source must come back — a short read proves nothing');
+  assert.equal(kept.rc, true, "a two-character real source must survive (the wildcard's victim)");
+  assert.equal(kept['rc-keepwarm'], true, 'the box\'s real source must survive');
+  assert.equal(kept['recgov-bot'], true, 'the rec.gov bot\'s real source must survive');
+  assert.equal(kept._x, true, 'one leading underscore is not the sentinel prefix');
+  assert.equal(kept['__tbe-1'], false, 'a __-prefixed fixture must be dropped');
+  assert.equal(kept.null, true, 'an absent source is not evidence of a fixture');
+});
 
-  // THE QUERY ITSELF. Read from source because `recentBotEvents` cannot be asked what SQL
-  // it ran, and a behavioural check would have to INSERT a short real-looking source — a
-  // row indistinguishable from a real bot event in the very readout this change cleans up,
-  // permanently if the suite is killed before cleanup. That is the scenario being guarded,
-  // so the test must not create one.
-  const src = readFileSync('src/lib/bot-events.ts', 'utf8');
-  const fn = src.slice(src.indexOf('export async function recentBotEvents'));
-  const body = fn.slice(0, fn.indexOf('\n}'));
-  assert.ok(!/^\s*(\/\/|\*|\/\*)/m.test(body.split('\n').find((l) => l.includes('NOT LIKE')) ?? ''),
-    'the predicate must be live code, not a commented-out line');
-  assert.match(body, /source NOT LIKE '\\_\\_%' ESCAPE '\\'/,
-    'the query must escape both underscores AND name the escape character — without it, '
-    + "'__%' matches every source of two or more characters and the readout comes back "
-    + 'empty, which reads as "the bot did nothing"');
+test('the readout returns every real production row the suite can see — not zero', async () => {
+  // Against real rows on purpose: this is the property that was broken, and a fixture cannot
+  // stand in for it without being exactly the pollution this filter exists to prevent. The
+  // window is wide so that the production table always has real rows in it; if it genuinely
+  // has none, the first assertion says so rather than letting the comparison pass as 0 === 0.
+  const kind = 'tab-close';
+  const hours = 24 * 90;
+  const all = await recentBotEvents(kind, hours, 5000, { includeFixtures: true });
+  const realExpected = all.filter((r) => !(r.source ?? '').startsWith('__')).length;
+  assert.ok(realExpected > 0,
+    `no real ${kind} rows in ${hours}h — this comparison would pass vacuously, so it refuses to`);
+  const asReadout = await recentBotEvents(kind, hours, 5000);
+  assert.equal(asReadout.length, realExpected,
+    `the readout saw ${asReadout.length} of ${realExpected} real ${kind} rows. An empty readout reads as ` +
+      '"the bot did nothing" — which is what it printed for three days.');
 });
