@@ -1317,9 +1317,15 @@ source path pass the canary:
 > operator a burst of texts on 2026-07-22 (several worker deploys in one afternoon,
 > one text each). `runDeliveryCanary` now checks the last real delivery attempt in
 > `alert_canary` and skips if one ran within ~90% of the interval, so N reboots inside
-> one interval send once. The scheduled interval tick is always older than the
-> interval, so it still proceeds. Detection's immediate boot run is fine — it sends
-> nothing. (A single canary phone that is also a real user's number is fine; if you
+> one interval send once. ~~The scheduled interval tick is always older than the
+> interval, so it still proceeds.~~ **That sentence was the bug (corrected 2026-09-24,
+> #401).** The tick was a `setInterval(…, 24h)` armed from BOOT, so every restart re-armed
+> it and the boot call it followed was skipped by this very gate — ten worker deploys in a
+> week kept the canary from running for 30 hours, and `delivery:*` warned over three
+> SUCCESSFUL rows. **The timer now ASKS hourly (`deliveryCanaryCheckMs`, clamped to
+> `[1s, 0.2 x interval]`) and the DB gate ANSWERS**, so the cadence comes from the last real
+> send rather than from process uptime; worst case `1.1x` interval, inside the `1.15x` warn.
+> Detection's immediate boot run is fine — it sends nothing. (A single canary phone that is also a real user's number is fine; if you
 > ever want canary and real alerts to look different, point `CANARY_PHONE` elsewhere.)
 
 ### Cancellation-likelihood (feature E — SHIPPED 2026-07-22)
