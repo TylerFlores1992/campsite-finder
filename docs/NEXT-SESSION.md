@@ -13,17 +13,30 @@ correction is itself the record; here it is just weight.
 ## 0. FIRST: WHERE 2026-09-24 LEFT IT
 
 Landed 09-24: **#401** (the delivery canary starvation), **#402** (the rec.gov cart ladder),
-**#403** (docs), **#404** (the `bot_events` readout, blind since 09-21), and the docs PR that wrote
-this section. The **mini-PC is on `c798cea`**; everything after it is docs or
-web-side, so there is no bot-side code in the gap.
+**#403** (docs), **#404** (the `bot_events` readout, blind since 09-21), **#405** (docs), and
+**#406** (the RC hand-off: sign-in loop, the #395 early return, the dead-pid lock wait). The
+**mini-PC is on `43be89f`** (#406), read back with `bot-ask git-status`. At ~16:50Z health read
+**`ok`**, web and box on the same sha.
+
+### THE HAND-OFF LOST A CARTED SITE ON 09-24, AND #406 IS THE FIX — UNPROVEN IN ANGER
+
+`#R371` was carted at **T−0.94s** and the user never got it. There were three defects, each
+fatal alone: the sign-in window closed on RC's `customerId` over a token dead for 23h (a loop);
+#395's flush ended in `return`, so ClaimFlow never read the stages it flushed; and the runner
+waited 60s on a lock whose pid was dead. Full account: `CLAUDE.md` → *"THE 09-24 HAND-OFF"*.
+- **THE NEXT REAL HAND-OFF IS THE PROOF.** Read its `rc_hold_requests.client_reports`. A
+  `stale-reset` stage means the loop was hit and broken; after it, look for a token seen alive
+  before the window closed.
+- **Next release: 2026-09-25 08:00 PT** (one hold `offered` when last read). Compute hours to
+  release in SQL, in Pacific.
 
 **READ THE FLEET, DO NOT QUOTE ANY OF THIS.** A reading goes stale faster than the conclusion
 drawn from it, and this section has been caught out overnight twice.
 
-**THE ONLY NON-OK CHECK IS `autocart.bot_version`, AND THE OWNER SAID LEAVE IT.** It warns on a
-docs-only gap and says so in its own detail. Clearing it means a box update, which ends the RC
-session for no benefit. `CLAUDE.md` carries the one-line fix (`botVersionLevel`'s `behind` branch)
-and why it lands after a release, never before.
+**`autocart.bot_version` IS GREEN AGAIN, BUT ONLY BECAUSE #406 UPDATED THE BOX.** It warns on a
+docs-only gap and says so in its own detail, so **this docs PR brings the warning back**. The owner
+said leave it. `CLAUDE.md` carries the one-line fix (`botVersionLevel`'s `behind` branch) and why it
+lands after a release, never before.
 
 ### What each 09-24 change now waits on
 
@@ -55,19 +68,18 @@ WAS FALSIFIED"* has the table and the discriminator.
 
 - **THE CHEAPEST READING THAT WOULD SETTLE IT:** `npx tsx scripts/bot-ask.mts tail-log
   rc-keepwarm:400` within ~20 minutes of a 14:30Z T−30 trip. Nobody has pulled one.
-- **09-24 MAY NOT TEST IT.** Its 08:00 release had **6 offered holds and 0 requested** when last
-  read, so there may be nothing for `maybeAutoLogin` to cover. **A quiet 14:30 on such a morning
-  is not the ramp stopping.**
+- **09-24 DID TEST IT, AND IT RAMPED AGAIN** — the fifth release morning. `ramp-scan` at 14:31:41
+  tripped on **`commitUsedMb`** (48,761 of 49,086 MB), then 4 flat auto-login trips followed. The
+  box log was **not** pulled in time, so which renderer ramped is still open. Row and detail are
+  in `CLAUDE.md`'s T−30 table.
 
-### The 08:00 PT release on 09-24
+### The 08:00 PT release on 09-24 — what the one instrument run said
 
-- **`scripts/rc-release-window.mts --record` is scheduled ONCE**, Routine
-  `trig_012eLSW8xNh5R1PJECGdLUrQ` at **14:45Z (07:45 PT)**, on the owner's instruction — this
-  release only, nothing recurring. It must launch before 07:58:30 PT, and it answers `#L053`'s open
-  question (did the night ever go free?). **If no hold is queued it should stop and say so** — an
-  empty run records nothing, and that is correct.
-- Read `rc_release_readings` against the `cart-burst` rows afterwards — the first says what the
-  site did, the second what we did.
+- `rc-release-window.mts --record` ran once, as scheduled: **44 of 46 locked nights freed at
+  T+0.1s to T+1.4s**, and the 2 that did not were our own `#R371` cart. **No `#L053`-shaped night
+  occurred, so `#L053` is still open.** Another run is the owner's call; nothing recurring.
+- **Do NOT act on its "lead can be trimmed toward 0".** The burst won at T−0.94s on the box's
+  clock. Different clocks, and the early win is exactly what the T−15s lead buys.
 
 ### Still open, unchanged
 

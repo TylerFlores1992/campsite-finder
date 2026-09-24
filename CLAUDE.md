@@ -1168,7 +1168,18 @@ morning since.**
 09-21       14:31:36    14:31:51    3500   6  (14:32:56 -> 14:38:03)
 09-22       14:31:36    14:31:50    3914   5  (14:32:55 -> 14:37:03)
 09-23       14:32:11    14:32:21    3985   5  (14:33:26 -> 14:37:33)
+09-24       14:31:41       —        2715   4  (14:33:56 -> 14:37:02)   <- ramp-scan trigger commitUsedMb
 ```
+
+**THE 09-24 ROW, READ FROM `bot_events` RATHER THAN REMEMBERED.** The `ramp-scan` at 14:31:41
+fired on **`trigger: commitUsedMb`**, reading **48,761 of a 49,086 MB commit limit (99.3%)**
+with `ramFreeMb 7623`. So this time the arm tripped on commit, not on the renderer's RAM. At
+14:32:51 `request-counts` showed `futurebookingstartsendsdates` at **2,151 recent / 19,540
+lifetime**, with `statuses {"200": 18}`. Four flat auto-login trips followed (41-46 s each,
+`hung: false`). **The discriminator (`tail-log rc-keepwarm:400` within ~20 min) was NOT
+pulled**, and the console rolls in ~89 minutes, so this morning cannot supply it now. **Which
+renderer ramped is still NOT established.** The release worked regardless: the burst carted
+`#R371` at T−0.94s. What failed was the hand-off, which is the section below.
 
 - **THE RAMP PRECEDES EVERY RECORDED TRIP.** It is seen 96-131 s after 14:30:00 (T−30), the
   backstop kills the browser, and **no `tab-close` exists for whatever started at 14:30** — the
@@ -1214,6 +1225,74 @@ wildcards matching every source of two or more characters, i.e. every real bot r
 - **ONE INSTANCE.** A scan for undoubled `\_`/`\%` in live code across `src/`, `worker/` and
   `scripts/` found no other. **In a template literal, a SQL backslash must be written twice** — or
   avoided, which is better.
+
+## THE 09-24 HAND-OFF: CARTED AT T−0.94s AND STILL LOST, THREE DEFECTS DEEP (2026-09-24, #406)
+
+`#R371` (Carpinteria SB — Santa Rosa, Oct 2-3) was **carted by the burst at T−0.94s** and the
+user never got it. The bot did its job. **Three separate defects on the hand-over path each
+could have lost it alone:**
+
+1. **THE SIGN-IN WINDOW LOOPED, AND IT IS THE `customerId` TRAP A THIRD TIME.** The window
+   closed on `rc-session {loggedIn:true}`, which RC boots from `localStorage.customerId`, a key
+   that outlived a token **dead for 23h**. So the window closed at once, the claim gate (which
+   reads the token, correctly) still said `dead`, and the phone bounced back to "sign in" on
+   every attempt. Signing in again in an ordinary browser could not help: the stale session
+   lived in the **webview's** storage. `#R359` (09-21) was this trap reaching the release gate.
+   This time it reached the window-close rule, **one message earlier than the census that
+   carries the expiry** (`rc-session` is n2, the `session` census is n3).
+   - **FIX: `rcCloseAction` folds every report** (`foldSignInFacts` in
+     `lib/rc-token-liveness.ts`, accumulated for the whole window by `rc-handoff.ts`). It
+     closes on a token seen ALIVE, or on an unknown token once the census has spoken. **A dead
+     reading is sticky**: only a later live one lets the window close. The cart path never
+     closes.
+   - **AND THE SCRIPT NOW BREAKS THE LOOP INSTEAD OF WAITING IT OUT.** When RC draws "signed
+     in" over a stored token that decodes as expired, and there is no Log in control to press,
+     `rc-login-script.ts` clears the session keys and reloads **once per window**, so RC offers
+     a real sign-in. The keys are `ssoAccessToken`, `accessToken`, `customerId`, `customerName`,
+     `customerDetail` and `okta-*`. It clears **localStorage only, NEVER cookies** (`DT` is what
+     makes a login look like a known device), and it reports key **names**, never values. The
+     bound is a sessionStorage flag, and a throwing sessionStorage counts as "already done".
+     ClaimFlow clears its per-page guard once on the first `stale-reset`, or the reloaded page
+     would get no script and nobody would press Log in.
+2. **#395's FLUSH ENDED IN `return`, AND ITS GUARD REQUIRED THE `return`.** From 09-22, every
+   flush-now stage (`closed`, `status`, …) reached the server and then **skipped ClaimFlow's own
+   handlers** for exactly the stages that end a window. It was my own PR. The guard pinned "it
+   sends" and not "it is still read", so it enforced the regression it sat beside. Shape #3.
+3. **THE RUNNER WAITED 60s ON A LOCK HELD BY NOBODY.** The runner restarted at 15:08:54 and
+   found the profile lock written by keepwarm **pid 10928, which no longer existed**. It waited
+   out `LOCK_WAIT_MS` before forcing it, so the hold was released **65s after the claim
+   began**. `profile-lock.mjs` now treats a lock whose writer pid is dead as free
+   (`pidAlive`, `kill(pid, 0)`). A pid it cannot judge counts as ALIVE, so the check fails
+   towards "held", never towards two browsers on one profile. This is the same shape as the
+   09-16 7.5-minute "profile busy".
+
+- **AND THE USER NEVER STARTED A CLAIM.** The loop kept them on sign-in. `startClaim` was run
+  by hand at 15:12:24 and lost to defect 3. **So the path had not worked end to end from a
+  phone since the beta closed**: `#M403` (09-23) is the one success, and it had a live session.
+- **LIVE 2026-09-24 ~16:50Z**, all three halves read back: web on `43be89f` (served
+  `/api/rc-precart` carries `camphawk_stale_reset`, `max-age=300`), box
+  `bot-ask git-status` → `HEAD 43be89f`, health `ok`.
+- **MUTATION-TESTED.** Ten mutants killed. `pages.clear()` **survived the first round** and
+  got its own guard. One survivor is **equivalent**: dropping the `decodable` check, since the
+  real `jwtFacts` only sets `expiresInSec` after a successful decode.
+- **NOT ESTABLISHED — do not write a mechanism in:** why a phone webview kept a token dead for
+  23h. **UNPROVEN IN ANGER:** that the reset leads to a fresh token on a real phone. It
+  reproduces the one step measured to mint one (the bot's own 07:36 PT Log in click, "token
+  now 59m"). **The next real hand-off is the proof, so read its `client_reports` for a
+  `stale-reset` stage.**
+- **DO NOT** close the sign-in window on `rc-session` alone again; **do not** make the reset
+  touch cookies; **do not** remove its once-per-window bound (the credential budget is what it
+  protects); **do not** re-add a `return` to a flush branch.
+
+### The 09-24 release window — the instrument ran, and it did not settle `#L053`
+`rc-release-window.mts --record` (the one scheduled run): **44 of 46 locked nights freed, all
+between T+0.1s and T+1.4s**, per facility atomically. The 2 that never freed were **our own
+`#R371` cart**. So **no `#L053`-shaped case occurred** (a night that never frees with no cart of
+ours on it), and the reading neither confirms nor refutes the `hasRealLock` candidate.
+- **ITS "LEAD CAN BE TRIMMED TOWARD 0" IS WRONG FOR US — DO NOT TRIM THE T−15s LEAD.** The burst
+  WON `#R371` at **T−0.94s** on the box's clock, while the instrument, on its own clock, saw
+  nothing free before T+0.1s. Two clocks, two machines. The early win is the evidence, and the
+  lead is what bought it.
 
 ## The house failure shapes — stated once, so they are not re-derived
 
@@ -2045,6 +2124,10 @@ Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the auth
 the only number main has left, and neither the 09-23 nor the 09-24 batch spent it.**
 
 #### Landed 2026-09-24, and what each one now WAITS on
+- **#406 — the RC hand-off loop, the #395 early return, and the dead-pid lock wait.** Live on web,
+  the served `/api/rc-precart` bundle and the box (`43be89f`), all read back. **What waits is the
+  next real hand-off**: read its `client_reports` for a `stale-reset` stage and a close with a
+  live token. See *"THE 09-24 HAND-OFF: CARTED AT T−0.94s AND STILL LOST"*.
 - **#401 — the delivery canary is unstarved, and it is proven in production** (fired 01:28:34Z,
   all three checks green). Nothing waits on it. The section above carries the standing DO-NOTs.
 - **#402 — the rec.gov cart ladder is live on master AND on the box (`c798cea`), and NO JOB HAS
@@ -2074,8 +2157,10 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
   anger.** The `401` the owner photographed on 2026-09-22 appears in **zero**
   `rc_hold_requests.client_reports` rows, all time. #395 removed two ways the last report could
   be deferred — the unbounded debounce, and verdict stages queueing behind `token`/`cartkey`
-  chatter — but **nothing has yet demonstrated a terminal failure arriving.** Until one does,
-  treat the channel as suspect rather than repaired.
+  chatter — **and introduced a third bug: its flush branch returned early, so the stages it
+  sent were never read by ClaimFlow's own handlers (fixed in #406).** **Nothing has yet
+  demonstrated a terminal failure arriving.** Until one does, treat the channel as suspect
+  rather than repaired.
 - **Why `#M421`'s webview had NO RC session at all after a sign-in is unexplained.**
   `storedToken: 'none'`, `oktaKeys: 0` on five injections, after the claim screen had reported
   a merely *expired* stored token. One row, no controlled comparison, **no mechanism written
@@ -2105,10 +2190,11 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
   gap**, and the standing candidate — that `hasRealLock`'s `year > 2000` test cannot tell a
   cart lock from a lock that resolves into a BLOCK, so we offered a hold on a site that was
   never going to free — **is a candidate with no mechanism written in.**
-  `scripts/rc-release-window.mts --record` is the discriminator and is scheduled **once**, for
-  the 2026-09-24 08:00 PT release (owner's call: tomorrow only, nothing recurring). **Read
-  `rc_release_readings` against the `cart-burst` rows afterwards** — the first says what the
-  site did, the second what we did, and having only the second is what left this open.
+  `scripts/rc-release-window.mts --record` is the discriminator. **It ran once, for the 09-24
+  release, and did not settle it**: 44 of 46 nights freed at T+0.1s to T+1.4s, and the 2 that
+  did not were our own `#R371` cart, so no `#L053`-shaped night occurred. **Still open.** It
+  needs another run on a morning with a comparable hold, and that is the owner's call:
+  nothing recurring.
 - **`#M450`'s hand-off decline is unexplained — but the reading that separates the two
   candidates is now being taken.** Healthy session, won at T+0.1s, declined anyway at minute
   27.5; a competitor inside the exposure window and RC not yet propagating our own release

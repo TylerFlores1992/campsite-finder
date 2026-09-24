@@ -257,8 +257,18 @@ Our token capture fires on RC's first authenticated call — **which IS step two
 `about:blank` and kills it; iOS's `close` only dismisses the view controller, so the request
 finished. **That is the whole platform difference; it is the plugin, not our code.**
 
-**Close on `customerId`, never on a token, and never on a timer.** No timer closes a sign-in
-window any more — **the backstop WAS the defect**. `rcCloseAction` (`src/lib/rc-token-liveness.ts`)
+~~**Close on `customerId`, never on a token, and never on a timer.**~~ **HALF WRONG, AND IT LOST
+A CARTED SITE (2026-09-24, #406).** `customerId` outlives the token by weeks, so a webview holding a
+token dead for 23h closed the moment RC said "signed in", the claim gate still read `dead`, and the
+user looped back to sign-in until the site was gone. **The rule now:** wait for `customerId` (step
+two must finish, which is why we stopped closing on the token capture), **and then** close only on
+a token seen ALIVE, or on an unknown token once the `session` census has spoken. **A dead reading
+is sticky.** `foldSignInFacts` accumulates this for the whole window. When RC draws signed in over
+a dead token with no control to press, `rc-login-script.ts` clears the session **localStorage keys
+(never cookies)** once per window and reloads, so a real sign-in is offered.
+
+**Never close on a timer.** No timer closes a sign-in window any more — **the backstop WAS the
+defect**. `rcCloseAction` (`src/lib/rc-token-liveness.ts`)
 is a pure function for the same reason as everything else here: inline in a native `message`
 handler it was reachable only from a real device, which is how `closeOnToken` shipped wrong.
 
