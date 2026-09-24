@@ -111,3 +111,25 @@ test('the flush still uses keepalive — an immediate flush is worth nothing if 
   assert.match(code(CLAIMFLOW), /keepalive: true/,
     'a flush started as the webview closes must still go out');
 });
+
+test('A STALE-SESSION RESET RE-OPENS THE PER-PAGE GUARD, ONCE (2026-09-24)', () => {
+  // The sign-in script clears an expired session RC still draws as signed in and reloads the
+  // SAME page, so RC renders its Log in control. `afterLoad` refuses a page it has already
+  // acted on — so without clearing that guard the reloaded page gets no script, nobody presses
+  // Log in, and the window sits on RC's home page with the user signed out. Bounded to ONE
+  // clear, so a looping reset cannot re-arm the credential budget for ever.
+  const s = code(CLAIMFLOW);
+  const fn = s.indexOf('async function signInToRc(');
+  assert.ok(fn > -1, 'anchor lost — this guard is measuring nothing');
+  const end = s.indexOf('\n  }\n', fn);
+  assert.ok(end > fn, 'end of signInToRc not found');
+  const body = s.slice(fn, end);
+  assert.match(body, /const pages = new Set<string>\(\)/, 'the per-page guard is what gets cleared');
+  assert.match(body,
+    /if \(r\.stage === 'stale-reset' && !resetSeen\) \{\s*resetSeen = true;\s*pages\.clear\(\);\s*\}\s*onReport\(r\);/,
+    'the first stale-reset must clear the page guard, then still reach onReport');
+  assert.match(body, /let resetSeen = false;/, 'the once-bound must start false for each window');
+  // And the guard it clears must be the one afterLoad consults.
+  assert.match(body, /if \(pages\.has\(key\) \|\| pages\.size >= MAX_LOGIN_PAGES\) return null;/,
+    'afterLoad must still refuse a page already acted on');
+});
