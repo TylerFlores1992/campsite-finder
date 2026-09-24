@@ -129,7 +129,22 @@ export async function recordBotEvent(input: BotEventInput, source: string | null
  *
  * `includeFixtures` exists for those suites, which must still be able to read their own
  * rows back. Default false: a readout should have to ASK for test data.
+ *
+ * THE FIRST VERSION OF THIS FILTER HID EVERY REAL ROW FOR THREE DAYS (2026-09-21 -> 09-24).
+ * It was `source NOT LIKE '\_\_%' ESCAPE '\'` written with SINGLE backslashes inside a
+ * template literal, and a template literal treats `\_` as an unknown escape and drops the
+ * backslash. So Postgres received `'__%' ESCAPE ''` — two unescaped wildcards, which match
+ * every source of two or more characters, i.e. every real bot row — and the readout printed
+ * "none in this window" over a table holding 102 rows in 72 hours. Its guard read the SOURCE
+ * TEXT, which did contain the backslashes, rather than the string that ran. That blindness
+ * covered exactly the three release mornings whose T-30 auto-login ramped, which is why that
+ * pattern went unnoticed.
+ *
+ * So there is no LIKE here at all: no wildcard to escape, no escape to lose. A NULL source is
+ * KEPT, deliberately — an absent source is not evidence of a fixture.
  */
+export const NOT_A_FIXTURE_SQL = `left(source, 2) IS DISTINCT FROM '__'`;
+
 export async function recentBotEvents(
   kind: BotEventKind, hours: number, limit = 50,
   { includeFixtures = false }: { includeFixtures?: boolean } = {},
@@ -138,12 +153,9 @@ export async function recentBotEvents(
     `SELECT id, at::text, source, kind, detail, text
        FROM bot_events
       WHERE kind = $1 AND at > NOW() - ($2 || ' hours')::interval
-        -- The escape is LITERAL: underscore is a single-character wildcard in LIKE, so
-        -- an unescaped '__%' also matches every two-character source. ESCAPE names the
-        -- character rather than relying on the backslash default, which is not portable.
         -- NO BACKTICKS IN THIS COMMENT -- the query is a template literal, so one ends
         -- the string and the parse error surfaces on an unrelated line. It did, here.
-        AND ($4 OR source NOT LIKE '\_\_%' ESCAPE '\')
+        AND ($4 OR ${NOT_A_FIXTURE_SQL})
       ORDER BY at DESC
       LIMIT $3`,
     [kind, String(Math.max(1, Math.floor(hours))), limit, includeFixtures],
