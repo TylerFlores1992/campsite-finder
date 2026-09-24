@@ -554,14 +554,22 @@ test('an unreadable cart report becomes a reported error, never an exception', (
 
 test('the browser launch is wrapped, so a busy profile is reported rather than thrown', () => {
   // `withBrowser` throws 'profile busy (broker)' when the remote sign-in holds the profile.
-  // Anchored on the CALL SITE, not on a helper's name: the window between the call and the
-  // success comparison must contain both halves of the catch.
-  const i = at(bot, 'await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log)', 'the cart browser launch');
-  const before = bot.slice(Math.max(0, i - 400), i);
-  const after = bot.slice(i, i + 500);
-  assert.match(before, /\n\s*try \{/, 'the browser launch is not inside a try');
-  assert.match(after, /\n\s*\} catch \(e\) \{/, 'nothing catches a browser that will not open');
-  assert.match(after, /report = \{ outcome: 'error'/, 'a browser that will not open reports nothing');
+  //
+  // NOT A CHARACTER WINDOW, AND IT USED TO BE ONE. This guard sliced 400 characters back and
+  // 500 forward from a call site written on a single line; reformatting that call across four
+  // lines to add an argument broke it, on a change that strengthened the very thing it guards.
+  // That is the window-measured-in-characters shape, caught by the guard failing rather than
+  // by anybody noticing. The property is ORDER: the launch sits between a `try {` and a
+  // `} catch (e) {` whose body reports an error, and ordering survives any layout.
+  const launch = at(bot, 'report = normaliseCartReport(', 'the cart browser launch');
+  const tryAt = bot.lastIndexOf('\n  try {', launch);
+  assert.ok(tryAt > -1, 'the browser launch is not inside a try');
+  const catchAt = bot.indexOf('\n  } catch (e) {', launch);
+  assert.ok(catchAt > -1, 'nothing catches a browser that will not open');
+  const reported = bot.indexOf("report = { outcome: 'error'", catchAt);
+  assert.ok(reported > -1, 'a browser that will not open reports nothing');
+  assert.ok(bot.indexOf('withBrowser(', launch) < catchAt,
+    'the withBrowser call is not inside the try that catches for it');
 });
 
 test('the trail is stored, under an allow-listed kind, after the alert has gone', () => {
@@ -615,4 +623,45 @@ test('a ladder that ran and lost is distinguished from one that never went again
   assert.equal(ran.kind, 'gave-up');
   assert.match(ran.text, /3 rounds/);
   assert.match(ran.text, /403/);
+});
+
+// ── 9. the budget is spent from PICKUP, not from when the browser opens ───────────────────
+
+test('a spent budget still makes one attempt — never carting is worse than carting late', async () => {
+  // `withBrowser` waits up to two minutes for this user's profile lock, so a second opening
+  // for the same person in one poller cycle can arrive with most of the budget already gone.
+  // The ladder must still try once: the budget bounds the RETRY, not the attempt.
+  const r = rig({ adds: [{ outcome: 'add-not-confirmed(empty)', clicked: true }], budgetMs: 0 });
+  const out = await r.run();
+  assert.equal(r.addCount, 1, 'a zero budget must not skip the attempt itself');
+  assert.equal(out.rounds, 1);
+  assert.equal(out.outcome, 'add-not-confirmed(empty)');
+  assert.match(String(out.trail[0].why), /no time left/);
+});
+
+test('bot.mjs charges the profile-lock wait to the budget, from a clock reading taken first', () => {
+  // THE SAFETY ARGUMENT IS ABOUT WALL CLOCK FROM PICKUP, and the ladder only ever saw its own
+  // start. A 25s wait behind another job for the same user followed by a 25s ladder is 50s
+  // against a 35s fallback deadline — the retry and the "still open, book it" alert on the air
+  // together, which is the one combination this budget exists to prevent.
+  const picked = at(bot, 'const pickedUpAt = Date.now();', 'bot.mjs no longer stamps the pickup time');
+  // `await withBrowser(` occurs five times in bot.mjs, four of them BEFORE this one — an
+  // `indexOf` on it finds the keepalive's launch and the ordering assertion below then passes
+  // or fails about the wrong call. Anchored on the cart call, which is unique.
+  const opened = at(bot, 'cartRecGov(ctx, job, log,', 'bot.mjs no longer opens the browser for a cart here');
+  assert.ok(
+    picked < opened,
+    'the pickup stamp is taken AFTER withBrowser, so it cannot measure the wait inside it — ' +
+      'the guard would pass and the budget would be unchanged',
+  );
+  // Derived from the constant, not a re-typed number, and passed as the ladder's budget.
+  assert.match(
+    bot,
+    /cartRecGov\(ctx, job, log, \{ budgetMs: Math\.max\(0, CART_BUDGET_MS - \(Date\.now\(\) - pickedUpAt\)\) \}\)/,
+    'the queue wait is not being charged to the ladder budget',
+  );
+  // And the callback must stay a callback: evaluated eagerly, it would read the clock before
+  // the wait and measure nothing.
+  assert.match(bot, /\(ctx\) => cartRecGov\(ctx, job, log, \{ budgetMs:/,
+    'the budget must be computed inside the withBrowser callback, after the lock is acquired');
 });

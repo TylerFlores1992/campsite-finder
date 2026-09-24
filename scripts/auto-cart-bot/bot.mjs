@@ -17,7 +17,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { cartRecGov } from './recgov.mjs';
-import { normaliseCartReport, cartFamily } from './cart-retry.mjs';
+import { normaliseCartReport, cartFamily, CART_BUDGET_MS } from './cart-retry.mjs';
 import { noteReserveCalifornia } from './reservecalifornia.mjs';
 import { recgovLoginState } from './session.mjs';
 import { attemptLoginWithCreds } from './recgov-login.mjs';
@@ -543,6 +543,21 @@ async function processJob({ user, job }) {
     await reportResult(job.id, 'skipped-not-logged-in');
     return;
   }
+  // THE BUDGET IS SPENT FROM HERE, NOT FROM WHEN THE BROWSER OPENS.
+  //
+  // `withBrowser` WAITS UP TO TWO MINUTES for this user's profile lock — one browser per
+  // profile, so a second opening for the same person in the same poller cycle queues behind
+  // the first. The ladder's whole safety argument is that it finishes before the poller's
+  // independent 35-second fallback alert; a ladder that starts its 25-second budget AFTER a
+  // 25-second wait breaks that argument for job two, and then the retry and the alert are on
+  // the air together — the user is told "still open, book it" and arrives to find the site
+  // taken by their own cart hold.
+  //
+  // MEASURED ON THE BOX'S OWN CLOCK, DELIBERATELY. The roster feed carries no `detected_at`,
+  // and deriving a deadline from a server timestamp would put the mini-PC's clock skew on the
+  // path between a queued hold and a missed cart. The wait this corrects for is local, so the
+  // measurement is local: two readings from one clock, which cannot disagree.
+  const pickedUpAt = Date.now();
   log(`  ⧉ opening browser for ${who}…`);
   // Run the cart HEADED. rec.gov's anti-bot gate ("abnormal activity") rejects
   // headless Chromium (fingerprinted as automation) — the add returns 200 with
@@ -555,7 +570,14 @@ async function processJob({ user, job }) {
   let report;
   try {
     report = normaliseCartReport(
-      await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log), { headless: false }),
+      await withBrowser(
+        user.userId,
+        // Evaluated AFTER the profile lock is acquired, so this reads the real wait. A budget
+        // of zero still runs round one — `runCartLadder` always makes one attempt and only
+        // then asks whether it may go again. Never carting is worse than carting late.
+        (ctx) => cartRecGov(ctx, job, log, { budgetMs: Math.max(0, CART_BUDGET_MS - (Date.now() - pickedUpAt)) }),
+        { headless: false },
+      ),
     );
   } catch (e) {
     log(`  ⚠ ${who}: couldn't open the browser — ${e.message}`);
