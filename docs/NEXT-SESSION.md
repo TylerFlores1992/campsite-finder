@@ -10,6 +10,17 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
+## 0-pre. 2026-09-25 — READ THIS FIRST
+
+- **The 08:00 release:** `#GBOB` (group site) and `#A113` were handed off and reached the owner's
+  own cart. `#R367` never carted, because the shared burst budget ran out at T−1.6s. Fixed in
+  #413 (`BURST_RELEASE_RESERVE`); `CLAUDE.md` → *"09-25"* has the numbers.
+- **#413 needs a BOX UPDATE to take effect** (`cart-burst.mjs` and `rc-hold-runner.mjs`). An
+  update ends the RC session, and the last one cost a CAPTCHA sign-in by hand. So do it
+  ≥ 6 h before a release, and check health afterwards.
+- **`autocart.rc_login` can read `fail` over a live session**, and its remedy names
+  `rc-test-login.bat`, which DROPS the token. **Read `autocart.rc_session` before acting on it.**
+
 ## 0. FIRST: WHERE 2026-09-24 LEFT IT
 
 ### EVENING (~22:10Z): an orchestrator pass — the child fleet audited, and one fix SCOPED

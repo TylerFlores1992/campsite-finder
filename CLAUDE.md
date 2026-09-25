@@ -1294,6 +1294,66 @@ ours on it), and the reading neither confirms nor refutes the `hasRealLock` cand
   nothing free before T+0.1s. Two clocks, two machines. The early win is the evidence, and the
   lead is what bought it.
 
+## 09-25: THE HAND-OFF WORKED, AND THE CART BURST SPENT ITSELF BEFORE THE RELEASE (#413)
+
+**#406 IS PROVEN IN ANGER.** `#GBOB` (Carpinteria SB group site) and `#A113` both reached the
+owner's own RC cart through the phone hand-off (`cart-verified`, `entries: 1`). The trace is the
+09-24 loop, not happening:
+- `rc-session {loggedIn:true}` arrived over a stored token **dead 81,522 s (22.6h)**. The old
+  rule closed the window right there, and the new one waited.
+- RC then dropped its own `loggedIn`. The script pressed Log in and the owner signed in
+  (email, password, submitted).
+- A **live** token arrived (`expiresInSec 3597`), and only then `close {reason: session}`.
+- Precart, one "Not free yet" retry, then `✓ Added to cart`.
+
+**`stale-reset` did NOT fire.** RC dropped `loggedIn` by itself, so the reset branch has still
+never run on a phone. Proven: the close rule. Unexercised: the reset. Do not merge the two.
+
+**The owner did NOT check out on the box.** They claimed on the phone, and that worked. The
+box-checkout runbook in `docs/NEXT-SESSION.md` is still sound and still unused.
+
+### THE BURST WAS SHARED, SO IT SCALED ITS EARLY HALF WITH THE NUMBER OF HOLDS
+Three requested holds shared one release. `BURST_BUDGET` (40) is one pool for the whole group,
+and a hold's first attempt is not charged. Every hold opened at T−15s at ~1 attempt/s, so:
+
+```
+#GBOB  14 attempts, ending T-1.0s   budget spent   -> slow lane caught it at T+17.6s (luck)
+#R367  14 attempts, ending T-1.6s   budget spent   -> never carted
+#A113  15 attempts, won at T-0.46s
+```
+
+14 + 14 + 15 = 43: the pool was gone one second before anything freed. The 09-24 instrument
+had every flip at T+0.1s to T+1.4s.
+- **FIX: `BURST_RELEASE_RESERVE` (25).** Before T the lane may not spend below it. A hold that
+  reaches it early **waits for T** (`spend: false`) rather than falling to the ~12 s slow lane.
+- **The total is unchanged**, so there are no more POSTs from the household IP. Only *when* the
+  pool is spent moves. One hold never touches the reserve (it spends ~14 before T and keeps 26).
+- **Rejected alternatives:** a per-hold budget and a bigger pool. Both raise the request count
+  from the IP RC's WAF blocked for twelve hours.
+- **THE REPLAY GUARD FIRST PASSED WITH THE FIX DELETED.** It modelled an attempt as 1 s plus
+  the 500 ms gap, and spent only ~30 of 40 before T. The measured cadence (14 attempts across
+  14 s, gap included) is a ~500 ms round trip. At that cadence the replay reproduces the loss
+  exactly ("0 attempts at or after T"). **A replay built from an estimate cannot see a bug the
+  measurement produced.** Mutation-tested: six mutants, all killed, each confirmed applied.
+- **Not yet seen on a real release.** The next multi-hold morning is the test. Read the
+  `cart-burst` rows: `firstOffsetMs`, `lastOffsetMs` ≥ 0, and `budgetLeft`.
+
+### THE 09-24 BOX UPDATE COST A HUMAN SIGN-IN
+It did not self-repair this time: 4h+ of `okta=GONE`, and the 20:01 PT rehearsal met a
+**CAPTCHA**. The owner signed in by hand (`rc-login.bat`) at ~05:15 PT, and by 07:02 PT the
+session was live with Okta good for ~12h.
+- **`autocart.rc_login` then read `fail` over a working session.** It reports the REHEARSAL
+  (shape #6), and its remedy line names **`rc-test-login.bat`**, which *drops the current
+  token*. Following the health page's own advice at 07:00 would have signed the bot out an
+  hour before the release. **Not fixed, only recorded.** The line should not name a
+  token-dropping script while the session is live.
+
+### A SCRATCH SCRIPT THAT ONLY PRINTED HOURS ALSO REQUESTED A BOX UPDATE
+`upd.mts` computed hours-to-release **and then called `requestBotUpdate`**. It was re-run
+purely to read the hours. The box answered `already current - nothing to pull`, and
+`auto-update.ps1` exits before stopping anything on that branch, so it was harmless **by luck
+of timing**. **Never re-run a scratch script for its first line; read what else it does.**
+
 ## The house failure shapes — stated once, so they are not re-derived
 
 Nearly every expensive mistake in this repo is one of six. Most of the archives are the same
@@ -2124,10 +2184,11 @@ Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the auth
 the only number main has left, and neither the 09-23 nor the 09-24 batch spent it.**
 
 #### Landed 2026-09-24, and what each one now WAITS on
-- **#406 — the RC hand-off loop, the #395 early return, and the dead-pid lock wait.** Live on web,
-  the served `/api/rc-precart` bundle and the box (`43be89f`), all read back. **What waits is the
-  next real hand-off**: read its `client_reports` for a `stale-reset` stage and a close with a
-  live token. See *"THE 09-24 HAND-OFF: CARTED AT T−0.94s AND STILL LOST"*.
+- **#406 — PROVEN on 09-25.** Two phone hand-offs reached the owner's cart, and the close waited
+  for a live token over one dead 22.6h. **The `stale-reset` branch has still never fired on a
+  phone.** See *"09-25: THE HAND-OFF WORKED"*.
+- **#413 — the burst reserve.** It needs a box update, and it waits on the next multi-hold
+  release for a reading.
 - **09-25 08:00 PT: THE OWNER WILL CHECK OUT ON THE BOX, NOT THROUGH THE HAND-OFF.** They will
   complete checkout of the group site over RustDesk, in the bot's own Chromium window, so #406's
   phone path may **not** be exercised that morning. Do not read a quiet `client_reports` as #406
