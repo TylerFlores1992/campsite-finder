@@ -245,8 +245,12 @@ WAS FALSIFIED"* has the table and the discriminator.
 - `rc-release-window.mts --record` ran once, as scheduled: **44 of 46 locked nights freed at
   T+0.1s to T+1.4s**, and the 2 that did not were our own `#R371` cart. **No `#L053`-shaped night
   occurred, so `#L053` is still open.** Another run is the owner's call; nothing recurring.
-- **Do NOT act on its "lead can be trimmed toward 0".** The burst won at T−0.94s on the box's
-  clock. Different clocks, and the early win is exactly what the T−15s lead buys.
+- ~~**Do NOT act on its "lead can be trimmed toward 0".** The burst won at T−0.94s on the box's
+  clock. Different clocks, and the early win is exactly what the T−15s lead buys.~~ **STRUCK
+  2026-09-25.** The +0.1s bracket belongs to `rc-357`; `#R371` is `rc-360`, whose own bracket
+  is `(---, +1.4]`, so no clock skew was ever demonstrated — and 09-24 was the one release with
+  a single hold, where the 15 s lead cost nothing. **The lead is 5 s.** `CLAUDE.md` → *"THE
+  LEAD IS 5 s NOW"*.
 
 ### Still open, unchanged
 

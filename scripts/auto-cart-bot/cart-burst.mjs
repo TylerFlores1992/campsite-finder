@@ -33,19 +33,39 @@
  * above are entirely consistent with the site opening BEFORE the predicted release. The
  * instrument's resolution swallows the whole question.
  *
- * Two things that would have settled it, and neither does:
+ * Two things that would have settled it, and neither did:
  *
- *   - **We have never once asked.** The runner waits out `msUntilRelease` by design, so
- *     there is exactly ONE early-cart observation in the project's history — 2026-08-08, at
- *     85 seconds early, refused. That says 85s is too early. It says nothing about 5s.
+ *   - **We had never once asked.** The runner waits out `msUntilRelease` by design, so there
+ *     was exactly ONE early-cart observation in the project's history — 2026-08-08, at 85
+ *     seconds early, refused. That says 85s is too early. It said nothing about 5s.
  *   - **RC's clock is not the culprit.** Measured 2026-09-03 across five round trips:
  *     `rdapi.reservecalifornia.com`'s Date header is within ONE SECOND of ours. Gross skew
  *     is ruled out at the edge (not at the booking tier, which nothing here can see).
  *
- * **So the burst starts BEFORE T, and that is how the question gets answered.** An early
- * attempt costs one refusal — the same refusal the slow lane already absorbs, and no longer
- * terminal since `reportCartFailure` — while a SUCCESS before T is a direct measurement of
- * the true flip, to within the gap, which no amount of 15-second sampling could ever give.
+ * **So the burst started BEFORE T, and that is how the question got answered.**
+ *
+ * ## IT IS ANSWERED NOW, BY TWO INSTRUMENTS, AND RC LETS GO WITHIN ~4 SECONDS OF T
+ *
+ * `scripts/rc-release-window.mts` polls a facility's whole grid across a release at TWO-second
+ * resolution and stores the flip as a BRACKET (`rc_release_readings`, migration 076) — last
+ * seen locked, first seen free, never a midpoint. Eight facility readings across three
+ * mornings:
+ *
+ *     09-09  rc-539  (-0.9, +1.1]     09-10  rc-539  (-3.5, -1.5]   <- entirely BEFORE T
+ *     09-09  rc-583  (-1.6, +0.4]     09-10  rc-542  (-2.9, -0.9]   <- entirely BEFORE T
+ *     09-24  rc-357  (-1.9, +0.1]     09-10  rc-583  (-4.2, -2.2]   <- entirely BEFORE T
+ *     09-24  rc-359  (-1.2, +0.8]     09-24  rc-360  (   ---, +1.4]
+ *
+ * And this lane's own ten bursts are the second instrument. Six wins: **T-0.9, T-0.5, T+0.1,
+ * T+0.5, T+0.5, T+0.9** — two of them BEFORE the predicted release, which no amount of
+ * 15-second sampling could ever have shown.
+ *
+ * **So the flip is within about four seconds of T on every measurement we have**: the deepest
+ * "still locked" observation is T-4.2s and the latest "first free" is T+1.4s. `BURST_LEAD_MS`
+ * is derived from that now rather than from the poller's cadence — see below.
+ *
+ * (`rc-360`'s lower bound reads +241.2s, larger than its own upper bound, so it is an artifact
+ *  of a night whose lock named a different release. Quote the seven clean brackets.)
  *
  * ## Why this is a separate module
  *
@@ -67,16 +87,57 @@ export const BURST_WINDOW_MS = Number(process.env.RC_BURST_WINDOW_MS || 30_000);
 /**
  * How far BEFORE the predicted release the fast lane opens.
  *
- * DERIVED FROM THE POLLER'S OWN SAMPLING FLOOR, not picked. The poller samples every 15
- * seconds, so a flip up to 15s before T is indistinguishable from one at T in every reading
- * we have. Fifteen seconds is exactly the uncertainty, so it is exactly the lead.
+ * DERIVED FROM THE MEASURED FLIP, not from the poller's cadence — and that is a CHANGE, made
+ * 2026-09-25 after three tapped holds in one release exhausted the shared budget before T.
  *
- * The cost is a handful of refusals — RC declining a lock that has not lapsed is the same
- * answer the slow lane already absorbs, and since `reportCartFailure` it is no longer
- * terminal. The gain is either the site, or the first real measurement of when RC actually
- * lets go.
+ * It was 15s, derived from the poller's own sampling floor: a flip up to 15s before T was
+ * indistinguishable from one at T in every reading we had, so fifteen seconds was exactly the
+ * uncertainty and therefore exactly the lead. **That uncertainty has since been measured
+ * away.** The header above has the eight brackets and the six wins; the deepest "still
+ * locked" observation on record is **T-4.2s**, so 5s starts one poll before the earliest
+ * instant RC has ever been seen still holding, and the rest of that old lead was being spent
+ * on a window RC has never used.
+ *
+ * ## AND AN EARLY ASK IS NOT FREE, WHICH IS THE HALF THAT WAS WRONG
+ *
+ * The old reasoning was that the cost is a handful of refusals, which the slow lane already
+ * absorbs. **True at one or two holds and false at three**, because `BURST_BUDGET` is shared
+ * across the release group: an attempt spent before T is an attempt not available after it.
+ * Measured 2026-09-25, three tapped holds for one 08:00 release —
+ *
+ *     #GBOB  14 attempts, ending T-1.0s, "the burst budget is spent"
+ *     #R367  14 attempts, ending T-1.6s, "the burst budget is spent"
+ *     #A113  15 attempts, won at T-0.5s  <- only because RC let go early
+ *
+ * — 43 attempts, every one of them BEFORE the release, and the lane never reached the moment
+ * the sites actually opened. At one hold the budget covers the whole span, which is why this
+ * was invisible for the lane's first four releases.
+ *
+ * The fix is the lead and NOT the budget: 40 is what keeps thirty seconds of POSTs from a
+ * residential IP looking like an attack to RC's WAF, and raising it is the trade that
+ * constant exists to refuse. Shortening the lead spends the same total where the site can
+ * actually be won.
+ *
+ * **What this buys, stated at its limit:** a better-AIMED burst, not a guaranteed win. Nobody
+ * knows when `#GBOB` actually freed, so the gain is somewhere between ~1s and ~15s of reach.
+ *
+ * ## AND `BURST_RELEASE_RESERVE` FIXES THE SAME INCIDENT, SO BE PRECISE ABOUT WHAT IS LEFT
+ *
+ * The reserve (below) makes an exhausted pool impossible: a hold that reaches it before T
+ * **waits for T**. So the 09-25 loss above cannot recur from the reserve's side alone, and the
+ * lead's remaining job is a DIFFERENT failure the reserve leaves — **silence.** Once the
+ * discretionary share is gone every hold is asleep until T and nobody asks RC at all; at the
+ * old 15s lead that runs from ~T-9.8s to T, and **two of this lane's six wins (T-0.9s and
+ * T-0.5s) sit inside it.**
+ *
+ * The two constants are therefore sized TOGETHER, with 225ms of margin: `40 - 25` = 15
+ * discretionary attempts plus one uncharged first attempt per `pMap` slot is 19, i.e.
+ * `(4 + 15) / 4 x 1.1s` = 5.2s of asking against this 5.0s lead — so at 5s the reserve is never
+ * reached before T at any group size. **Raising `CART_CONCURRENCY` or the reserve eats that
+ * margin** (at 6 slots the cover is 3.9s and the silence re-opens over exactly the win band),
+ * and `worker/cart-burst.test.mts` fails on either bump taken alone.
  */
-export const BURST_LEAD_MS = Number(process.env.RC_BURST_LEAD_MS || 15_000);
+export const BURST_LEAD_MS = Number(process.env.RC_BURST_LEAD_MS || 5_000);
 
 /** Gap between attempts inside the window. Each attempt is itself ~1s of RC round trips. */
 export const BURST_GAP_MS = Number(process.env.RC_BURST_GAP_MS || 500);

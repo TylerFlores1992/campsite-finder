@@ -1289,10 +1289,14 @@ could have lost it alone:**
 between T+0.1s and T+1.4s**, per facility atomically. The 2 that never freed were **our own
 `#R371` cart**. So **no `#L053`-shaped case occurred** (a night that never frees with no cart of
 ours on it), and the reading neither confirms nor refutes the `hasRealLock` candidate.
-- **ITS "LEAD CAN BE TRIMMED TOWARD 0" IS WRONG FOR US — DO NOT TRIM THE T−15s LEAD.** The burst
-  WON `#R371` at **T−0.94s** on the box's clock, while the instrument, on its own clock, saw
-  nothing free before T+0.1s. Two clocks, two machines. The early win is the evidence, and the
-  lead is what bought it.
+- ~~**ITS "LEAD CAN BE TRIMMED TOWARD 0" IS WRONG FOR US — DO NOT TRIM THE T−15s LEAD.** The
+  burst WON `#R371` at **T−0.94s** on the box's clock, while the instrument, on its own clock,
+  saw nothing free before T+0.1s. Two clocks, two machines. The early win is the evidence, and
+  the lead is what bought it.~~ **STRUCK 2026-09-25 on two grounds — the +0.1s bracket is a
+  DIFFERENT FACILITY's, and this was the one release where the lead was free.** The lead is
+  5 s. The full argument is in *"THE LEAD IS 5 s NOW"* under `## 09-25: THE HAND-OFF WORKED`;
+  it is struck rather than deleted because a reader who finds only the new section cannot see
+  that the old instruction was tested rather than ignored.
 
 ## 09-25: THE HAND-OFF WORKED, AND THE CART BURST SPENT ITSELF BEFORE THE RELEASE (#413)
 
@@ -1337,6 +1341,143 @@ had every flip at T+0.1s to T+1.4s.
   measurement produced.** Mutation-tested: six mutants, all killed, each confirmed applied.
 - **Not yet seen on a real release.** The next multi-hold morning is the test. Read the
   `cart-burst` rows: `firstOffsetMs`, `lastOffsetMs` ≥ 0, and `budgetLeft`.
+
+### AND THE FIVE-RELEASE TABLE IS WHY IT WAS INVISIBLE UNTIL THE THIRD HOLD
+
+Every `cart-burst` row on record. The pattern appears only in the last one:
+
+```
+release  holds  attempts  deepest reach  won
+09-21    2      27        T+0.1s         1/2   (#R359 stopped on "HTTP 200", not the budget)
+09-22    2      24        T+0.5s         2/2
+09-23    2      42        T+16.2s        1/2   (#M403 won early, freeing the pool for #L053)
+09-24    1      12        T-0.9s         1/1   (stopped because it WON — budgetLeft 29)
+09-25    3      43        T-0.5s         1/3   <- never reached the release
+```
+
+**THE MODEL, MEASURED THEN DERIVED.** A hold's own attempt cycle is **~1.1 s** across all ten
+bursts and is **independent of group size**, because holds burst in parallel under
+`pMap(holds, CART_CONCURRENCY)`. So the pool drains at `min(N, 4) / 1.1 s`, and **as the lane
+behaved up to 2026-09-25** its reach was `BURST_BUDGET / that`: predicted 14.7 s at N=3 against
+43 attempts observed across ~14.5 s — the model is confirmed by the event it explains, not
+fitted to it.
+- **THAT REACH FIGURE IS HISTORY, NOT THE CURRENT LANE.** The drain RATE still holds and is
+  what every number below is built on, but the reserve means the pool is no longer spent
+  straight through T, so `BURST_BUDGET / rate` no longer describes anything. The current
+  arithmetic is two numbers, not one — how far the discretionary share reaches BEFORE T, and
+  how far the reserve reaches after it — and both are in the two subsections below.
+
+### THE LEAD IS 5 s NOW, AND A STANDING "DO NOT TRIM" INSTRUCTION IS STRUCK
+
+**The reserve is the FLOOR; the lead is the AIM. They are not alternatives, and the arithmetic
+that joins them has 225 ms of margin.** The discretionary share is `BURST_BUDGET −
+BURST_RELEASE_RESERVE` = 15, plus one uncharged first attempt per `pMap` slot, so a full group
+gets 19 attempts before the gate bites — `(4 + 15) / 4 × 1.1 s` = **5.2 s of asking against a
+5.0 s lead.** So at the 5 s lead the reserve is never reached before T at ANY group size, and it
+sits behind the lead as the backstop it should be.
+- **AT THE OLD 15 s LEAD THE RESERVE LEAVES A SILENCE, AND IT IS WHERE THE WINS ARE.** Those
+  same 19 attempts cover 5.2 s of a 15 s lead; after that every hold **sleeps until T** and
+  nobody asks RC at all from **~T−9.8 s to T**. **Two of this lane's six wins — T−0.9 s and
+  T−0.5 s — sit inside that silence.** The reserve cannot produce the 09-25 loss any more; this
+  is the different failure it leaves, and it is what the lead closes.
+- **SO NEITHER CONSTANT MAY MOVE ALONE.** Raising `CART_CONCURRENCY` to 6 drops the cover to
+  `(6 + 15) / 6 × 1.1 s` = **3.9 s** and re-opens a 1.1 s silence over exactly that band;
+  raising the reserve to 30 drops it to 3.9 s the same way. `worker/cart-burst.test.mts` has a
+  test of its own for this (`the lead and the reserve are sized TOGETHER`), mutation-verified
+  against both knobs, because a guard bundling it with the configuration check would let a
+  future session read one red as the other.
+
+~~**ITS "LEAD CAN BE TRIMMED TOWARD 0" IS WRONG FOR US — DO NOT TRIM THE T−15s LEAD.**~~
+Recorded 2026-09-24, one release before this one, and it is **struck on two independent
+grounds** rather than overridden.
+
+1. **ITS EVIDENCE IS THE WRONG FACILITY.** It reads: *"the burst WON `#R371` at T−0.94s on the
+   box's clock, while the instrument, on its own clock, saw nothing free before T+0.1s. Two
+   clocks, two machines."* **`#R371` is `rc-360`** (unit 4817, read off the hold row), and
+   +0.1 s is **`rc-357`'s** bracket. `rc-360`'s own reading that morning is `(---, +1.4]`, whose
+   lower bound is an artifact, so the flip could be as early as T−0.6 s — **and a cart at
+   T−0.94 s is consistent with it to within the instrument's own 2-second resolution.** No skew
+   is demonstrated. Reading a bracket's upper bound as the flip is the thing migration 076's own
+   header forbids (*"never a midpoint"*), and it is what this argument did.
+2. **IT WAS WRITTEN ON THE ONE RELEASE WHERE THE LEAD WAS FREE.** 09-24 was **N=1**
+   (`budgetLeft 29`), and at one hold the pool covers the whole span, so the 15 s cost nothing.
+   **At N=3 it is what stopped the lane reaching T at all.** *"The early win is the evidence,
+   and the lead is what bought it"* is true of that morning and does not generalise.
+
+**AND "the cost of an early ask is a refusal, which is free" IS RETIRED** (recorded twice in
+`docs/ARCHIVE-RC-AUTOCART.md`). A refusal is free of RC's opinion and **costs an attempt from a
+shared pool**, which is not free the moment more than two people want a campsite.
+
+**THE NEW DERIVATION IS OUR OWN INSTRUMENT ON OUR OWN CLOCK, which is what makes it strong.**
+Ten bursts have all opened at T−15 s — roughly 140 attempt-seconds of asking before T−1 s — and
+**not one win has ever come from earlier than T−0.9 s.** The six wins: **T−0.9, T−0.5, T+0.1,
+T+0.5, T+0.5, T+0.9.** So a 5 s lead covers every win this lane has ever produced with ~4 s of
+margin, and no cross-machine clock question arises at all.
+- **Corroborated by the release-window instrument**, eight facility brackets over three
+  mornings (`rc_release_readings`): deepest "still locked" **T−4.2 s**, latest "first free"
+  **T+1.4 s**, three brackets entirely before T. So the flip is within ~4 s of T on every
+  measurement there is.
+- **AND IT CLOSES A GAP THE RESERVE ALONE LEAVES.** With the reserve at a 15 s lead, the group
+  spends its 15 discretionary attempts by ~T−9 s and then every hold **waits for T** — so
+  `T−9 … T−0` is asked by nobody. **Two of the six recorded wins (T−0.9 s and T−0.5 s) sit in
+  that gap.** At a 5 s lead the asking is continuous through it.
+- **WHAT IT BUYS, AT ITS LIMIT: a better-AIMED burst, not a guaranteed win.** Nobody knows when
+  `#GBOB` actually freed, so the gain is somewhere between ~1 s and ~15 s of reach.
+- **TWO GUARDS, both mutation-verified to fail against the old lead.** The old
+  `BURST_LEAD_MS >= 15_000` assertion **required the value under investigation** — shape #6 — so
+  it is inverted with the reason written in, not relaxed. The new one is the reach arithmetic,
+  reading `CART_CONCURRENCY` out of the runner rather than copying it, and it is what proves
+  **raising the budget is not a substitute for the lead**: at 60 and a 15 s lead it still fails.
+  - **AND THE GUARD BESIDE IT HAD THE RIGHT PROPERTY AND THE WRONG DENOMINATOR.** *"A budget
+    that cannot reach the release moment stops the lane before the site opens"* has been in that
+    file since the lane shipped — **divided by ONE hold's cycle**, while the pool is shared. It
+    passed for the lane's entire life while the three-hold case failed underneath it.
+
+### HOW MANY HOLDS THE BURST ACTUALLY SERVES — ~4, against a cart capacity of 20
+
+With the reserve in place, what matters is reach **past T**: `BURST_RELEASE_RESERVE / (min(N,
+CART_CONCURRENCY) / 1.1 s)`, since the 5 s lead keeps the pre-T spend under the reserve at N≤4.
+
+| holds | reach past T | covers the measured flip (T−4.2 → T+1.4)? | |
+|---|---|---|---|
+| 1 | ~28 s | yes, with 26 s spare | why this was invisible for four releases |
+| 2 | ~14 s | yes | |
+| 3 | ~9 s | yes | at a 15 s lead and no reserve this ended **T−1 s**, observed |
+| 4 | ~7 s | yes | |
+| 5+ | — | **no** | `CART_CONCURRENCY` caps the slots: holds 5+ get one unguarded attempt, ~30 s late |
+
+- **ATTEMPT 1 IS UNGUARDED, WHICH IS WHY 5+ IS DEGRADED RATHER THAN DEAD.** The loop tries
+  before it consults `shouldRetryBurst`, so every hold that gets a `pMap` slot asks RC once. The
+  budget gates **retries** only. A hold served by one attempt is back to the pre-2026-09-03
+  behaviour — one shot into a lock that may not have lapsed.
+- **AND THE 30 s WINDOW IS MEASURED FROM A GROUP-WIDE `releaseMoment` FIXED BEFORE THE SLEEP**,
+  so a hold that only gets a slot after the first four finish starts with `elapsedMs >=
+  windowMs` and stops after that one attempt. **`CART_CONCURRENCY`, not the budget, is the
+  growth ceiling.**
+- **A WIN FREES ITS SLOT AND ITS SHARE OF THE POOL**, which is the one thing that makes a large
+  group better than the table suggests: 09-23's `#M403` won at T+0.9 s and `#L053` then got 28
+  attempts reaching T+16.2 s. So the table is the worst case, not the expectation.
+- **THE CEILING IS CONCURRENCY × RESERVE, NOT `RC_HOLD_CAPACITY`.** That is **20**
+  (`RC_SITES_PER_CART` 2 × `RC_MAX_CARTS` 10, both measured), so the cart layer is five times
+  ahead of the lane that fills it. **At 20 tapped holds for one release, sixteen would get one
+  attempt each.**
+- **NEITHER LEVER IS A DRIVE-BY, AND BOTH ARE THE OWNER'S:**
+  - **`CART_CONCURRENCY` 4 → 6** is the one growth step with a measurement behind it:
+    `rc-probe.mjs --concurrent-mint` made **six simultaneous `NO_CART` precarts, six distinct
+    carts, in 1.4 s** — the same operation the burst performs. Past 6 is unmeasured. **And it
+    is not a one-line change**: more slots drain the discretionary share faster, so at 6 the
+    cover falls to 3.9 s against the 5 s lead and the lane goes quiet over the band where its
+    two earliest wins happened. Take it together with a **lower reserve (≤18) or a lower lead
+    (≤3.8 s)**, and let the guard say which — it fails on the concurrency bump alone.
+  - **`BURST_BUDGET` / the reserve, higher** is the WAF trade. 40 across the window is ~1.1
+    POSTs a second from a residential IP that has eaten a 12-hour block; N holds × 20 is what
+    that constant's own header calls an incident.
+  - **The third option is neither**: serve the 5th+ holds from the SLOW lane deliberately, which
+    is what happens today by accident. It is already survivable — the 20-minute grace is what
+    rescued `#GBOB` — and saying so out loud beats discovering it at N=8.
+- **NOT MEASURED: any release with more than three tapped holds.** Every number above N=3 is the
+  model, and the model has one confirmation. **Do not plan a growth step on it without a fourth
+  data point** — the cheap one arrives free, on the first morning four people tap.
 
 ### THE 09-24 BOX UPDATE COST A HUMAN SIGN-IN
 It did not self-repair this time: 4h+ of `okta=GONE`, and the 20:01 PT rehearsal met a
@@ -1661,14 +1802,17 @@ measured: ten distinct carts holding twenty reservations on one session)` = **20
 historical. Concurrent cart minting is safe (six simultaneous `NO_CART` precarts, six distinct
 carts), so a release group carts **four at a time**. RC **releases EARLY** — measured twice,
 one morning with all three facilities' flip brackets entirely before T — which is why the cart
-burst opens its lane at **T−15s** and retries every 500ms. Facilities flip **atomically**. One
+burst opens its lane **before T** (`BURST_LEAD_MS`, **5 s since 2026-09-25**, was 15 s) and
+retries every 500ms, with a `BURST_RELEASE_RESERVE` (25) the part before T may not spend. Facilities flip **atomically**. One
 live hold per (release, unit) is enforced temporally, after the bot once carted one campsite
 twice for two different users 14 seconds apart. The hand-off is proven end to end on both
 platforms, and `cart read back: 1 entry` was corroborated by a human on RC's own cart page.
 
 **DO NOT:** promise a cart in copy the evidence has not earned (a user who believes the site
-is handled **stops watching** — that rule governs every claim-screen decision); shorten the
-T−15s burst lead; add beta wording to SMS (the coming-soon body is 154 chars against a
+is handled **stops watching** — that rule governs every claim-screen decision); take the burst
+lead below **4.2 s** (the deepest "still locked" reading on record) or move it, the reserve or
+`CART_CONCURRENCY` without the other two — they are sized together with 225 ms of margin and
+`worker/cart-burst.test.mts` fails on any one of them alone; add beta wording to SMS (the coming-soon body is 154 chars against a
 160-char one-segment budget, and two segments is the shape that was Undelivered/30007 thirteen
 times); widen `supportsRcHold` past ReserveCalifornia (the bot holds ONE account; an Ohio
 watch would be offered a hold nothing on earth can perform); "fix" a stranded hold by
