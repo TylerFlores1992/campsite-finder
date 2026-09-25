@@ -327,6 +327,13 @@ handler it was reachable only from a real device, which is how `closeOnToken` sh
 Every close names its reason — `token` / `settled` / `timeout` / `session` — because *a fix
 that never fired* and *a fix that worked* otherwise produce the identical report.
 
+## Capacity, and more than one bot seat
+
+One seat = 20 holds per release, 4 with the full fast burst. Adding capacity means adding
+seats (account + IP), NOT raising `CART_CONCURRENCY`/`BURST_BUDGET`. The plan, and why
+`dueHolds`' `DISTINCT ON` must pick winners across all seats before filtering per seat:
+`docs/RC-BOT-SEATS-PLAN.md`.
+
 ## Diagnosing
 
 ```bash

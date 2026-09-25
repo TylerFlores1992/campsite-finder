@@ -20,6 +20,12 @@ correction is itself the record; here it is just weight.
   ≥ 6 h before a release, and check health afterwards.
 - **`autocart.rc_login` can read `fail` over a live session**, and its remedy names
   `rc-test-login.bat`, which DROPS the token. **Read `autocart.rc_session` before acting on it.**
+- **#414 (Second Parent's burst lead 15s → 5s) is merged and on the box too** (`39da21b`). The
+  bot was already signed out (`okta=GONE`) when that update ran. The two updates before it
+  (09-24 16:45Z, 09-25 17:02Z) each turned an ALIVE Okta session into GONE. The
+  only hold for 09-26 08:00 (`#M412`) was merely `offered` when read.
+- **Capacity beyond one box: `docs/RC-BOT-SEATS-PLAN.md`** (planned, nothing built). Read its
+  fairness-line section before touching `dueHolds`.
 
 ## 0. FIRST: WHERE 2026-09-24 LEFT IT
 
