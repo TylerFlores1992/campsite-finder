@@ -6,7 +6,10 @@
  * date(s) specified." Two measurements reframed that morning:
  *
  *   - RC's locks lapse LATE. Across 14 held units the poller alerted at T+3s, T+3s, T+4s,
- *     T+4s, T+10s, T+13s, T+13s, T+28s — and **not one before the predicted release**.
+ *     T+4s, T+10s, T+13s, T+13s, T+28s — and not one before the predicted release. **THAT
+ *     SECOND HALF IS RETIRED: the poller samples every 15s, so it cannot tell a flip at
+ *     T-12s from one at T.** Measured at two-second resolution since, RC lets go within ~4s
+ *     of T and sometimes before it; cart-burst.mjs carries the brackets and the wins.
  *   - Our retry gap, measured from the runner's own log that morning: median 12s, max 24s.
  *
  * So we fired once into a lock that had not lapsed, then slept through most of the window in
@@ -132,13 +135,23 @@ test('the lane is open before T, and keeps trying there', () => {
   assert.equal(r.retry, true, 'a refusal before T must not end the lane');
 });
 
-test('the lead covers the whole sampling blind spot it is derived from', () => {
-  // 15s is not a taste: it is exactly the poller's cadence, i.e. exactly the window in which
-  // an early flip is invisible. Shorter and the blind spot is still partly unexamined.
-  assert.ok(BURST_LEAD_MS >= 15_000, `leaves part of the 15s blind spot unasked: ${BURST_LEAD_MS}`);
-  // And bounded: 2026-08-08 measured a cart 85s early being refused, so a lead anywhere near
-  // that is spending requests on an answer we already have.
-  assert.ok(BURST_LEAD_MS <= 60_000, `so early it is just the old 85s mistake: ${BURST_LEAD_MS}`);
+test('the lead covers the MEASURED flip, and no longer the sampling blind spot', () => {
+  // THIS GUARD WAS INVERTED ON 2026-09-25 AND THE OLD ASSERTION IS WHY IT HAD TO BE.
+  //
+  // It read `BURST_LEAD_MS >= 15_000`, on the reasoning that 15s is exactly the poller's
+  // cadence and therefore exactly the window in which an early flip is invisible. Sound when
+  // written, and it made the lead unshortenable without a red test — a guard REQUIRING the
+  // value under investigation, which is the shape `held-offer-scope` already cost us once.
+  //
+  // The uncertainty it was derived from has been measured away: `rc_release_readings` holds
+  // eight two-second brackets across three mornings whose deepest "still locked" observation
+  // is T-4.2s, and this lane's own six wins span T-0.9 to T+0.9. So the lead is sized to the
+  // measurement now, and it must stay far enough under the old value that the shared budget
+  // can still reach T with a full group — the arithmetic two tests below.
+  assert.ok(BURST_LEAD_MS >= 4_200,
+    `shallower than the deepest measured "still locked" reading (T-4.2s): ${BURST_LEAD_MS}`);
+  assert.ok(BURST_LEAD_MS <= 10_000,
+    `back into the window that spent the whole budget before T on 2026-09-25: ${BURST_LEAD_MS}`);
 });
 
 test('an early win is REPORTED as early — the measurement is the whole point', () => {
@@ -159,6 +172,70 @@ test('the total is bounded to something a WAF will not read as an attack', () =>
   assert.ok(worst <= 40, `worst case ${worst} attempts across ${span / 1000}s`);
   assert.ok(BURST_BUDGET >= Math.ceil(span / (BURST_GAP_MS + 1000)) * 0.5,
     'a budget that cannot reach the release moment stops the lane before the site opens');
+});
+
+test('the SHARED budget still reaches T when a full group draws on it', () => {
+  // THE ASSERTION DIRECTLY ABOVE HAS THE RIGHT PROPERTY AND THE WRONG DENOMINATOR, and that
+  // is how 2026-09-25 happened. "A budget that cannot reach the release moment stops the lane
+  // before the site opens" is exactly the failure — and it divides the span by ONE hold's
+  // cycle, while `burstBudget` is shared across the whole release group. It passed for the
+  // lane's entire life and the three-hold case failed in production underneath it.
+  //
+  // MEASURED, across all ten bursts on record: a hold's own attempt cycle is 1.0-1.3s and is
+  // INDEPENDENT of group size, because holds burst in parallel under pMap. So the pool drains
+  // at min(N, CART_CONCURRENCY) / cycle.
+  //
+  // AND THE RESERVE MOVED WHAT THIS HAS TO ASSERT, which is the whole reason it is restated
+  // rather than left as it was. `BURST_RELEASE_RESERVE` makes "the pool is spent before T"
+  // impossible — a hold at the reserve WAITS for T. So the failure it can still produce is not
+  // an exhausted pool, it is SILENCE: once the discretionary share is gone, every hold sleeps
+  // until T and nobody asks RC at all. At the old 15s lead that silence runs from ~T-9.8s to
+  // T, and TWO OF THIS LANE'S SIX WINS (T-0.9s, T-0.5s) sit inside it. A guard still reading
+  // "the pool is spent before T" would be describing a bug the reserve already fixed, and
+  // would say nothing about the one it leaves.
+  //
+  // CART_CONCURRENCY is read out of the runner rather than copied: a second copy of a bound
+  // is a second thing to forget. (`cart-parallel.test.mts` pins its declaration shape.)
+  const concurrency = Number(/RC_CART_CONCURRENCY \|\| (\d+)/.exec(RUNNER())?.[1]);
+  assert.ok(concurrency >= 1, 'could not read CART_CONCURRENCY out of the runner');
+  const CYCLE_MS = 1_100;                    // the fast end of the measured 1.0-1.3s
+  // Attempt 1 is never charged — the loop asks, THEN consults — so a full group gets
+  // `concurrency` free attempts on top of the discretionary share.
+  const discretionary = BURST_BUDGET - BURST_RELEASE_RESERVE;
+  const preT = ((concurrency + discretionary) / concurrency) * CYCLE_MS;
+  assert.ok(preT >= BURST_LEAD_MS,
+    `the lane goes SILENT for ${((BURST_LEAD_MS - preT) / 1000).toFixed(1)}s immediately before T`
+    + ` at ${concurrency} holds: the discretionary share covers only ${(preT / 1000).toFixed(1)}s`
+    + ` of a ${BURST_LEAD_MS / 1000}s lead, and this lane's two earliest wins are at T-0.9s and`
+    + ' T-0.5s');
+  // And the reserve must reach meaningfully PAST T, not merely to it. The floor is derived: the
+  // latest "first free" ever measured is T+1.4s, and a win can take two or three attempts at
+  // ~1.1s each, so under ~3s of reach past T cannot land the cases we have actually seen.
+  // Deliberately NOT sized to the 30s window — that tail is the slow lane's job, and a guard
+  // demanding it would fail on every honest configuration.
+  const postT = (BURST_RELEASE_RESERVE / concurrency) * CYCLE_MS;
+  assert.ok(postT >= 3_000,
+    `only ${(postT / 1000).toFixed(1)}s of reach after T at ${concurrency} holds`
+    + ' — under the measured T+1.4s flip plus retry room');
+});
+
+test('the lead and the reserve are sized TOGETHER, and neither may move alone', () => {
+  // THE TWO FIXES COMPOSE, AND THE MARGIN IS 225ms. At 4 slots the discretionary share plus
+  // the free first attempts covers 5.2s; the lead is 5.0s. That is not slack, it is a
+  // coincidence holding two constants together, and raising EITHER `CART_CONCURRENCY` or
+  // `BURST_RELEASE_RESERVE` eats it: at 6 slots the same share covers only 3.9s and the lane
+  // goes quiet for 1.1s over exactly the band where its two earliest wins happened.
+  //
+  // This is deliberately a SECOND test rather than another assertion in the one above: the one
+  // above is about a configuration being sound, this one is about which knob a future session
+  // is allowed to turn on its own. The answer is neither.
+  const concurrency = Number(/RC_CART_CONCURRENCY \|\| (\d+)/.exec(RUNNER())?.[1]);
+  const discretionary = BURST_BUDGET - BURST_RELEASE_RESERVE;
+  const cover = (concurrency + discretionary) / concurrency;   // attempts per slot before the gate
+  assert.ok(cover * 1_100 >= BURST_LEAD_MS,
+    `raising CART_CONCURRENCY to ${concurrency} or the reserve to ${BURST_RELEASE_RESERVE} left`
+    + ` only ${(cover * 1.1).toFixed(1)}s of asking for a ${BURST_LEAD_MS / 1000}s lead —`
+    + ' lower the lead or the reserve in the same change');
 });
 
 // ---------------------------------------------------------------------------

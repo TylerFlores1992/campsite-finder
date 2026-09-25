@@ -840,9 +840,15 @@ async function runPass() {
       // shared budget — see cart-burst.mjs, which owns every rule and is tested.
       //
       // Before 2026-09-03 this was ONE attempt, and the next came on the following feed
-      // poll: measured median 12s, max 24s. RC's locks lapse 3 to 28 seconds LATE (14 held
-      // units, none early), so the old behaviour fired into a lock that had not lapsed and
-      // then slept through most of the window in which the site existed.
+      // poll: measured median 12s, max 24s — so the old behaviour fired once and then slept
+      // through most of the window in which the site existed.
+      //
+      // THE REASON WRITTEN HERE USED TO BE "RC's locks lapse 3 to 28 seconds LATE (14 held
+      // units, none early)", AND THAT READING IS RETIRED. Those fourteen sightings came from
+      // a poller sampling every FIFTEEN seconds, which cannot tell a flip at T-12s from one
+      // at T. Measured properly since — eight two-second brackets in `rc_release_readings`
+      // and this lane's own six wins — RC lets go within about four seconds of T, sometimes
+      // BEFORE it. cart-burst.mjs has both tables. Do not restore the "none early" claim.
       let attempts = 0;
       let burstNote = '';
       for (;;) {

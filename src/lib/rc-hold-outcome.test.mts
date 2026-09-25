@@ -143,7 +143,8 @@ test('a sighting long before the release is not a race, and does not invent a co
 test('RC releases EARLY, so a sighting seconds ahead of T is still this release', () => {
   // Measured 2026-09-04, 582 polls at 2s resolution: rc-583's flip bracket is (-2.2s, -0.2s],
   // entirely before T. A `>= 0` bound would file the sharpest evidence there is as a different
-  // opening — which is why the window is the cart burst's own T-15s lead and not zero.
+  // opening — which is why the window is 15s and not zero. (It is the POLLER's cadence, not
+  // the cart burst's lead: those were the same number until 2026-09-25 and are not any more.)
   for (const s of [-1, -2, -15]) {
     const r = rcHoldOutcomeReading({ tapped: true, carted: false, openedAfterS: s })!;
     assert.match(r.text, /race we lost/, `${s}s before the release is the release`);

@@ -1,6 +1,6 @@
 ---
 name: rc-autocart
-description: The ReserveCalifornia auto-hold flow — how a hold moves offered → requested → carted → claiming → released, the fairness line when two users want one campsite, hold capacity, the T−15s cart burst, and the in-app hand-off. Use when working on or diagnosing RC holds, the cart burst, `worker/hold-line.ts`, `worker/hold-claim.ts`, `src/lib/rc-holds.ts`, `scripts/auto-cart-bot/`, ClaimFlow, `cart read back`, or an 08:00 PT release that carted late, carted twice or did not cart.
+description: The ReserveCalifornia auto-hold flow — how a hold moves offered → requested → carted → claiming → released, the fairness line when two users want one campsite, hold capacity, the pre-release cart burst, and the in-app hand-off. Use when working on or diagnosing RC holds, the cart burst, `worker/hold-line.ts`, `worker/hold-claim.ts`, `src/lib/rc-holds.ts`, `scripts/auto-cart-bot/`, ClaimFlow, `cart read back`, or an 08:00 PT release that carted late, carted twice or did not cart.
 ---
 
 # RC auto-cart — hold, cart, hand over
@@ -150,17 +150,62 @@ the lag as `T+s` — if tail-end holds start landing late, that is this decision
 
 | | |
 | --- | --- |
-| `BURST_LEAD_MS` | **15,000** — opens BEFORE the predicted release |
+| `BURST_LEAD_MS` | **5,000** — opens BEFORE the predicted release (was 15,000 until 2026-09-25) |
 | `BURST_WINDOW_MS` | **30,000** after it |
 | `BURST_GAP_MS` | **500** |
 | `BURST_BUDGET` | **40**, **shared across the whole release group** |
+| `BURST_RELEASE_RESERVE` | **25** — the part of the pool only T onwards may spend (2026-09-25) |
 
 **THE BUDGET IS SHARED, NOT PER-HOLD.** Carts run `CART_CONCURRENCY` at a time, so a per-hold
 budget multiplies: four holds × twenty attempts is eighty POSTs in thirty seconds from a
 residential IP that **has eaten a 12-hour WAF block from RC before**.
 
-**THE LEAD IS DERIVED FROM THE POLLER'S SAMPLING FLOOR, not picked.** The poller samples every
-15 s, so a flip up to 15 s before T is indistinguishable from one at T in every reading we have.
+**THE LEAD IS DERIVED FROM THE MEASURED FLIP, and it was SHORTENED 15 s -> 5 s on 2026-09-25.**
+It used to come from the poller's sampling floor — a flip up to 15 s before T is invisible to a
+15-second sampler, so 15 s was exactly the uncertainty. That uncertainty has been measured away
+(the brackets below): the deepest "still locked" reading on record is **T-4.2 s**, so 5 s starts
+one poll before the earliest instant RC has ever been seen still holding.
+
+**AND AN EARLY ASK IS NOT FREE — the half that was wrong.** The old reasoning was that an early
+attempt costs one refusal, which the slow lane already absorbs. True at one or two holds; **false
+at three**, because the budget is shared. On 2026-09-25 three tapped holds spent **43 attempts,
+every one before T** (`#GBOB` 14 ending T-1.0 s, `#R367` 14 ending T-1.6 s, `#A113` 15 and won at
+T-0.5 s only because RC let go early) and the lane never reached the moment the sites opened.
+
+**THE FIX IS THE LEAD, NOT THE BUDGET.** 40 is what keeps thirty seconds of POSTs from looking
+like an attack; raising it is the trade that constant exists to refuse.
+
+**AND THE RESERVE IS THE OTHER HALF OF THE SAME FIX** (`BURST_RELEASE_RESERVE`, landed the same
+day). Before T the lane may not spend below it: a hold that reaches it **waits for T** rather than
+dropping to the slow lane. So the pool can no longer be exhausted before the release — what a
+long lead produces instead is **SILENCE**, every hold asleep until T. At the old 15 s lead that
+silence runs ~T-9.8 s to T, and **two of this lane's six wins sit inside it.**
+
+**THE TWO CONSTANTS ARE SIZED TOGETHER AND THE MARGIN IS 225 ms.** The discretionary share is
+`40 - 25` = 15, plus one uncharged first attempt per slot, so a full group gets 19 attempts =
+`(4 + 15) / 4 × 1.1 s` = **5.2 s of asking against the 5.0 s lead**. At the 5 s lead the reserve
+is therefore never reached before T at any group size. **Raising `CART_CONCURRENCY` to 6, or the
+reserve to 30, drops the cover to 3.9 s and re-opens that silence** — take either with a lower
+lead or a lower reserve in the same change, and read the guard, which fails on the bump alone.
+
+**HOW MANY HOLDS THE LANE ACTUALLY SERVES — measured, then derived.** A hold's own attempt cycle
+is **1.0-1.3 s** across all ten bursts on record and is independent of group size, because holds
+burst in parallel under `pMap(holds, CART_CONCURRENCY)`. With the reserve in place what matters is
+reach PAST T: `25 / (min(N, 4) / 1.1 s)`.
+
+| holds | reach past T | covers the measured flip (T-4.2 -> T+1.4)? | note |
+|---|---|---|---|
+| 1 | ~28 s | yes, 26 s spare | the lane's first four releases — which is why this was invisible |
+| 2 | ~14 s | yes | |
+| 3 | ~9 s | yes | at lead 15 s and no reserve this ended at **T-1 s**, observed |
+| 4 | ~7 s | yes | |
+| 5+ | one unguarded attempt, ~30 s late | **no** | `CART_CONCURRENCY` caps the slots |
+
+**So the burst serves about FOUR holds well, against an `RC_HOLD_CAPACITY` of 20.** That gap is
+the growth ceiling, and it is `CART_CONCURRENCY` × the reserve, not the cart ceiling — a hold that
+only gets a slot after the first four finish starts with its 30 s window already expired, because
+`releaseMoment` is group-wide and fixed before the sleep. `worker/cart-burst.test.mts` pins both
+arithmetics and fails against the old lead.
 
 **AND RC DOES RELEASE EARLY — MEASURED TWICE, and this retires the old "never early" reading.**
 `scripts/rc-release-window.mts` polls RC's grid at 2-second resolution across a release:
@@ -169,7 +214,14 @@ residential IP that **has eaten a 12-hour WAF block from RC before**.
 2026-09-04   rc-583  locked -2.2s -> free -0.2s   (8 nights)   <- the whole bracket is NEGATIVE
 2026-09-10   rc-583  locked -4.2s -> free -2.2s   rc-539 -3.5 -> -1.5   rc-542 -2.9 -> -0.9
              15 of 15 nights free BEFORE the predicted release
+2026-09-24   rc-357  (-1.9, +0.1]   rc-359  (-1.2, +0.8]   rc-360  (---, +1.4]
 ```
+
+Eight facility brackets over three mornings, and **this lane's own six wins agree**: T-0.9,
+T-0.5, T+0.1, T+0.5, T+0.5, T+0.9. So the flip is within about four seconds of T on every
+measurement there is — deepest "still locked" **T-4.2 s**, latest "first free" **T+1.4 s**.
+(`rc-360`'s lower bound reads +241.2 s, above its own upper bound, so it is an artifact of a
+night whose lock named a different release. Quote the seven clean brackets.)
 
 - **Quote the negative BRACKET, never the median.** On 09-04 two of three facilities straddled
   T, so a median of +0.5 s reads as "on time" when the finding is the opposite.

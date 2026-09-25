@@ -2266,6 +2266,11 @@ grace, and RC refused every one with *"The unit is not available for the date(s)
   know that RC never releases early, so opening the lane at T−15s is the only way to be
   asking when it does. The cost of an early ask is a refusal, which is free; the cost of not
   asking is the site.
+
+  > **`BURST_LEAD_MS` IS 5,000 SINCE 2026-09-25 — do not read 15s as current**, and there is a
+  > `BURST_RELEASE_RESERVE` (25) the part before T may not spend. "A refusal, which is free" is
+  > retired: the refusal costs an attempt from a **shared** `BURST_BUDGET`, which three tapped
+  > holds exhausted before T. `CLAUDE.md` → "09-25: THE HAND-OFF WORKED".
 - **`releaseMoment` is fixed BEFORE the sleep, never recomputed after it** — a deadline
   computed on the far side of a wait is a deadline measured from the wrong instant.
 - **THE LOAD IS NEGLIGIBLE** and that was checked rather than waved through: ~60 requests
@@ -2364,6 +2369,15 @@ rc-542   locked -0.9s -> free +1.1s   16 nights   <- the facility #L034 is in
   opened the lane early because early release was *not ruled out*; it is now **observed**. Do
   not shorten the lead as a tidy-up — the 15s exists to be asking when this happens, and the
   cost of an early ask is a refusal, which is free.
+
+  > **THE LEAD IS 5s SINCE 2026-09-25, AND "a refusal, which is free" IS RETIRED.** An early
+  > ask is free of RC's opinion and **spends an attempt from a pool shared across the whole
+  > release group** — at three tapped holds the budget ran out at T−1s and two holds never
+  > reached the release at all. The half of this bullet that STANDS is that RC releases early;
+  > the 5s lead is sized to the measured flip (deepest still-locked reading T−4.2s) and covers
+  > every win the lane has produced — and it is what keeps `BURST_RELEASE_RESERVE` (also new
+  > that day) from parking every hold in silence for the ten seconds before T. See `CLAUDE.md`
+  > → "09-25: THE HAND-OFF WORKED".
 - **FACILITIES FLIP ATOMICALLY, AND THAT IS THE NEW FACT.** Every night in a facility shares
   one bracket, and the three facilities are separated by ~1.3s from each other. So RC is not
   releasing per-unit — it is flipping a facility's whole locked inventory in one action, and

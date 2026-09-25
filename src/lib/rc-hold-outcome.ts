@@ -51,17 +51,25 @@
  *
  * **THE BOUND IS NOT `>= 0`, AND THAT MATTERS: RC RELEASES EARLY.** Measured 2026-09-04 with
  * 582 polls at 2-second resolution, `rc-583`'s flip bracket is (-2.2s, -0.2s] — entirely
- * before T. A sighting a second or two ahead of the release IS the release, which is why the
- * cart burst opens its lane at T-15s on that evidence. So the window is generous on the early
- * side by exactly that much and the decision lives HERE, in the tested function, rather than
+ * before T. A sighting a second or two ahead of the release IS the release, so the window is
+ * generous on the early side and the decision lives HERE, in the tested function, rather than
  * being a second copy of the number inside the caller's SQL.
  */
 
 /**
  * How far BEFORE the release a sighting can be and still be this release.
  *
- * 15 seconds, the same lead the cart burst opens on, and for the same measured reason.
- * Anything earlier describes a different opening.
+ * 15 seconds: the POLLER's own sampling cadence, so a sighting one sample early is the
+ * earliest reading this instrument can produce about this release. Anything earlier describes
+ * a different opening.
+ *
+ * **IT USED TO SAY "the same lead the cart burst opens on, and for the same measured reason",
+ * AND THAT IS NO LONGER TRUE (2026-09-25).** They were the same number because they were
+ * derived from the same uncertainty — and `BURST_LEAD_MS` is 5s now, sized to the MEASURED
+ * flip (deepest "still locked" reading T-4.2s) rather than to the poller's cadence. This one
+ * is still about the cadence, which has not changed. **Do not "restore consistency" by
+ * dropping this to 5s**: it would start reading a genuine first sighting as a different
+ * opening, which is the false-negative half of the very bug this window was added for.
  */
 export const RELEASE_SIGHTING_WINDOW_S = 15;
 
