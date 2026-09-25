@@ -92,6 +92,33 @@ export const BURST_GAP_MS = Number(process.env.RC_BURST_GAP_MS || 500);
 export const BURST_BUDGET = Number(process.env.RC_BURST_BUDGET || 40);
 
 /**
+ * How much of the shared pool only the release moment may spend.
+ *
+ * ## The loss, measured 2026-09-25
+ *
+ * Three holds shared one release. Each opened the lane at T-15s and retried about once a
+ * second, so the pool of 40 went in thirteen seconds: `#GBOB` 14 attempts ending T-1.0s,
+ * `#R367` 14 ending T-1.6s, `#A113` 15 ending T-0.5s (14 + 14 + 15 = 43, because a hold's
+ * FIRST attempt is not charged). Every site at that release freed between T+0.1s and T+1.4s
+ * (09-24's release-window instrument), so the burst was spent entirely on the part of the lane
+ * that has never once caught a site. `#GBOB` was caught 17 seconds later by the slow lane,
+ * which was luck; `#R367` never carted.
+ *
+ * One hold never trips this: it spends ~14 before T and keeps 26. It is the SHARED pool that
+ * makes the pre-T lead scale with the number of holds, while the release moment is the one
+ * instant every hold needs at once.
+ *
+ * ## Why a reserve and not a bigger or per-hold budget
+ *
+ * Both of those raise the POSTs from a residential IP RC's WAF has blocked for twelve hours.
+ * This raises nothing: the total is still `BURST_BUDGET`. It only refuses to let the
+ * speculative half of the lane (before T) spend the part the productive half (T onwards)
+ * needs. A hold that reaches the reserve early WAITS for T rather than dropping to the slow
+ * lane, which is the whole point: it arrives at the release with attempts in hand.
+ */
+export const BURST_RELEASE_RESERVE = Number(process.env.RC_BURST_RELEASE_RESERVE || 25);
+
+/**
  * Is this refusal the one that means "the lock has not lapsed yet"?
  *
  * CONSERVATIVE BY CONSTRUCTION: anything we do not positively recognise stops the burst.
@@ -119,11 +146,14 @@ export function isNotAvailable(err) {
  * @param budgetLeft attempts remaining in the group's shared pool.
  * @param lastError RC's own words from the attempt that just failed, or null.
  * @param timedOut the precart gave up on an unresponsive page — ours, not RC's.
- * @returns {{retry: boolean, waitMs: number, reason: string}}
+ * @param reserve attempts that only T onwards may spend (see BURST_RELEASE_RESERVE).
+ * @returns {{retry: boolean, waitMs: number, reason: string, spend: boolean}} `spend: false`
+ *   means the caller must NOT charge the pool for this wait, because no attempt was made
+ *   early on its behalf. The caller's own attempt at T is charged as usual.
  */
 export function shouldRetryBurst({
   waitedForRelease, elapsedMs, budgetLeft, lastError, timedOut,
-  windowMs = BURST_WINDOW_MS, gapMs = BURST_GAP_MS,
+  windowMs = BURST_WINDOW_MS, gapMs = BURST_GAP_MS, reserve = BURST_RELEASE_RESERVE,
 }) {
   if (!waitedForRelease) return { retry: false, waitMs: 0, reason: 'not the release pass' };
   // OURS, NOT RC'S. A page that would not answer is a browser fault; hammering it makes the
@@ -136,7 +166,13 @@ export function shouldRetryBurst({
   if (elapsedMs >= windowMs) {
     return { retry: false, waitMs: 0, reason: `${Math.round(windowMs / 1000)}s window closed` };
   }
-  return { retry: true, waitMs: gapMs, reason: 'the lock may not have lapsed yet' };
+  // BEFORE T, THE RESERVE IS NOT OURS TO SPEND. Wait for the release instead of either
+  // retrying into the reserve or giving up: a hold that stops here would fall to the ~12s slow
+  // lane at exactly the moment sites free, which is the 2026-09-25 loss.
+  if (elapsedMs < 0 && budgetLeft <= reserve) {
+    return { retry: true, waitMs: Math.max(gapMs, -elapsedMs), reason: 'saving the burst for the release', spend: false };
+  }
+  return { retry: true, waitMs: gapMs, reason: 'the lock may not have lapsed yet', spend: true };
 }
 
 /**
