@@ -2000,6 +2000,28 @@ answer. **Two readers, two questions, one row: do not collapse them.**
     cart survived**. Reading the last line reported the two runs that settled the question as
     failures.
 
+### RC hold capacity, and adding bot seats — PLANNED, NOTHING BUILT (2026-09-25)
+**Full plan: `docs/RC-BOT-SEATS-PLAN.md`.**
+
+**CONCLUSION.** One seat (bot RC account + profile + its own public IP) carries **20 holds per
+release** (RC's cart limit), of which **4 get the full fast burst at T** (`CART_CONCURRENCY`,
+sized together with `BURST_BUDGET` / `BURST_RELEASE_RESERVE` / `BURST_LEAD_MS`). Holds 5..20
+fall to the ~12s slow lane. **Capacity is bought with ADDRESSES**, as on rec.gov: N seats =
+4N best-odds holds, 20N total. The plan is one migration (**079, main's last number**, so
+claim a new block in `docs/LANES.md` in the same PR), placement at request time, a per-seat
+feed, per-seat singletons, failover of `requested` holds only, and an `autocart.rc_capacity`
+gauge. Steps 1-6 are harmless at one seat and should be proven before a second one exists.
+
+**DO NOT:**
+- **Raise `CART_CONCURRENCY` or `BURST_BUDGET` to "add capacity".** That is more requests
+  from one IP RC has blocked before, and the lead/reserve guard fails on it.
+- **Split `dueHolds` per seat with a bare `WHERE seat_id`.** The one-hold-per-(release,
+  campsite) rule is its `DISTINCT ON`, and running that per seat double-carts across boxes.
+  Pick winners across all seats first, and keep one campsite's holds on one seat.
+- **Fail over anything `carted` or `claiming`.** The cart lives in that seat's session.
+- **Add a second seat before the per-seat singletons.** Two boxes writing
+  `rc_runner_heartbeat id = 1` make one box's session read as the other's.
+
 ### The mini-PC — supervision, updates, the watchdog, remote control
 **Full record: `docs/ARCHIVE-RC-AUTOCART.md`.**
 
@@ -2331,8 +2353,15 @@ the only number main has left, and neither the 09-23 nor the 09-24 batch spent i
 - **#406 — PROVEN on 09-25.** Two phone hand-offs reached the owner's cart, and the close waited
   for a live token over one dead 22.6h. **The `stale-reset` branch has still never fired on a
   phone.** See *"09-25: THE HAND-OFF WORKED"*.
-- **#413 — the burst reserve.** It needs a box update, and it waits on the next multi-hold
-  release for a reading.
+- **#413 + #414 — the burst reserve, and the lead cut to 5s (Second Parent's PR, reviewed and
+  merged 2026-09-25).** Both are on the box (`39da21b`). The first multi-hold release is the
+  reading: `cart-burst` rows with `lastOffsetMs >= 0` for every hold. Master Verify went red
+  once on `39da21b`, 1 of 2,535, on a tree byte-identical to one green twice. The worker deploy
+  and a box update both landed inside its test window, the suite passed 2,535/2,535 locally,
+  and one re-run was green.
+- **Capacity beyond one box is PLANNED, not built:** `docs/RC-BOT-SEATS-PLAN.md`. Its open
+  decisions are the owner's: where a second IP comes from, a second RC account, and a read of
+  RC's terms first.
 - **09-25 08:00 PT: THE OWNER WILL CHECK OUT ON THE BOX, NOT THROUGH THE HAND-OFF.** They will
   complete checkout of the group site over RustDesk, in the bot's own Chromium window, so #406's
   phone path may **not** be exercised that morning. Do not read a quiet `client_reports` as #406
