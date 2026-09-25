@@ -272,14 +272,18 @@ test('the reserve is a real share of the pool, and leaves the early lane somethi
 });
 
 test('THE 09-25 MORNING, REPLAYED: three holds still have attempts at T', () => {
-  // Drive the real decision with the real constants: three holds, each attempt ~1s of RC
-  // round trips plus the gap, all opening at T-LEAD, one shared pool, first attempt free.
+  // Drive the real decision with the real constants: three holds, all opening at T-LEAD, one
+  // shared pool, first attempt free. THE CADENCE IS THE MEASURED ONE, not an estimate: #GBOB
+  // made 14 attempts from T-15.0s to T-1.0s, i.e. ~1s per attempt INCLUDING the 500ms gap, so
+  // the round trip is ~500ms. A first version modelled it as 1s + gap, spent only ~30 of the
+  // 40 before T, and passed with the reserve deleted — it could not see the bug it replays.
+  const ROUND_TRIP_MS = 500;
   const holds = [0, 1, 2].map(() => ({ t: -BURST_LEAD_MS, atOrAfterT: 0, done: false }));
   let pool = BURST_BUDGET;
   for (let guard = 0; guard < 10_000 && holds.some((h) => !h.done); guard++) {
     const h = holds.filter((x) => !x.done).sort((a, b) => a.t - b.t)[0];
     if (h.t >= 0) h.atOrAfterT += 1;          // an attempt made at or after the release
-    h.t += 1_000;                              // the attempt itself
+    h.t += ROUND_TRIP_MS;                      // the attempt itself
     const d = shouldRetryBurst({ ...base, elapsedMs: h.t, budgetLeft: pool });
     if (!d.retry) { h.done = true; continue; }
     if (d.spend !== false) pool -= 1;
