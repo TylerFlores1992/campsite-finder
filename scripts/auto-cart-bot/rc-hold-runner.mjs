@@ -987,7 +987,8 @@ async function runPass() {
             timedOut: !!result?.timedOut,
           });
           if (decision.retry) {
-            burstBudget -= 1;
+            // A wait for T spends nothing: it is the reserve being KEPT, not used.
+            if (decision.spend !== false) burstBudget -= 1;
             await sleepTicking(decision.waitMs);
             continue;
           }

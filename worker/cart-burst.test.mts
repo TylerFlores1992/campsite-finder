@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   shouldRetryBurst, isNotAvailable, describeBurst,
-  BURST_WINDOW_MS, BURST_GAP_MS, BURST_BUDGET, BURST_LEAD_MS,
+  BURST_WINDOW_MS, BURST_GAP_MS, BURST_BUDGET, BURST_LEAD_MS, BURST_RELEASE_RESERVE,
 } from '../scripts/auto-cart-bot/cart-burst.mjs';
 
 /** Strip comments — a guard must never pass or fail on the prose explaining it. */
@@ -237,4 +237,61 @@ test('the burst reports what it spent', () => {
   const lost = describeBurst({ attempts: 18, elapsedMs: 29_400, won: false, reason: 'window closed' });
   assert.match(lost, /18 fast attempt/);
   assert.match(lost, /29\.4s/, 'a count without an elapsed time cannot be read against the flips');
+});
+
+// ---------------------------------------------------------------------------
+// 6. THE RELEASE RESERVE (2026-09-25). Three holds spent the shared pool by T-1.0s and
+//    every site freed at T+0.1..1.4s. The part before T may not spend what T needs.
+// ---------------------------------------------------------------------------
+
+test('before T, at the reserve, a hold WAITS FOR T instead of giving up', () => {
+  const r = shouldRetryBurst({ ...base, elapsedMs: -6_000, budgetLeft: BURST_RELEASE_RESERVE });
+  assert.equal(r.retry, true, 'stopping here drops the hold to the slow lane at the release');
+  assert.equal(r.spend, false, 'waiting is keeping the reserve, not using it');
+  assert.equal(r.waitMs, 6_000, 'it must wake AT the release, not a gap later');
+});
+
+test('above the reserve, before T, it still spends — the early lane is not switched off', () => {
+  const r = shouldRetryBurst({ ...base, elapsedMs: -6_000, budgetLeft: BURST_RELEASE_RESERVE + 1 });
+  assert.equal(r.retry, true);
+  assert.equal(r.spend, true);
+  assert.equal(r.waitMs, BURST_GAP_MS);
+});
+
+test('from T onwards the reserve IS spendable, down to zero', () => {
+  for (const elapsedMs of [0, 1_000]) {
+    const r = shouldRetryBurst({ ...base, elapsedMs, budgetLeft: 1 });
+    assert.equal(r.retry, true, `at T+${elapsedMs}`);
+    assert.equal(r.spend, true, `at T+${elapsedMs}`);
+  }
+});
+
+test('the reserve is a real share of the pool, and leaves the early lane something', () => {
+  assert.ok(BURST_RELEASE_RESERVE >= 10, `too little left for the release: ${BURST_RELEASE_RESERVE}`);
+  assert.ok(BURST_RELEASE_RESERVE < BURST_BUDGET, 'a reserve of the whole pool turns off the early lane');
+});
+
+test('THE 09-25 MORNING, REPLAYED: three holds still have attempts at T', () => {
+  // Drive the real decision with the real constants: three holds, each attempt ~1s of RC
+  // round trips plus the gap, all opening at T-LEAD, one shared pool, first attempt free.
+  const holds = [0, 1, 2].map(() => ({ t: -BURST_LEAD_MS, atOrAfterT: 0, done: false }));
+  let pool = BURST_BUDGET;
+  for (let guard = 0; guard < 10_000 && holds.some((h) => !h.done); guard++) {
+    const h = holds.filter((x) => !x.done).sort((a, b) => a.t - b.t)[0];
+    if (h.t >= 0) h.atOrAfterT += 1;          // an attempt made at or after the release
+    h.t += 1_000;                              // the attempt itself
+    const d = shouldRetryBurst({ ...base, elapsedMs: h.t, budgetLeft: pool });
+    if (!d.retry) { h.done = true; continue; }
+    if (d.spend !== false) pool -= 1;
+    h.t += d.waitMs;
+  }
+  for (const [i, h] of holds.entries()) {
+    assert.ok(h.atOrAfterT >= 3, `hold ${i} made only ${h.atOrAfterT} attempt(s) at or after T`);
+  }
+  // And the reserve changed WHEN the pool is spent, never how much.
+  assert.ok(pool >= 0, `overspent: ${pool}`);
+});
+
+test('the runner honours `spend`, or the reserve is inert', () => {
+  assert.match(RUNNER(), /if \(decision\.spend !== false\) burstBudget -= 1;/);
 });
