@@ -123,6 +123,17 @@ waited 60s on a lock whose pid was dead. Full account: `CLAUDE.md` → *"THE 09-
   with no human. **Before 07:30 PT on 09-25, read `/api/health/status`:** `okta=ALIVE` and a live
   token mean the repair ran. Still GONE after 07:00 PT is the case to raise with the owner. Do NOT
   run `rc-login.bat` over a live session.
+  - **SUPERSEDED THE SAME EVENING — IT DID NOT SELF-REPAIR, AND A CAPTCHA IS WHY.** The nightly
+    rehearsal at **2026-09-25 03:01Z (20:01 PT)** failed with *"a CAPTCHA appeared during
+    sign-in"*, the first failure after PASSes on 09-22/23/24. At 03:43Z the session was still
+    `no token at all` with `okta=GONE(404)` **four hours** after the update, where 09-23's repaired
+    in 31 min. Hourly `renewal` trips kept running (~69 s each) and none restored it. **So the
+    T−30 auto-login at 07:30 PT will very likely meet the same challenge, and an unsolved CAPTCHA
+    means no session, no cart, no group site.** The remedy is the documented human step:
+    `mini-pc\rc-login.bat`, **safe to run now precisely because there is no live session to
+    kill** — the prohibition is about printing it over a LIVE one. The owner was told at 03:45Z.
+    One CAPTCHA is an event, not an escalation: no solver, no repeated fresh-profile logins, and
+    **never clear cookies** (`DT`).
 
 **READ THE FLEET, DO NOT QUOTE ANY OF THIS.** A reading goes stale faster than the conclusion
 drawn from it, and this section has been caught out overnight twice.
