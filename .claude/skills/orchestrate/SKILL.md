@@ -92,6 +92,12 @@ level?" is not answerable from the session record, and an absent field is not a 
 it is an absent reading. **Do not infer one from the other.** The operative rule is
 unchanged and is the row above: effort is expressible only as model choice.
 
+**SINCE 2026-09-26 (#419) THE REPO SETS A BASELINE: `.claude/settings.json` carries
+`"effortLevel": "high"`**, and a child clones the repo, so it should start at high. **Not yet
+verified on a spawned child.** The first `get_session` after a spawn may again show no
+`effort_level`, which is still an absent reading and not proof either way. Model choice
+remains the only per-child lever.
+
 ### A child cannot `git push` unless you grant it AT SPAWN — measured 2026-09-20
 
 **Three children finished real work on one day and none of it reached origin.** Each sat

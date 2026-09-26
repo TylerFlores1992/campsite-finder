@@ -2428,20 +2428,36 @@ sections first. (`…-status-iij2xm.md` §1 is folded in as of 2026-09-22;
 Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the authority) — **079 is
 the only number main has left, and neither the 09-23 nor the 09-24 batch spent it.**
 
-#### IN FLIGHT 2026-09-26 — three branches built, none merged
-`claude/burst-concurrency-6` (CI green, Fable PASS), `claude/rc-rate-probe` (owner-run tool),
-`claude/okta-evening-signin` (child building, flag OFF). **Merge after the 09-26 08:00 PT release,
-then a box update timed just BEFORE an evening sign-in, then one supervised
-`RC_EVENING_SIGNIN=1` night.** The order, the verify step and the children to archive are in
+#### IN FLIGHT 2026-09-26 — three branches built, none merged, and the release gate is LIFTED
+`claude/burst-concurrency-6` (`934b86c`, CI green, Fable PASS), `claude/rc-rate-probe`
+(`3ea375f`, owner-run tool), `claude/okta-evening-signin` (`82599d3`, CI green alone, Fable
+PASS-WITH-NITS, flag OFF). **The 09-26 08:00 PT release has passed, so merge them now**, one CI
+run at a time. Then a box update timed just BEFORE an evening sign-in, then one supervised
+`RC_EVENING_SIGNIN=1` night. The order, the verify step and the children to archive are in
 `docs/NEXT-SESSION.md` §0-pre-pre; the findings are in *"09-26: OKTA LIVES 24h FROM CREATION"*.
+**N4** (does `update-guard` count OFFERED holds under the flag?) is the owner's call.
+
+#### THE 09-26 RELEASE: TWO HOLDS CARTED AT T−1.0s, NEITHER CLAIMED, AND A 15-MINUTE CANDIDATE
+- **First multi-hold reading of #413/#414:** `#R314` and `#C229` both carted with
+  `firstOffsetMs −4993`, `lastOffsetMs −1044 / −966`, **4 attempts each, `budgetLeft 34`**. At
+  N=2 this is the easy case. **N≥3 under the reserve is still unobserved.**
+- **Both ended `failed` ("released unclaimed") at 16:09Z.** The carted SMS was `delivered` and
+  `client_reports` is empty on both rows, so the claim screen was never opened. That is a
+  non-claim, not a hand-off defect.
+- **CANDIDATE, NOT A MECHANISM: RC's cart lapsed at ~15 min.** At 15:15:17Z the poller sent an
+  ordinary `available` alert naming **`#R314` itself**, while our row still read `carted`. That
+  fits the bundle-read 15-minute lapse over the single 45-minute observation, and would put the
+  45-minute claim window ~30 min past the real hold. **Discriminator:** the runner's cart
+  read-back for that unit between minute 14 and minute 16 of a hold. **Do not move any window on
+  one reading.** Full notes: `docs/NEXT-SESSION.md` §0-NOW.
 
 #### Landed 2026-09-24, and what each one now WAITS on
 - **#406 — PROVEN on 09-25.** Two phone hand-offs reached the owner's cart, and the close waited
   for a live token over one dead 22.6h. **The `stale-reset` branch has still never fired on a
   phone.** See *"09-25: THE HAND-OFF WORKED"*.
 - **#413 + #414 — the burst reserve, and the lead cut to 5s (Second Parent's PR, reviewed and
-  merged 2026-09-25).** Both are on the box (`39da21b`). The first multi-hold release is the
-  reading: `cart-burst` rows with `lastOffsetMs >= 0` for every hold. Master Verify went red
+  merged 2026-09-25).** Both are on the box (`39da21b`). **First multi-hold reading, 09-26:** 2 of
+  2 carted at T−1.0 s with `budgetLeft 34` (above). A 3+-hold morning is still the real test. Master Verify went red
   once on `39da21b`, 1 of 2,535, on a tree byte-identical to one green twice. The worker deploy
   and a box update both landed inside its test window, the suite passed 2,535/2,535 locally,
   and one re-run was green.
