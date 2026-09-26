@@ -167,7 +167,10 @@ test('Okta GONE → sign in, nothing to end', () => {
 });
 
 test('Okta UNKNOWN, or alive with no creation time → never end it on a guess', () => {
-  for (const okta of [null, { alive: null }, { alive: true, createdAt: null }, { alive: true, createdAt: 'garbage' }]) {
+  // `{ alive: null, createdAt: <stale> }` is the case that separates the unknown-liveness guard
+  // from the unknown-createdAt one — without it, deleting the first survives (mutation-found).
+  const stale = iso(NOW.getTime() - 20 * H);
+  for (const okta of [null, { alive: null }, { alive: null, createdAt: stale }, { alive: true, createdAt: null }, { alive: true, createdAt: 'garbage' }]) {
     const d = shouldEveningSignin({ ...ready, okta });
     assert.equal(d.run, false, JSON.stringify(okta));
     assert.equal(d.endSession, false);
