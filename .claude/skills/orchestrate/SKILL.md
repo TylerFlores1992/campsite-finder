@@ -66,7 +66,7 @@ real dispatch, and the first two contradict what people expect to be there.
 | | |
 | --- | --- |
 | **There is no `send_message` and no `list_events`** | 22 `mcp__Claude_Code_Remote__*` tools and neither is among them; `ToolSearch` finds no deferred ones. **You cannot read a child's transcript.** |
-| **A cloud child cannot answer you** | `SendMessage` reaches it, but its own docs say a cloud session *"receives your message but cannot message any session back yet"*, and `notify_when_idle` is **this-machine only**. A child is `environment_kind: anthropic_cloud`. Messaging one is fire-and-forget. |
+| **You cannot message a cloud child at all — measured 2026-09-26** | This row used to say `SendMessage` reaches a cloud child fire-and-forget. From the orchestrator session it does not: `ListAgents` lists no cloud sessions, and `SendMessage` to the child's session id returns *"No agent named … is reachable"*. **So the spawn prompt is the child's entire brief.** No mid-flight amendment, no "push now"; `interrupt_session` and a respawn are the only levers. A child is `environment_kind: anthropic_cloud`. |
 | **`create_session` has no effort knob** | It takes `model` and nothing else bearing on depth. `effort_level` is real and readable (`session_context.effort_level`) but `flag_settings_origin` is `server_fold_v1` — folded server-side from the user's `/config`. **Effort is expressible only as model choice.** |
 | **`permission_mode: 'plan'` blocks forever** | It waits on a human approval in the web UI. A child is never spawned in plan mode. A child also cannot be more permissive than this session. |
 | **`outcome_branch` needs an explicit `source_url`** | Measured, by the error: *"outcome_branch requires a github.com git source"*. Inheriting the parent's checkout is **not** enough. Pass `source_url` and `source_revision: "master"` alongside it, or the spawn is rejected. |
@@ -104,6 +104,14 @@ child's commit — 4 files, +609/−77 — exists nowhere now that its container
 **So pass `extra_allowed_tools` covering the push on EVERY spawn, and prove it on the first
 child of a session before giving any child real work.** Proven working the same day: the
 next child's branch appeared on origin minutes after it was told to push.
+
+**AND GRANT `Edit` AND `Write` TOO — THE PUSH GRANT ALONE IS NOT ENOUGH (2026-09-26).** A child
+spawned with only `["Bash(git push:*)", "Bash(git:*)"]` went `BLOCKED` on its FIRST edit to
+`scripts/auto-cart-bot/`, asking for approval nobody could give. The auto-mode classifier gates
+edits to release-critical paths as well as pushes. Respawned with
+`["Edit", "Write", "Bash(git push:*)", "Bash(git:*)"]`, it edited and pushed without a prompt.
+**Have the probe step make one trivial edit as well as the probe push**, so both walls are found
+before the real work starts, not after.
 
 **PROVE IT ON A BRANCH OUTSIDE `claude/**`, e.g. `probe/push-grant`, then delete it.**
 `verify.yml` fires on `push:` to `master` or `claude/**` — so a throwaway push to the
@@ -306,10 +314,12 @@ prompt rather than assumed. **"Never open a PR" has no such exception** — that
 about who is allowed to write the claims that go in front of the reader, not about CI
 load, and it holds whether the child is first in the queue or last.
 
-A cloud child cannot answer back (see "What the tools actually do" above), so wherever a
-child is told to wait, "until told" has to mean a fire-and-forget `SendMessage` followed
-by polling **origin for the branch** — `git fetch origin claude/<topic>` — never polling
-the child for a reply it cannot send.
+**NEVER TELL A CHILD TO WAIT FOR A MESSAGE.** A cloud child cannot be messaged at all (see
+"What the tools actually do" above). A child told "commit, then wait for push now" finishes its
+turn and strands its commit in a container nobody can reach. On 2026-09-26 one had to be
+interrupted and respawned for exactly this. **Every child pushes when done.** If the CI slot is
+busy, serialise by *when you spawn*, not by asking a child to hold. Then poll **origin for the
+branch** — `git fetch origin claude/<topic>` — never the child.
 
 **Unmeasured, worth reading once:** whether a CCR child pushes its branch automatically at
 the end of its turn regardless of what the prompt said. `create_session` takes an
