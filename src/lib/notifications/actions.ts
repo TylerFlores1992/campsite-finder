@@ -162,6 +162,31 @@ export interface ActionResult {
   /** A one-tap URL for the inverse action, to render on the confirmation page. */
   inverseUrl?: string | null;
   message?: string;
+  /** Heading for the result page, where the generic "Done" / "Hmm" would mislead. */
+  title?: string;
+  /** For `hold` only: which outcome this was, so the confirm screen can pick honest copy. */
+  outcome?: HoldOutcome;
+}
+
+/**
+ * WHAT A "YES, HOLD IT" ACTUALLY PRODUCED — carried back to `/w/<token>` as `?r=<outcome>`.
+ *
+ * WHY IT EXISTS (2026-09-26). The POST redirects to the same URL the offer lives on, and by
+ * then the row is `requested` — so a person who had just said yes was shown the REPEAT-TAP
+ * screen ("You're already down for this one … Tapping again changes nothing"), which reads
+ * as a refusal. Worse, the two hedged outcomes (the release window is full, the bot is
+ * offline) existed only as `performAction` messages that the redirect threw away, so the
+ * web never showed them at all: a user whose hold was merely queued was told nothing.
+ *
+ * IT ONLY PICKS COPY. The marker is in a URL anyone holding the token can edit, so it never
+ * decides anything: the page still reads the row's real status, and a "held" marker over a
+ * row that is not `requested` is ignored.
+ */
+export const HOLD_OUTCOMES = ['held', 'held-full', 'held-bot-offline', 'not-entitled', 'gone', 'in-cart'] as const;
+export type HoldOutcome = (typeof HOLD_OUTCOMES)[number];
+
+export function parseHoldOutcome(v: unknown): HoldOutcome | null {
+  return typeof v === 'string' && (HOLD_OUTCOMES as readonly string[]).includes(v) ? (v as HoldOutcome) : null;
 }
 
 /**
@@ -324,16 +349,41 @@ export async function performAction(token: string): Promise<ActionResult> {
       const { hasAutocartEntitlement } = await import('@/lib/auth');
       if (!owner || !(await hasAutocartEntitlement(owner.user_id))) {
         return {
-          ok: false,
+          ok: false, action, outcome: 'not-entitled', title: 'We didn’t hold this one',
           message: 'Holding a site at release time is part of the Auto-Cart plan. Your alerts carry on as normal — you can still book it yourself the moment it opens.',
         };
       }
       const { requestHold, rcBotUsable } = await import('@/lib/rc-holds');
       const req = siteId ? await requestHold(watchId, siteId) : null;
       if (!req) {
+        // ALREADY IN THE CART IS A SUCCESS, NOT A DEAD LINK. Once the bot carts the site the
+        // row leaves `offered`/`requested`, so `requestHold` above finds nothing — and a
+        // person re-opening the offer link at 08:01 was told "That hold is no longer
+        // available — the site may have already been released", about a site sitting in our
+        // cart for them with a fifteen-minute fuse. Checked only once there is no live offer,
+        // so a cart from an earlier release can never shadow a newer offer on the same token.
+        if (siteId) {
+          const [live] = await query<{ status: string; unit_name: string | null }>(
+            `SELECT status, unit_name FROM rc_hold_requests
+              WHERE watch_id = $1 AND unit_id = $2 AND status IN ('carted', 'claiming')
+              ORDER BY release_at DESC LIMIT 1`,
+            [watchId, siteId],
+          ).catch(() => []);
+          if (live) {
+            const { RC_CART_HOLD_MINUTES } = await import('@/lib/limits');
+            return {
+              ok: true, action, changed: false, campgroundName, siteId, outcome: 'in-cart',
+              title: 'It’s in our cart',
+              message:
+                `We got site ${live.unit_name ?? siteId} at ${campgroundName ?? 'this campground'} into our cart. ` +
+                `Open the alert we sent when we carted it to claim it — ReserveCalifornia keeps a cart only ` +
+                `about ${RC_CART_HOLD_MINUTES} minutes, so do it quickly.`,
+            };
+          }
+        }
         return {
-          ok: false,
-          message: 'That hold is no longer available — the site may have already been released, or the request expired.',
+          ok: false, action, outcome: 'gone', title: 'This offer has closed',
+          message: 'We didn’t hold anything — that offer is no longer available. The site may have already been released, or the request expired. Your alerts carry on as normal.',
         };
       }
       // RE-RANK RIGHT NOW, NOT ON THE NEXT POLLER PASS. `rankHoldLine` only writes the
@@ -368,7 +418,7 @@ export async function performAction(token: string): Promise<ActionResult> {
       }).catch(() => 0);
       if (load >= RC_HOLD_CAPACITY) {
         return {
-          ok: true, action, changed: true, campgroundName, siteId,
+          ok: true, action, changed: true, campgroundName, siteId, outcome: 'held-full',
           message:
             `Noted — but ${load} other site${load === 1 ? ' is' : 's are'} already queued for ${when} PT and we ` +
             `can hold ${RC_HOLD_CAPACITY} at once, so ${site} is next in line rather than secured. ` +
@@ -392,7 +442,7 @@ export async function performAction(token: string): Promise<ActionResult> {
       const bot = await rcBotUsable().catch(() => ({ ok: false, beatAgeMs: null }));
       if (!bot.ok) {
         return {
-          ok: true, action, changed: true, campgroundName, siteId,
+          ok: true, action, changed: true, campgroundName, siteId, outcome: 'held-bot-offline',
           message:
             `Noted — we'll try for ${site} at ${when} PT. But our booking bot is offline right now, ` +
             `so please plan to book it yourself the moment it opens. We'll text you either way, and ` +
@@ -400,8 +450,10 @@ export async function performAction(token: string): Promise<ActionResult> {
         };
       }
       return {
-        ok: true, action, changed: true, campgroundName, siteId,
-        message: `We'll grab ${site} the moment it opens (${when} PT). You'll get a text when it's in the cart.`,
+        ok: true, action, changed: true, campgroundName, siteId, outcome: 'held',
+        // "try", never "grab": RC holds are beta and can miss, and a user who believes the
+        // site is handled stops watching.
+        message: `We'll try for ${site} the moment it opens (${when} PT). You'll get a text if it's in the cart — keep an alarm set in case we miss.`,
       };
     }
     case 'mute_site': {

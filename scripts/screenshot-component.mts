@@ -649,6 +649,26 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="font-ch-body text-ch-ink"><HoldConfirm preview={preview} /></div>;`,
     frame: 'w-full',
   },
+  'ch-hold-confirmed': {
+    // What the POST redirects to. Until 2026-09-26 this was the repeat-tap screen ("You're
+    // already down for this one … Tapping again changes nothing"), read as an error by the
+    // person who had just said yes.
+    label: 'HoldConfirm — just confirmed (outcome=held)',
+    entry: `import HoldConfirm from '@/components/v2/HoldConfirm';
+      const preview = {
+        token: 'Jp4XhBaz',
+        campgroundName: 'Carpinteria SB — Santa Rosa',
+        unitLabel: '#R371',
+        arrivalDate: '2026-10-02',
+        nights: 1,
+        releaseAt: '2026-09-26T08:00:00',
+        bookingUrl: 'https://www.reservecalifornia.com/park/690/611',
+        alreadyRequested: true,
+        line: null,
+      };
+      export const node = <div className="font-ch-body text-ch-ink"><HoldConfirm preview={preview} outcome="held" /></div>;`,
+    frame: 'w-full',
+  },
   'admin-users': {
     label: 'Admin → Users box: mixed access reasons, sort and search, scrolls at ~10',
     // The fixture mirrors the real distribution measured 2026-08-15: most accounts get

@@ -7,7 +7,9 @@ import Logo from '@/components/Logo';
 import { formatStayDates } from '@/lib/notifications/dates';
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 import { AUTOCART_BETA_LABEL, AUTOCART_BETA_NOTE } from '@/lib/autocart-beta';
-import type { HoldPreview } from '@/lib/notifications/actions';
+// TYPES ONLY: actions.ts is server code (it talks to the database), and this is a client
+// component, so a value import would drag it into the browser bundle.
+import type { HoldOutcome, HoldPreview } from '@/lib/notifications/actions';
 
 /**
  * "Do you want THIS one?" — the confirm step before a hold is booked.
@@ -26,27 +28,36 @@ import type { HoldPreview } from '@/lib/notifications/actions';
  * The "open on ReserveCalifornia" link is deliberately a NEW TAB: this page's URL carries
  * the only token that authorises the hold, so navigating away loses it.
  */
-export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
+export default function HoldConfirm({
+  preview,
+  outcome = null,
+}: {
+  preview: HoldPreview;
+  /** What the POST just did, from `?r=`. Picks copy only — the row's status still decides. */
+  outcome?: HoldOutcome | null;
+}) {
   const [busy, setBusy] = useState(false);
   // Guards a double submit WITHOUT making the control unclickable — see the form below.
   const submitted = useRef(false);
 
+  // THE ROW DECIDES, THE MARKER ONLY PICKS WORDS. A "held" marker over a row that is still
+  // `offered` (a hand-edited URL, or a row the poller reset) falls through to the offer.
   if (preview.alreadyRequested) {
+    return <Confirmed preview={preview} outcome={outcome} />;
+  }
+
+  // A REFUSAL IS SHOWN AS ONE. The POST redirects here with the row still `offered`, so
+  // without this branch a declined hold re-rendered the offer as if nothing had been asked,
+  // and the person tapped again for the same refusal.
+  if (outcome === 'not-entitled') {
     return (
       <Shell>
         <HomeMark />
-        <Check className="text-ch-green-deep" size={32} />
-        <h1 className="mt-3 text-xl font-bold text-ch-ink">You&rsquo;re already down for this one</h1>
+        <h1 className="mt-3 text-xl font-bold text-ch-ink">We didn&rsquo;t hold this one</h1>
         <p className="mt-2 text-ch-muted">
-          {/* {' '} because the &rsquo; below makes SWC eat this node's leading space —
-              it rendered "Carpinteria SB— we'll grab it at". */}
-          {preview.unitLabel} at {preview.campgroundName}{' '}
-          — we&rsquo;ll grab it at{' '}
-          {formatRelease(preview.releaseAt)}. Tapping again changes nothing.
-        </p>
-        <LineNote line={preview.line} />
-        <p className="mt-4 text-sm text-ch-muted">
-          You&rsquo;ll get an alert the moment it&rsquo;s in the cart, with a link to take it.
+          Holding a site at release time is part of the Auto-Cart plan, so nothing is
+          queued for {preview.unitLabel}. Your alerts carry on as normal. You can still book
+          it yourself the moment it opens, {formatRelease(preview.releaseAt)} PT.
         </p>
       </Shell>
     );
@@ -94,8 +105,8 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
       </p>
 
       <p className="mt-3 text-sm text-ch-ink">
-        If you say yes, our bot carts this exact site the second it opens and holds it
-        for you — but ReserveCalifornia only keeps a cart about {RC_CART_HOLD_MINUTES}{' '}
+        If you say yes, our bot tries to cart this exact site the second it opens and hold
+        it for you — but ReserveCalifornia only keeps a cart about {RC_CART_HOLD_MINUTES}{' '}
         minutes, so claim it quickly when we tell you. Only say yes if you actually want
         it: while we&rsquo;re holding it, nobody else can book it.
       </p>
@@ -146,6 +157,90 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
 }
 
 /**
+ * "We have your request" — the screen after a yes, and on any later visit.
+ *
+ * THE SUCCESS SCREEN AND THE REPEAT-TAP SCREEN WERE ONE SCREEN (fixed 2026-09-26). The POST
+ * redirects back to this URL, the row is `requested` by then, and the only copy for that
+ * state was written for a second tap: "You're already down for this one … Tapping again
+ * changes nothing". The person who had just said yes read it as an error. So the heading
+ * now depends on whether they JUST confirmed (`outcome` from the redirect) or came back,
+ * and neither version says "already" or "changes nothing" — both are reassurance.
+ *
+ * IT SAYS "TRY", NEVER "WILL". RC holds are beta and can miss, and a user who believes the
+ * site is handled stops watching; the alarm line is there for the same reason. The two
+ * hedged outcomes (window full, bot offline) used to exist only in `performAction`'s
+ * message, which the redirect discarded — they are stated here now.
+ */
+function Confirmed({ preview, outcome }: { preview: HoldPreview; outcome: HoldOutcome | null }) {
+  const fresh = outcome === 'held' || outcome === 'held-full' || outcome === 'held-bot-offline';
+  const release = `${formatRelease(preview.releaseAt)} PT`;
+  return (
+    <Shell>
+      <HomeMark />
+      <Check className="text-ch-green-deep" size={32} />
+      <h1 className="mt-3 text-xl font-bold text-ch-ink">
+        {fresh ? 'Got it — we’ll try for this site' : 'You’re on the list for this site'}
+      </h1>
+      <p className="mt-2 text-ch-muted">
+        {fresh ? 'We have your request.' : 'Your request is in, no need to tap again.'}{' '}
+        When {preview.unitLabel} at {preview.campgroundName ?? 'this campground'} opens on{' '}
+        {release}, our bot will try to put it in the cart for you.
+      </p>
+
+      {outcome === 'held-full' && (
+        <Caution>
+          Every slot we have for that release is taken, so this one is waiting for a
+          free slot rather than secured. Plan to book it yourself when it
+          opens.
+        </Caution>
+      )}
+      {outcome === 'held-bot-offline' && (
+        <Caution>
+          Our booking bot is offline right now. It has until the release to come back, but
+          plan to book it yourself when it opens.
+        </Caution>
+      )}
+
+      <LineNote line={preview.line} />
+
+      <dl className="mt-5 w-full rounded-xl border border-ch-line text-left">
+        <Row label="Site" value={preview.unitLabel} strong />
+        <Row label="Nights" value={stayLabel(preview.arrivalDate, preview.nights)} />
+        <Row label="Releases" value={release} last />
+      </dl>
+
+      <div className="mt-5 w-full text-left text-sm text-ch-ink">
+        <p className="font-bold">What happens next</p>
+        <ul className="mt-2 list-disc space-y-1.5 pl-5">
+          <li>
+            If we get it, we&rsquo;ll alert you right away with a link to claim it.
+            ReserveCalifornia keeps a cart only about {RC_CART_HOLD_MINUTES} minutes, so
+            claim it quickly.
+          </li>
+          <li>If we miss it, we&rsquo;ll tell you.</li>
+          <li>Set an alarm for {release} anyway, in case we miss.</li>
+        </ul>
+      </div>
+
+      <p className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-ch-ink">
+        <span className="rounded-full bg-ch-sand px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-ch-green-deep">
+          {AUTOCART_BETA_LABEL}
+        </span>
+        <span className="text-ch-muted">{AUTOCART_BETA_NOTE}</span>
+      </p>
+    </Shell>
+  );
+}
+
+function Caution({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-4 w-full rounded-xl border border-ch-ochre bg-ch-ochre-soft px-4 py-3 text-left text-sm text-ch-ochre-ink">
+      <strong className="font-bold">Not secured yet.</strong> {children}
+    </p>
+  );
+}
+
+/**
  * "Am I actually going to get this one?" — stated at the point of decision.
  *
  * Two people can each be offered the same site for the same release and both offers be
@@ -191,7 +286,7 @@ function LineNote({ line }: { line: { rank: number; of: number } | null }) {
         <>
           <strong className="font-bold">You&rsquo;re next in line for this site.</strong>{' '}
           Somebody else gets first refusal. If they don&rsquo;t ask us to hold it,
-          we&rsquo;ll cart it for you instead.
+          we&rsquo;ll try to cart it for you instead.
         </>
       )}
     </p>
@@ -247,8 +342,11 @@ function formatRelease(releaseAt: string): string {
  */
 function HomeMark() {
   return (
-    <Link href="/" aria-label="CampHawk home" className="mb-1 inline-block">
-      <Logo markSize={36} />
+    <Link href="/" aria-label="CampHawk home" className="mb-3 inline-block">
+      {/* FIXED SIZE, NOT FLUID. At the default fluid size a 36 mark rendered its wordmark at
+          ~12.5px on a phone — smaller than the body text under a text-xl heading. 44 fixed
+          gives a ~26px wordmark, in proportion to the heading and the card. */}
+      <Logo markSize={44} fluid={false} />
     </Link>
   );
 }
