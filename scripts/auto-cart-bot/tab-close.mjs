@@ -58,7 +58,7 @@ export function takePendingRecycle() {
 /**
  * @param {{ close: () => Promise<unknown> } | null} tab
  * @param {{
- *   label: 'renewal' | 'auto-login' | 'warmup',
+ *   label: 'renewal' | 'auto-login' | 'warmup' | 'evening',
  *   startedAt: number,
  *   ramMb?: number | null,
  *   log?: (line: string) => void,

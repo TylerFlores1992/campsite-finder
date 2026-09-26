@@ -89,7 +89,9 @@ test('rc-keepwarm has NO bare tab.close() left — every throwaway tab goes thro
     'an unbounded `await tab.close()` is the hazard this module removes');
   const calls = code.match(/closeTabBounded\(tab, \{ label: '([a-z-]+)'/g) ?? [];
   const labels = calls.map((c) => /label: '([a-z-]+)'/.exec(c)![1]).sort();
-  assert.deepEqual(labels, ['auto-login', 'renewal', 'warmup'], 'all three trips, each named');
+  // BY VALUE, so a new trip is a decision. `evening` joined on 2026-09-26: the flag-gated
+  // evening sign-in (okta-evening.mjs) runs its Okta trip in a throwaway tab like the others.
+  assert.deepEqual(labels, ['auto-login', 'evening', 'renewal', 'warmup'], 'all four trips, each named');
 });
 
 test('every closeTabBounded call passes the trip start, the RAM delta and the reporter', () => {
@@ -100,7 +102,7 @@ test('every closeTabBounded call passes the trip start, the RAM delta and the re
     assert.match(args, /report: reportBotEvent/, `reporter: ${args}`);
   }
   // And tripRam is actually ASSIGNED from the trace, not merely declared.
-  assert.equal((code.match(/tripRam = ram;/g) ?? []).length, 3, 'assigned once per trip');
+  assert.equal((code.match(/tripRam = ram;/g) ?? []).length, 4, 'assigned once per trip');
 });
 
 test('the resident loop reads the recycle request beside oktaTrip, after the runner preemption', () => {

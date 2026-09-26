@@ -106,6 +106,28 @@ test('ending the session never touches DT: the only cookie cleared is idx', () =
   assert.doesNotMatch(body, /\bDT\b.*clear|deleteCookie|clearCookies\(\)/);
 });
 
+test('the evening trip runs in a throwaway TAB: the login is on the tab, the stamp follows the open, the close is in the finally', () => {
+  // The resident page is not the evening sign-in's to navigate: an Okta trip there is what the
+  // ramps were attributed to, and it would need the browser recycle that
+  // worker/autologin-tab.test.mts forbids in this arm. (That file and warmup-sampler own the
+  // no-oktaTrip and the sampler rules; this pins what is specific to the evening path.)
+  const kw = readFileSync(new URL('../scripts/auto-cart-bot/rc-keepwarm.mjs', import.meta.url), 'utf8');
+  const start = kw.indexOf('async function maybeEveningSignin(ctx, page) {');
+  assert.ok(start > 0, 'maybeEveningSignin not found');
+  const body = kw.slice(start, kw.indexOf('\n}\n', start));
+  const open = body.indexOf('await ctx.newPage()');
+  const stamp = body.indexOf('stampEvening(slot);');
+  const end = body.indexOf('await endOktaSession(ctx)');
+  const login = body.indexOf('attemptLogin(ctx, tab,');
+  const fin = body.indexOf('} finally {');
+  const close = body.indexOf("closeTabBounded(tab, { label: 'evening'");
+  assert.ok(open > 0 && stamp > open, 'the tab is opened before tonight is stamped (a failed open spends nothing)');
+  assert.ok(end > stamp && login > end, 'the session is ended, then the login runs');
+  assert.ok(!/attemptLogin\(ctx, page\b/.test(body), 'never the resident page');
+  assert.ok(fin > login && close > fin, 'the tab is closed in the finally');
+  assert.match(body.slice(fin, close), /reportNativeAlloc\('evening'/, 'and the reading is sent before the close');
+});
+
 // ── 2. FLAG ON: THE WINDOW ENDS BEFORE THE SIGN-IN ──────────────────────────────────────
 
 test('flag on → the window ends at or before the evening sign-in and never overlaps [sign-in, release)', () => {

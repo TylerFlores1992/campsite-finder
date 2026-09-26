@@ -58,8 +58,8 @@ export interface NativeAllocInput {
  * asserts the two files agree.
  */
 const CONTEXTS = new Set([
-  'renewal', 'auto-login', 'rehearsal', 'warmup',
-  'trail-resident', 'trail-renewal', 'trail-auto-login', 'trail-warmup',
+  'renewal', 'auto-login', 'rehearsal', 'warmup', 'evening',
+  'trail-resident', 'trail-renewal', 'trail-auto-login', 'trail-warmup', 'trail-evening',
 ]);
 
 /** Nothing over this is stored. A 9 GB ramp aggregates to a handful of rows; a hundred is

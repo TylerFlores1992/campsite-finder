@@ -2056,36 +2056,80 @@ async function maybeEveningSignin(ctx, page) {
     }
     return false;
   }
+  // THE TAB, like the warm-up and the auto-login: an Okta trip on the resident page is what
+  // the ramps have been attributed to, and a tab closed in a `finally` is the reclaim.
+  const tab = await ctx.newPage().catch((e) => {
+    log(`  ✗ could not open an evening sign-in tab: ${e.message}`);
+    return null;
+  });
+  if (!tab) return false; // nothing was spent: no stamp, no session ended, no login
   stampEvening(slot);
   log(`── EVENING SIGN-IN: ${decision.why}`);
-  if (decision.endSession) {
-    const after = await endOktaSession(ctx);
-    if (after?.alive !== false) {
-      // NOT GONE (or unknown) → do not sign in: a password sign-in into a surviving session
-      // would reuse it and buy nothing, at the cost of a login from this address.
-      log(`   ✗ could not confirm the Okta session ended (okta=${after?.alive}) — standing down tonight`);
-      reportSignin(ctx, 'evening', { ok: false, reason: 'the Okta session did not end — no sign-in attempted' }, after);
-      return true;
+  const tripStartedAt = Date.now();
+  let tripRam = null;
+  // SAMPLED, like every other Okta-navigating path (worker/warmup-sampler.test.mts): an
+  // unsampled path is how the 08-24 ramp was lost. Started on the TAB, before the trip, with a
+  // BEFORE profile so the diff is this trip's and not the resident page's history.
+  const sampler = await ctx.newCDPSession(tab).catch(() => null);
+  const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
+  const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
+  if (sampling.ok) allocTrail.register('evening', sampler);
+  let trace = null;
+  try {
+    if (decision.endSession) {
+      const after = await endOktaSession(ctx);
+      if (after?.alive !== false) {
+        // NOT GONE (or unknown) → do not sign in: a password sign-in into a surviving session
+        // would reuse it and buy nothing, at the cost of a login from this address.
+        log(`   ✗ could not confirm the Okta session ended (okta=${after?.alive}) — standing down tonight`);
+        reportSignin(ctx, 'evening', { ok: false, reason: 'the Okta session did not end — no sign-in attempted' }, after);
+        return true;
+      }
     }
+    await tab.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
+    await dropStoredToken(tab).catch(() => {});
+    const { result: r, trace: t } = await withNetworkTrace(tab, () => attemptLogin(ctx, tab, {
+      homeUrl: RC_HOME,
+      isLive: async () => (await sessionLive(ctx, tab)).live === true,
+      log,
+      humanPresent: false,
+    }));
+    trace = t;
+    const okAfter = await oktaSessionAlive(ctx).catch(() => null);
+    reportSignin(ctx, 'evening', r, okAfter);
+    log(r.ok
+      ? `   ✓ evening sign-in: ${r.reason} — Okta ${okAfter?.alive === true ? `ALIVE, created ${okAfter.createdAt ?? '?'}` : `reads ${okAfter?.alive}`}`
+      : `   ✗ evening sign-in failed: ${r.reason}`);
+    if (r.ok) {
+      // TELL THE RESIDENT PAGE, as the warm-up does: the tab minted into the shared profile,
+      // but `checkAndReport` reads the resident page, still rendered signed-out.
+      await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+      await primeToken(page, { timeoutMs: 15_000 }).catch(() => {});
+    } else {
+      await saveFailureShot(tab, 'evening-signin');
+    }
+    // IT IS A PASSWORD SIGN-IN, SO IT IS ALSO TONIGHT'S REHEARSAL — recorded as one, so the
+    // 20h gap stops the nightly rehearsal spending a second login on the same question.
+    if (r.passwordSubmitted || r.captcha) await reportRehearsal(r.ok === true, `evening sign-in: ${r.reason}`, null);
+    // A live-but-short session is never reported dead (the 2026-08-16 07:33 phone call).
+    if (r.ok || !r.sessionLive) await reportSession(r.ok ? 'warm' : 'dead', `evening sign-in: ${r.reason}`, okAfter ?? undefined);
+  } finally {
+    log(trace
+      ? `  ${describeTrace(trace)}`
+      : '  network trace: unavailable — the evening sign-in stood down or threw before the trace closed');
+    if (sampling.ok) {
+      const profAfter = await readNativeProfile(sampler);
+      const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
+      tripRam = ram;
+      const diff = diffProfiles(profBefore, profAfter);
+      log(renderProfile(diff, ram));
+      reportNativeAlloc('evening', diff, ram);
+    } else {
+      log(`  native allocation: not sampled (${sampling.why})`);
+    }
+    allocTrail.unregister('evening');
+    await closeTabBounded(tab, { label: 'evening', startedAt: tripStartedAt, ramMb: tripRam, log, report: reportBotEvent });
   }
-  await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
-  await dropStoredToken(page).catch(() => {});
-  const r = await attemptLogin(ctx, page, {
-    homeUrl: RC_HOME,
-    isLive: async () => (await sessionLive(ctx, page)).live === true,
-    log,
-    humanPresent: false,
-  });
-  const okAfter = await oktaSessionAlive(ctx).catch(() => null);
-  reportSignin(ctx, 'evening', r, okAfter);
-  log(r.ok
-    ? `   ✓ evening sign-in: ${r.reason} — Okta ${okAfter?.alive === true ? `ALIVE, created ${okAfter.createdAt ?? '?'}` : `reads ${okAfter?.alive}`}`
-    : `   ✗ evening sign-in failed: ${r.reason}`);
-  // IT IS A PASSWORD SIGN-IN, SO IT IS ALSO TONIGHT'S REHEARSAL — recorded as one, so the
-  // 20h gap stops the nightly rehearsal spending a second login on the same question.
-  if (r.passwordSubmitted || r.captcha) await reportRehearsal(r.ok === true, `evening sign-in: ${r.reason}`, null);
-  // A live-but-short session is never reported dead (the 2026-08-16 07:33 phone call).
-  if (r.ok || !r.sessionLive) await reportSession(r.ok ? 'warm' : 'dead', `evening sign-in: ${r.reason}`, okAfter ?? undefined);
   return true;
 }
 let eveningSkipLogged = null;
@@ -3831,9 +3875,12 @@ async function warmResident() {
           // rehearsal because both live in the 20:00 hour and this one is a real password
           // sign-in: when it runs, the rehearsal then sees a live session and stands down,
           // so the address spends ONE login that evening, not two.
+          //
+          // NO `oktaTrip`, for the auto-login's and the warm-up's reason: the trip runs in a
+          // throwaway tab closed in a `finally`, and that close is the reclaim. A recycle on
+          // top would restart the browser to free memory already freed.
           mark('evening sign-in');
           if (await maybeEveningSignin(ctx, page).catch((e) => { log(`evening sign-in error: ${e.message}`); return false; })) {
-            oktaTrip = 'the evening sign-in';
             continue;
           }
           mark('login rehearsal');
