@@ -10,6 +10,45 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
+## 0-NOW. 2026-09-26 ~16:50Z (09:50 PT) — THE RELEASE HAS PASSED, SO THE THREE BRANCHES MAY MERGE
+
+**The 09-26 08:00 PT release is over, so the gate on the table below is lifted.** Merge in the
+table's order, one CI run at a time. Master is `e68cd4b`, and all three branches are 4 commits
+behind it (docs and one settings key), so merge master in first.
+
+**How the release went, read from the DB rather than remembered:**
+- **The session was live by 06:45 PT** (`rc_session ok`, `okta=ALIVE`). Who signed it in is not
+  recorded here. The `autocart.rc_login` **fail** line was the 03:01Z rehearsal's CAPTCHA, not the
+  live session (shape #6, recorded in `CLAUDE.md`).
+- **TWO REQUESTED HOLDS, BOTH CARTED AT T−1.0 s — THE FIRST MULTI-HOLD READING OF #413/#414.**
+  `cart-burst`: `#R314` (rc-360) and `#C229` (rc-358), each `firstOffsetMs −4993`,
+  `lastOffsetMs −1044 / −966`, **4 attempts, `budgetLeft 34`**. The 5 s lead opened on time, and
+  the pool was nowhere near spent. At N=2 this is the easy case. **N≥3 is still unobserved**
+  under the reserve.
+- **BOTH ENDED `failed` — "released unclaimed, nobody came for it" — at 16:09Z.** The carted
+  text was **delivered** (SMS `delivered`, push and email sent at 15:00:02-04Z), and
+  `client_reports` is **empty on both rows**, so the claim screen was never opened. That is a
+  user non-claim, not a hand-off defect. **#406 was neither exercised nor contradicted.**
+- **A CANDIDATE, NOT A MECHANISM: RC'S CART LAPSED AT ~15 MINUTES.** At **15:15:17Z**, 15 min
+  16 s after the cart, the poller sent an ordinary **"available" alert for `#R314` itself** (SMS
+  delivered), while our row still read `carted`. So RC showed the unit free while we believed
+  we held it. This fits the bundle-read **15-minute** lapse over the single observation of 45,
+  and it would mean the 45-minute claim window outlives the hold by ~30 min. `#C229` produced no
+  such alert, which proves nothing either way: that alert needs a matching watch. **The
+  discriminator:** the runner log's cart read-back for `#R314` between 15:14Z and 15:16Z (entry
+  still present vs gone), or the next hold's `cart read back` after minute 15. **Do not shorten
+  or lengthen any window on this one reading.**
+- **#419 MERGED (`e68cd4b`): `.claude/settings.json` now sets `"effortLevel": "high"`**, so
+  every new session on this repo, including children, starts at high effort. It is web and
+  config only, with no worker-deploy path.
+- **Still on the remote: `handover/0926`**, whose content merged in #418. The proxy refused to
+  delete it, so the owner can delete it in GitHub.
+- **A CHAINING HAZARD THAT PUSHED THE WRONG TREE.** `git rebase … && git commit …` on one line,
+  then `git push` on the next line of the same command: the rebase failed, the `&&` skipped the
+  commit, and the **newline let the push run anyway**. That put master's tip on the branch and
+  started a wasted Verify. It was cancelled during `npm ci`, before any test ran. **Put a push
+  in its own command, after reading the commit it pushes.**
+
 ## 0-pre-pre-UPDATE. 2026-09-26 07:45Z (00:45 PT) — READ THIS BEFORE THE TABLE BELOW
 
 The table below was written at 04:30Z. What changed overnight, all read back:
@@ -38,9 +77,8 @@ The table below was written at 04:30Z. What changed overnight, all read back:
   the guard with the flag on would close it. It would also block requested updates for offers
   nobody taps.
 - **CAPTCHA, SECOND NIGHT RUNNING:** the 09-26 03:01Z (20:01 PT) rehearsal met one, the bot was
-  signed out with `okta=GONE` at 07:28Z, and **one hold is REQUESTED for the 08:00 release
-  (`#R314`, rc-360)**. The owner was asked to run `mini-pc\rc-login.bat` before 07:30 PT, and a
-  check-in fires at 06:45 PT. Read `autocart.rc_session` before assuming either way.
+  signed out with `okta=GONE` at 07:28Z. By 06:45 PT the session was live again, and the
+  release carted both holds (see §0-NOW).
 - **A CI COLLISION HAPPENED AND IT WAS THE ORCHESTRATOR'S.** A child told to "push when no run is
   in flight" polled, saw a free slot, and pushed in the **same second** the orchestrator opened a
   PR (runs 1780/1781, started 06:57:26/27Z). Both went red, and both were green when re-run
