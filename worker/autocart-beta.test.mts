@@ -58,7 +58,7 @@ test('the offer surfaces a user decides on all carry the label', () => {
   // guard has to exclude the declarations that are always first.
   const confirm = confirmFile.slice(confirmFile.indexOf('export default function'));
   const caveat = confirm.indexOf('AUTOCART_BETA_NOTE');
-  const promise = confirm.indexOf('our bot carts this exact site');
+  const promise = confirm.indexOf('our bot tries to cart this exact site');
   assert.ok(caveat > -1 && promise > -1, 'both must be present in the component body');
   assert.ok(caveat < promise,
     'the caveat must precede the promise — underneath it, it is read after the decision');

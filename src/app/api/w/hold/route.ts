@@ -16,9 +16,13 @@ export const dynamic = 'force-dynamic';
  * Authorised by the token alone, exactly as before. The confirm step changes WHEN the
  * action happens, not who may perform it.
  *
- * Redirects back to `/w/<token>` on success, which now renders the "already down for this
- * one" state — so the result page is the same URL whether you arrive by tap or by
- * confirming, and a refresh cannot double-book (`requestHold` is idempotent anyway).
+ * Redirects back to `/w/<token>?r=<outcome>`. The outcome marker is what lets that page
+ * tell "you just said yes" apart from "you came back": without it both rendered the repeat-
+ * tap screen ("You're already down for this one … Tapping again changes nothing"), so the
+ * person who had just confirmed was answered with what read as a refusal — and the hedged
+ * outcomes (window full, bot offline) were never shown on the web at all. The marker only
+ * picks COPY; the page still reads the row's real status (see `HOLD_OUTCOMES`). A refresh
+ * cannot double-book (`requestHold` is idempotent anyway).
  */
 export async function POST(req: NextRequest) {
   const form = await req.formData().catch(() => null);
@@ -31,6 +35,6 @@ export async function POST(req: NextRequest) {
   // 303, not 302: the browser must follow with GET rather than re-POSTing, which is what
   // makes a refresh of the result page harmless.
   const url = new URL(`${base}/w/${encodeURIComponent(token)}`);
-  if (!result.ok) url.searchParams.set('e', '1');
+  url.searchParams.set('r', result.outcome ?? (result.ok ? 'held' : 'gone'));
   return NextResponse.redirect(url, 303);
 }
