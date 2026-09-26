@@ -326,7 +326,7 @@ export function StatusLine({ hold }: { hold: MyHold }) {
     case "offered":
       return (
         <>
-          Releases {releaseLabel(hold.releaseAt)}. We can try to grab it the second it
+          Releases {releaseLabel(hold.releaseAt)}. We can try to cart it for you the second it
           opens — tap below if you want it.
         </>
       );

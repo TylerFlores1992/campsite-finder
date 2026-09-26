@@ -182,7 +182,7 @@ export interface ActionResult {
  * decides anything: the page still reads the row's real status, and a "held" marker over a
  * row that is not `requested` is ignored.
  */
-export const HOLD_OUTCOMES = ['held', 'held-full', 'held-bot-offline', 'not-entitled', 'gone', 'in-cart'] as const;
+export const HOLD_OUTCOMES = ['held', 'held-full', 'held-bot-offline', 'not-entitled', 'gone', 'in-cart', 'unchecked'] as const;
 export type HoldOutcome = (typeof HOLD_OUTCOMES)[number];
 
 export function parseHoldOutcome(v: unknown): HoldOutcome | null {
@@ -363,12 +363,26 @@ export async function performAction(token: string): Promise<ActionResult> {
         // cart for them with a fifteen-minute fuse. Checked only once there is no live offer,
         // so a cart from an earlier release can never shadow a newer offer on the same token.
         if (siteId) {
-          const [live] = await query<{ status: string; unit_name: string | null }>(
+          // BOUNDED TO A RECENT RELEASE. Nothing sweeps a `claiming` row, so without this a
+          // runner that died mid-claim would leave "it's in our cart" on this link for the
+          // token's whole 90-day life. A real cart lives ~15-45 min past its release.
+          // `release_at` is zone-less PACIFIC text, compared in Pacific.
+          const rows = await query<{ status: string; unit_name: string | null }>(
             `SELECT status, unit_name FROM rc_hold_requests
               WHERE watch_id = $1 AND unit_id = $2 AND status IN ('carted', 'claiming')
+                AND release_at::timestamp > (NOW() AT TIME ZONE 'America/Los_Angeles') - interval '2 hours'
               ORDER BY release_at DESC LIMIT 1`,
             [watchId, siteId],
-          ).catch(() => []);
+          ).catch(() => null);
+          // A FAILED READ IS NOT "GONE". Saying "this offer has closed" about a site that may be
+          // sitting in our cart is the absent-reading-as-a-negative shape; say we could not look.
+          if (rows === null) {
+            return {
+              ok: false, action, outcome: 'unchecked', title: 'We couldn’t check just now',
+              message: 'We couldn’t read this hold’s status. Try the link again in a minute — nothing has been changed.',
+            };
+          }
+          const [live] = rows;
           if (live) {
             const { RC_CART_HOLD_MINUTES } = await import('@/lib/limits');
             return {

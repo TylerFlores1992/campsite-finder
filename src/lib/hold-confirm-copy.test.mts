@@ -75,7 +75,9 @@ test('every hold return in performAction names an outcome that matches its ok', 
     const outcome = r.match(/outcome: '([a-z-]+)'/)?.[1];
     assert.ok(outcome, `a hold return without an outcome falls back to a guess:\n${r}`);
     if (/ok: false/.test(r)) {
-      assert.ok(['not-entitled', 'gone'].includes(outcome!), `a failure labelled as ${outcome}:\n${r}`);
+      // `unchecked` (2026-09-26): the in-cart read FAILED, which is not the same as `gone` —
+      // naming it separately is what stops a DB blip reading as "this offer has closed".
+      assert.ok(['not-entitled', 'gone', 'unchecked'].includes(outcome!), `a failure labelled as ${outcome}:\n${r}`);
     } else {
       assert.match(r, /ok: true/);
       assert.ok(/^held|^in-cart$/.test(outcome!), `a success labelled as ${outcome}:\n${r}`);
@@ -97,4 +99,18 @@ test('a queued hold in the list never tells the user there is nothing to do', ()
   assert.match(line, /try for this/, 'anchor: the queued line');
   assert.ok(!/Nothing to do/i.test(line), 'a user who believes the site is handled stops watching');
   assert.match(line, /alarm/);
+});
+
+test('the in-cart read: a FAILED read says so, and a stale claiming row cannot pose as a cart', () => {
+  // Fable review, 2026-09-26. `.catch(() => [])` turned a DB error into "This offer has closed"
+  // about a site that might be in our cart (shape #1), and with no time bound a `claiming` row
+  // left by a runner that died mid-claim (nothing sweeps those) read as "It's in our cart" for
+  // the token's 90-day life.
+  const actions = code(read('src/lib/notifications/actions.ts'));
+  const block = between(actions, "status IN ('carted', 'claiming')", "outcome: 'in-cart'");
+  assert.match(block, /release_at::timestamp > \(NOW\(\) AT TIME ZONE 'America\/Los_Angeles'\) - interval '/,
+    'the in-cart read must be bounded to a recent release, in Pacific');
+  assert.match(block, /\.catch\(\(\) => null\)/, 'a failed read must be distinguishable from no rows');
+  assert.match(block, /if \(rows === null\) \{[\s\S]*?outcome: 'unchecked'/,
+    'and must return unchecked, never fall through to gone');
 });
