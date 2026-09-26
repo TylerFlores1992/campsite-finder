@@ -1495,6 +1495,85 @@ purely to read the hours. The box answered `already current - nothing to pull`, 
 `auto-update.ps1` exits before stopping anything on that branch, so it was harmless **by luck
 of timing**. **Never re-run a scratch script for its first line; read what else it does.**
 
+## 09-26: OKTA LIVES 24h FROM CREATION, SO EVERY RELEASE MORNING SIGNS IN FRESH (research, 2026-09-26)
+
+Read-only research pass; nothing below has shipped. The code that acts on it is on
+`claude/okta-evening-signin`, flag-gated OFF — see `docs/NEXT-SESSION.md` §0-pre-pre.
+
+- **THE HARD CAP IS 24h FROM THE SIGN-IN THAT CREATES THE SESSION — DERIVED HERE, not written
+  anywhere before.** The docs recorded that a cap existed and that its anchor was "NOT
+  established". Frozen-expiry readings line up with password sign-ins to within seconds, three
+  times: rehearsal OK 08-23 03:01:03Z → expiry frozen at 08-24 03:00:59Z; warm-up 09-09
+  05:33:39Z → 09-10 05:33:36Z; rehearsal 09-07 02:30:33Z → ~02:30Z 09-08 (`docs/CHROMIUM-LEAK.md`
+  :1604/:1641, :2555/:3524, :2186). **Behind it, a 12h ROLLING idle window** that
+  `oktaSessionAlive` (every keep-warm pass, 20 min) pushes forward — 12 of 12 readings on 08-18.
+- **A sign-in while a session exists REUSES it and does not reset the cap** (three records:
+  08-16, 08-21, 09-07). **So "sign in again" never buys time.**
+- **WHY EVERY RELEASE MORNING NEEDS A SIGN-IN (inferred from the above):** the session is minted
+  at T−30 or by the 05:00 warm-up, so its cap lands at the same hour the next morning, just when
+  the next release needs it. Each fresh sign-in is a CAPTCHA draw at 07:30 with nobody awake.
+- **THE FIX, AND WHY IT IS FLAG-GATED:** sign in the EVENING before (~20:00 PT) so the cap lands
+  ~20:00 next day, ~11h past the hand-off. Because of the reuse rule, the evening sign-in must
+  first END the old session (Okta `DELETE /api/v1/sessions/me`, or delete ONLY `idx` — **never
+  `DT`**). **That step has never run in production**, hence `RC_EVENING_SIGNIN` default OFF and
+  one supervised evening test. Trigger it only when a hold is OFFERED for tomorrow: an
+  unconditional nightly sign-in is an extra CAPTCHA draw on no-hold days. The 09-25 holds were
+  requested at 04:46–04:51 PT, so "requested" is too late a trigger.
+- **A BOX UPDATE KILLS OKTA — 3 OF 3 (09-23, 09-24, 09-25) — BUT ONLY AN UPDATE THAT PULLS.** A
+  no-change update exits at `already current - nothing to pull` **before** `stop-all.ps1`
+  (`scripts/auto-cart-bot/mini-pc/auto-update.ps1:227-233`). **Mechanism not established**: the
+  09-24 14:32Z ramp-bail browser restart did NOT kill it (`okta session STILL ALIVE`, `idx`
+  present in the new process). **So "update daily to clean the slate" does not work** — most
+  days it is a no-op — and nobody should lean on an update as the way to end a session.
+- **THE NIGHTLY UPDATE WINDOW COLLIDES WITH AN EVENING SIGN-IN.** `update-guard.mjs` DEFAULTS
+  `windowStart 2 / windowEnd 5` PT sits between a 20:00 sign-in and an 08:00 release; any night
+  with new code would destroy the fresh session. The okta branch moves the unrequested window to
+  before the evening sign-in under the same flag. **The rule it cannot enforce: nobody — owner
+  or session — requests a box update between the evening sign-in and the release.**
+- **THE BOT TICKS "Keep me signed in", AND `idx` STILL LOOKS LIKE A BROWSER-SESSION COOKIE.**
+  Inferred from cookie counts (every added `idx` added no persistent cookie); the census
+  truncates at 6 names, so it is not proven. Discriminator: log `idx`'s `persistent` flag and
+  expiry explicitly (the okta branch adds this telemetry).
+- **CAPTCHA TRIGGER — A CANDIDATE, NOT A MECHANISM.** Recorded CAPTCHAs: 08-07, 09-17 12:00Z,
+  09-25 03:01Z, 09-26 03:01Z. Every recent one followed hours of `okta=GONE` during which the
+  renewal loop kept loading Okta's authorize page (every ~11 min on 09-17, hourly on 09-24/25),
+  and followed a day with a box update or a restart burst. Counterexample: 09-23's GONE was
+  repaired in 31 min and the next rehearsal passed. **Discriminator:** authorize-page loads in
+  the 12h before each password submit — unanswerable today (console rolls in ~89 min,
+  `tab-close` rows carry no outcome).
+- **A REHEARSAL CAPTCHA PAGES NOBODY.** The only phone alarm is the voice call at T−45/T−25 on a
+  reported failure. The okta branch adds a text at a sane hour.
+- **"IT LASTED 0m after sign-in" IN `rc-holds-readout` IS AN ARTIFACT.** It is
+  `session_since − session_live_since` (`scripts/rc-holds-readout.mts:170`); on 09-26 those were
+  22:18:16.646Z and .419Z — an `ok=true` report followed by an `ok=false` one from the other
+  writer (`rc-hold-runner.mjs:591-608`) **227 ms apart**. It measures a flip between two
+  reporters, not a session lifetime. Shape #6. **Not fixed.**
+
+### The burst: 6 slots is built and verified, NOT live
+`claude/burst-concurrency-6`: `CART_CONCURRENCY` 4→6, `BURST_RELEASE_RESERVE` 25→18,
+`(6 + 22) / 6 × 1.1s` = 5.13s of asking against the 5.0s lead (133 ms margin), 3.3s of reach
+past T at six holds. **The burst sections above still say 4/25 ON PURPOSE** — that is what the
+box runs until it updates. Fold them when it does.
+- **NO RC PUSHBACK HAS EVER BEEN RECORDED ON A BURST.** 9 `cart-burst` rows (all ended on "not
+  available", "HTTP 200" or a win), 109 holds with zero 403/429 in `error`/`last_attempt_note`,
+  67 `request-counts` rows with no 403/429/503. **Caveat:** a burst records only the status that
+  ended it, not every attempt's.
+- **THE 08-06 12-HOUR BLOCK'S CAUSE IS NOT ESTABLISHED.** Leading candidate is repeated
+  fresh-profile Okta logins; the probe also carted that day, so cart POSTs are not excluded.
+- **THE PER-HOLD CYCLE IS 1.03-1.41s AND DID NOT SLOW WITH CONCURRENCY** (the 3-hold 09-25
+  morning was the fastest: 1.07/1.03/1.04). Nothing has run above 3 concurrent.
+- **THE MODEL HAS THREE ERRORS, per the research's reading of the code (verify before quoting):**
+  holds past the concurrency limit are not "~30s late" (a slot frees when any hold wins; else one
+  attempt when the pool hits 0, ~T+3.3s at 6/18); the attempt at T after waiting at the reserve
+  is **free** (`cart-burst.mjs:212-213` says the opposite); and an attempt is **2-4 requests**
+  (load + submit, a second submit on every refusal at a unit with extras, usually a read-back).
+  Dropping that fallback second submit on "not available" would cut up to a third of burst POSTs
+  with no IP risk — a safe follow-up nobody has built.
+- **RAISING `BURST_BUDGET` PAST 40 WAITS ON `docs/RC-RATE-MEASUREMENT.md`**, an owner-run probe
+  from a throwaway connection. It reads the CloudFront edge with unauthenticated POSTs. A pass is
+  necessary, NOT sufficient, for the household IP. **Never run it from a session sandbox** (a
+  shared proxy IP, and the only place `rc-release-window.mts` can run).
+
 ## The house failure shapes — stated once, so they are not re-derived
 
 Nearly every expensive mistake in this repo is one of six. Most of the archives are the same
@@ -2348,6 +2427,13 @@ sections first. (`…-status-iij2xm.md` §1 is folded in as of 2026-09-22;
 `…-setup-f7bpe2.md` is the older lane's §1-§30.)
 Migration blocks: **main `077–079`, side `080+`** (`docs/LANES.md` is the authority) — **079 is
 the only number main has left, and neither the 09-23 nor the 09-24 batch spent it.**
+
+#### IN FLIGHT 2026-09-26 — three branches built, none merged
+`claude/burst-concurrency-6` (CI green, Fable PASS), `claude/rc-rate-probe` (owner-run tool),
+`claude/okta-evening-signin` (child building, flag OFF). **Merge after the 09-26 08:00 PT release,
+then a box update timed just BEFORE an evening sign-in, then one supervised
+`RC_EVENING_SIGNIN=1` night.** The order, the verify step and the children to archive are in
+`docs/NEXT-SESSION.md` §0-pre-pre; the findings are in *"09-26: OKTA LIVES 24h FROM CREATION"*.
 
 #### Landed 2026-09-24, and what each one now WAITS on
 - **#406 — PROVEN on 09-25.** Two phone hand-offs reached the owner's cart, and the close waited

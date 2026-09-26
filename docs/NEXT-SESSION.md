@@ -10,14 +10,106 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
+## 0-pre-pre-UPDATE. 2026-09-26 07:45Z (00:45 PT) — READ THIS BEFORE THE TABLE BELOW
+
+The table below was written at 04:30Z. What changed overnight, all read back:
+
+- **MERGED, green on master:** **#416** admin Subscribers section (web only) and **#417** the
+  hold-confirm screen (worker deploy ran, 3/3 shards held). Both Fable tier-1 PASS-WITH-NITS.
+  The nits that were the house shapes were fixed before merge:
+  - #416: a Stripe miss read "no trial" (now "unknown").
+  - #417: a DB error in the in-cart read rendered "This offer has closed" (now
+    `outcome: 'unchecked'`), and a `claiming` row nothing sweeps could say "It's in our cart"
+    for 90 days (now bounded to a release in the last 2h, Pacific).
+- **`claude/okta-evening-signin` is `82599d3`, CI GREEN when run alone, Fable tier-1
+  PASS-WITH-NITS.**
+  - Its run 1770 was a REAL red, not the overlap: it failed alone too, 3 of 2,558. It had
+    re-armed `oktaTrip` in the auto-login arm, navigated the resident page, and left the Okta
+    trip unsampled.
+  - The child fixed it (`bef7ccb`: a sampled throwaway tab, no recycle), then five review nits
+    (`82599d3`): local gates before any Okta I/O (~55 probes a night saved), the survived-session
+    stand-down pinned, a whole-bot DT guard, an `rc-signin` readout section, and the return
+    contract.
+  - **Still ready only for its post-release PR.** Box update needed; see the order below.
+- **N4, THE OWNER'S CALL, NOT BUILT:** `update-guard`'s 6h refusal counts only
+  `requested/carted/claiming` holds, while the evening trigger also counts OFFERED ones. So on a
+  night the evening sign-in covers an offered-only hold, a REQUESTED box update is still
+  permitted, and it ends that fresh session. Feeding `min(nextRelease, nextOfferedRelease)` to
+  the guard with the flag on would close it. It would also block requested updates for offers
+  nobody taps.
+- **CAPTCHA, SECOND NIGHT RUNNING:** the 09-26 03:01Z (20:01 PT) rehearsal met one, the bot was
+  signed out with `okta=GONE` at 07:28Z, and **one hold is REQUESTED for the 08:00 release
+  (`#R314`, rc-360)**. The owner was asked to run `mini-pc\rc-login.bat` before 07:30 PT, and a
+  check-in fires at 06:45 PT. Read `autocart.rc_session` before assuming either way.
+- **A CI COLLISION HAPPENED AND IT WAS THE ORCHESTRATOR'S.** A child told to "push when no run is
+  in flight" polled, saw a free slot, and pushed in the **same second** the orchestrator opened a
+  PR (runs 1780/1781, started 06:57:26/27Z). Both went red, and both were green when re-run
+  alone. **Polling for a free slot is not a lock**: two pollers race. While a child might push,
+  the orchestrator must not start a run itself, or must tell the child to push only on the
+  orchestrator's word.
+
+## 0-pre-pre. 2026-09-26 (written 04:30Z / 21:30 PT on 09-25) — THREE BRANCHES IN FLIGHT, NOTHING MERGED
+
+An orchestrator pass (session "CampHawk Parent") built three things tonight and deliberately
+merged NONE of them, because the 09-26 08:00 PT release was ~11h out and two of them need a
+box update, which ends the RC session. **Merge them after that release, in this order.**
+Findings are in `CLAUDE.md` → *"09-26: OKTA LIVES 24h FROM CREATION"*.
+
+| branch | state | what merging does |
+|---|---|---|
+| `claude/burst-concurrency-6` (`934b86c`) | **CI green, Fable tier-1 PASS**, no PR yet | `CART_CONCURRENCY` 4→6 + `BURST_RELEASE_RESERVE` 25→18. Its `worker/*.test.mts` edits fire a **worker deploy (poller restart)**; the burst itself changes only when the **box updates**. |
+| `claude/rc-rate-probe` (`3ea375f`) | CI was running at handover | Adds `scripts/auto-cart-bot/rc-rate-probe.mjs` + `docs/RC-RATE-MEASUREMENT.md`. No deploy, no runtime effect: an owner-run tool. |
+| `claude/okta-evening-signin` | **child v3 pushed its first commits at 04:23Z** (`21b3d6e`, a mutation-found fix) and may still be iterating (session `session_01B6PEJ8wWmGT27hrXyszn3A`) | CAPTCHA paging (on) + evening sign-in and the update-window move (both behind `RC_EVENING_SIGNIN`, default OFF). Adding a `bot_events` kind fires a worker deploy. **Fable-verify it before any PR** — it is the unattended login path. |
+
+**CI CAVEAT FOR TONIGHT'S RUNS:** `claude/rc-rate-probe` (run 1769, started 04:20Z) and
+`claude/okta-evening-signin` (run 1770, started 04:23Z) ran `npm test` against production
+**at the same time** — a one-slot breach, caused by the orchestrator pushing rc-rate-probe into
+what it read as a free slot. A red on either is a named mechanism; re-run it once alone before
+reading it as a regression.
+
+**Order after the release:**
+1. Fable tier-1 on `claude/okta-evening-signin` once it is on origin (the orchestrator skill's
+   worktree recipe). It must be byte-identical with the flag off and must never touch `DT`.
+2. Open PRs for all three, one at a time (one CI slot). Merge burst + okta **≥ 6h before the
+   next release**; the worker deploy restarts the pollers.
+3. **Box update, timed just before an evening sign-in** (~19:00 PT), never between an evening
+   sign-in and a release (see CLAUDE.md for why). That is what makes the burst change and the
+   okta code live.
+4. **The one supervised live test:** set `RC_EVENING_SIGNIN=1` on a night with a hold offered
+   for the next morning, with the owner reachable. Pass = the frozen Okta expiry reads ~+24h
+   from the evening sign-in, and the 07:30 sign-in is the ~11s cookie-answered kind.
+5. Only then fold the burst's **live** numbers (6/18) into CLAUDE.md — its burst sections still
+   say 4/25 **on purpose**, because that is what the box runs until step 3.
+
+**Before opening the burst PR, one line to verify and fix:** the burst-numbers research says
+holds past the concurrency limit do NOT arrive "~30 s late" — they get a full burst the moment
+any hold wins, else one attempt when the pool hits 0 (~T+3.3s at 6/18). The rc-autocart skill
+table on that branch still says "~30 s late" for 7+. Read `shouldRetryBurst` + the runner
+loop, confirm, and fix the line in the same PR.
+
+**The measurement (`docs/RC-RATE-MEASUREMENT.md`) is the owner's, and it has not run.** Second
+mini-PC, throwaway prepaid hotspot (not their phone), one step per sitting, never within 2h of
+a release. It measures the CDN edge only; a pass does not prove the household IP safe.
+
+**Children to archive once their replacements land:** `session_01B7LAWppHnaaB8eFzsURm6K`
+(burst v1, blocked on the edit-permission wall), `session_01XBTUrZc8sW7VPrn5Fzy1af` (okta v1,
+interrupted), `session_01Q9TiWJasesZqpTMAuMyoj9` (okta v2, interrupted because it had been told
+to wait for a "push now" this session cannot send). Also older: `session_01FLxM3D3LddskZDRASdXoNa`,
+`session_01RzXY3dYKzpdJfjg36kHYiD`, `session_014fHgMYeSzLE79ofCcmHQzb`, and Second Parent's
+`session_015XtsxwQceycqn3EfoYgmN4`, all BLOCKED/idle since 09-20 — the owner's call.
+
+**Tonight's 08:00 release (09-26):** at 21:23 PT the only hold (`#M412`) and two others
+(`#M411`, `#R314`) were `offered`, not tapped; the RC session was dead with `okta=GONE(404)`,
+and the 03:01Z rehearsal had failed on a CAPTCHA. The box was on `39da21b` (docs-only gap to
+master). If the owner taps one, the reliable path is a hand sign-in (`rc-login.bat`, NOT
+`rc-test-login.bat`) around 06:30–07:15 PT. **Re-read `/api/health/status` and
+`rc-holds-readout` before saying anything about it — this paragraph is hours old by then.**
+
 ## 0-pre. 2026-09-25 — READ THIS FIRST
 
 - **The 08:00 release:** `#GBOB` (group site) and `#A113` were handed off and reached the owner's
   own cart. `#R367` never carted, because the shared burst budget ran out at T−1.6s. Fixed in
   #413 (`BURST_RELEASE_RESERVE`); `CLAUDE.md` → *"09-25"* has the numbers.
-- **#413 needs a BOX UPDATE to take effect** (`cart-burst.mjs` and `rc-hold-runner.mjs`). An
-  update ends the RC session, and the last one cost a CAPTCHA sign-in by hand. So do it
-  ≥ 6 h before a release, and check health afterwards.
 - **`autocart.rc_login` can read `fail` over a live session**, and its remedy names
   `rc-test-login.bat`, which DROPS the token. **Read `autocart.rc_session` before acting on it.**
 - **#414 (Second Parent's burst lead 15s → 5s) is merged and on the box too** (`39da21b`). The
