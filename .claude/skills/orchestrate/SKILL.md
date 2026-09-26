@@ -236,6 +236,12 @@ your own CI is still running."*
   head, so its verdict covers the old commit and must be reported that way. If the
   follow-up is substantive, it wants its own pass.
 
+**"PUSH WHEN NO RUN IS IN FLIGHT" IS NOT A LOCK, AND IT RACED ON 2026-09-26.** A child polling
+for a free slot pushed in the same second the orchestrator opened a PR (runs 1780/1781, started
+06:57:26/27Z). Both went red, and both were green when re-run alone. Two pollers race. While a
+child may push, the orchestrator starts no run of its own. Otherwise, tell the child to push
+only when the orchestrator says so.
+
 **Three more things the slot cannot cover. Say so rather than implying coverage:**
 
 1. **The push/`pull_request` twins.** One push to a branch *that already has a PR open*

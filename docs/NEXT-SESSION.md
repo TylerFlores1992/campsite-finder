@@ -10,6 +10,44 @@ stale, delete it rather than striking it through.** Strikethrough belongs in `CL
 correction is itself the record; here it is just weight.
 
 
+## 0-pre-pre-UPDATE. 2026-09-26 07:45Z (00:45 PT) — READ THIS BEFORE THE TABLE BELOW
+
+The table below was written at 04:30Z. What changed overnight, all read back:
+
+- **MERGED, green on master:** **#416** admin Subscribers section (web only) and **#417** the
+  hold-confirm screen (worker deploy ran, 3/3 shards held). Both Fable tier-1 PASS-WITH-NITS.
+  The nits that were the house shapes were fixed before merge:
+  - #416: a Stripe miss read "no trial" (now "unknown").
+  - #417: a DB error in the in-cart read rendered "This offer has closed" (now
+    `outcome: 'unchecked'`), and a `claiming` row nothing sweeps could say "It's in our cart"
+    for 90 days (now bounded to a release in the last 2h, Pacific).
+- **`claude/okta-evening-signin` is `82599d3`, CI GREEN when run alone, Fable tier-1
+  PASS-WITH-NITS.**
+  - Its run 1770 was a REAL red, not the overlap: it failed alone too, 3 of 2,558. It had
+    re-armed `oktaTrip` in the auto-login arm, navigated the resident page, and left the Okta
+    trip unsampled.
+  - The child fixed it (`bef7ccb`: a sampled throwaway tab, no recycle), then five review nits
+    (`82599d3`): local gates before any Okta I/O (~55 probes a night saved), the survived-session
+    stand-down pinned, a whole-bot DT guard, an `rc-signin` readout section, and the return
+    contract.
+  - **Still ready only for its post-release PR.** Box update needed; see the order below.
+- **N4, THE OWNER'S CALL, NOT BUILT:** `update-guard`'s 6h refusal counts only
+  `requested/carted/claiming` holds, while the evening trigger also counts OFFERED ones. So on a
+  night the evening sign-in covers an offered-only hold, a REQUESTED box update is still
+  permitted, and it ends that fresh session. Feeding `min(nextRelease, nextOfferedRelease)` to
+  the guard with the flag on would close it. It would also block requested updates for offers
+  nobody taps.
+- **CAPTCHA, SECOND NIGHT RUNNING:** the 09-26 03:01Z (20:01 PT) rehearsal met one, the bot was
+  signed out with `okta=GONE` at 07:28Z, and **one hold is REQUESTED for the 08:00 release
+  (`#R314`, rc-360)**. The owner was asked to run `mini-pc\rc-login.bat` before 07:30 PT, and a
+  check-in fires at 06:45 PT. Read `autocart.rc_session` before assuming either way.
+- **A CI COLLISION HAPPENED AND IT WAS THE ORCHESTRATOR'S.** A child told to "push when no run is
+  in flight" polled, saw a free slot, and pushed in the **same second** the orchestrator opened a
+  PR (runs 1780/1781, started 06:57:26/27Z). Both went red, and both were green when re-run
+  alone. **Polling for a free slot is not a lock**: two pollers race. While a child might push,
+  the orchestrator must not start a run itself, or must tell the child to push only on the
+  orchestrator's word.
+
 ## 0-pre-pre. 2026-09-26 (written 04:30Z / 21:30 PT on 09-25) — THREE BRANCHES IN FLIGHT, NOTHING MERGED
 
 An orchestrator pass (session "CampHawk Parent") built three things tonight and deliberately
