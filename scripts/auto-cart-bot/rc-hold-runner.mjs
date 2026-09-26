@@ -242,7 +242,7 @@ const MAX_RELEASE_WAIT_MS = 3 * 60_000;
  * was that the losers would be refused with RC's per-cart wording and read as an account
  * limit rather than a race we caused.
  *
- * FOUR, NOT TWENTY, AND THE PROBE IS WHY. It demonstrated six; it demonstrated nothing
+ * SIX, NOT TWENTY, AND THE PROBE IS WHY. It demonstrated six; it demonstrated nothing
  * about twenty, and the next ceiling is not RC's cart rules but the WAF in front of them —
  * this address has already eaten a 12-hour block once. A bound we can defend beats a
  * number we would be guessing.
@@ -252,7 +252,7 @@ const MAX_RELEASE_WAIT_MS = 3 * 60_000;
  * 2026-08-08 bug, where a cart submitted 85 seconds before the release was refused for a
  * site RC had not let go of yet, and `failed` was terminal.
  */
-const CART_CONCURRENCY = Math.max(1, Number(process.env.RC_CART_CONCURRENCY || 4));
+const CART_CONCURRENCY = Math.max(1, Number(process.env.RC_CART_CONCURRENCY || 6));
 
 /**
  * Run `task` over `items`, at most `limit` in flight, preserving nothing but the promise
@@ -268,8 +268,9 @@ async function pMap(items, limit, task) {
       const [i, item] = next;
       try { await task(item, i); } catch { /* task reports its own failure */ }
       // THE FAN-OUT IS PROGRESS, AND THE WATCHDOG HAS TO SEE IT. Twenty holds at
-      // CART_CONCURRENCY 4 is five rounds, each bounded at RC_CART_EVAL_TIMEOUT_MS (60s) —
-      // 300s of entirely legitimate work against a 240s stall threshold. Without this a full
+      // CART_CONCURRENCY 6 is four rounds, each bounded at RC_CART_EVAL_TIMEOUT_MS
+      // (60s) — 240s of entirely legitimate work against a 240s stall threshold, so the per-task
+      // tick (not the round total) is what keeps it clear. Without this a full
       // release window would trip the wedge guard on a morning that was working perfectly,
       // which is the cry-wolf failure this repo has fixed three times.
       tick();

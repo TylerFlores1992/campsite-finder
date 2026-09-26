@@ -12,18 +12,18 @@ machine with its **own public IP**. (Not "unit": in RC's vocabulary a unit is a 
 | limit | number | source |
 |---|---|---|
 | holds one seat can carry for one release | **20** | `RC_HOLD_CAPACITY` = `RC_SITES_PER_CART` (2) × `RC_MAX_CARTS` (10), both measured, in `src/lib/limits.ts`. The poller stops offering past it (`roomToHold`, `worker/poller.ts`). |
-| holds that get the full fast burst at T | **4** | `CART_CONCURRENCY` (4, `rc-hold-runner.mjs`). `BURST_BUDGET` 40 / `BURST_RELEASE_RESERVE` 25 / `BURST_LEAD_MS` 5s are sized together for exactly 4 slots: `(4 + 15) / 4 × 1.1s` = 5.2s of asking against a 5.0s lead. `worker/cart-burst.test.mts` fails if any one of them moves alone. |
-| holds 5..20 | carted later | They wait for one of the first four `pMap` slots to finish. By then the shared pool is mostly spent, so they fall to the ~12s slow lane, and at busy parks sites go in seconds. |
+| holds that get the full fast burst at T | **6** | `CART_CONCURRENCY` (6, `rc-hold-runner.mjs`; the `--concurrent-mint` probe measured six simultaneous carts, so 6 is at the validated ceiling). `BURST_BUDGET` 40 / `BURST_RELEASE_RESERVE` 18 / `BURST_LEAD_MS` 5s are sized together for 6 slots: `(6 + 22) / 6 × 1.1s` = 5.13s of asking against a 5.0s lead (133ms margin). `worker/cart-burst.test.mts` fails if any one of them moves alone. |
+| holds 7..20 | carted later | They wait for one of the first six `pMap` slots to finish. By then the shared pool is mostly spent, so they fall to the ~12s slow lane, and at busy parks sites go in seconds. |
 
-**So the honest capacity is 4 holds per 08:00 release with the best odds, and up to 20 with
+**So the honest capacity is 6 holds per 08:00 release with the best odds, and up to 20 with
 decreasing ones.**
 
 ## 2. What actually limits it — and why "turn the numbers up" is the wrong answer
 
 1. **Requests per IP.** Every attempt leaves the household IP, and RC's WAF has blocked that
-   address for twelve hours (2026-08-06). `BURST_BUDGET` exists to refuse this trade. Raising
-   `CART_CONCURRENCY` to 6 also breaks the lead/reserve sizing (3.9s of cover against a 5s
-   lead), and a guard fails on it.
+   address for twelve hours (2026-08-06). `BURST_BUDGET` exists to refuse this trade. 6 is the
+   measured concurrency ceiling (the `--concurrent-mint` probe); raising `CART_CONCURRENCY` past
+   6 also breaks the lead/reserve sizing (cover drops below the 5s lead), and a guard fails on it.
 2. **Per account.** 20 is RC's cart limit per account, measured.
 3. **Sign-in is human.** RC serves a reCAPTCHA (2026-08-07), and this project uses no solver.
    Every seat needs one human sign-in, plus another whenever its session dies. **It died after
@@ -31,8 +31,8 @@ decreasing ones.**
    rehearsal).
 
 **Capacity is bought with ADDRESSES**, the same lesson as rec.gov (`SHARD_COUNT`): each new
-seat brings its own IP, its own 40-attempt budget, its own 4 fast slots and its own 20 holds.
-N seats = **4N best-odds holds, 20N total**.
+seat brings its own IP, its own 40-attempt budget, its own 6 fast slots and its own 20 holds.
+N seats = **6N best-odds holds, 20N total**.
 
 ## 3. The design
 
@@ -186,7 +186,7 @@ step 8.**
 - **The fairness line across two seats:** one campsite, two users, two seats → exactly one
   served by `dueHolds`, whichever seat asks. **This is the test to write first**: it is the
   one bug here that locks a real campsite twice.
-- **The gauge:** warn at 4N+1, fail at 20N, and `unknown` session health renders as unknown,
+- **The gauge:** warn at 6N+1, fail at 20N, and `unknown` session health renders as unknown,
   never as healthy.
 
 ## 7. Open decisions — the owner's, not engineering's

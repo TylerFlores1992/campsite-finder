@@ -157,7 +157,7 @@ the lag as `T+s` — if tail-end holds start landing late, that is this decision
 | `BURST_RELEASE_RESERVE` | **25** — the part of the pool only T onwards may spend (2026-09-25) |
 
 **THE BUDGET IS SHARED, NOT PER-HOLD.** Carts run `CART_CONCURRENCY` at a time, so a per-hold
-budget multiplies: four holds × twenty attempts is eighty POSTs in thirty seconds from a
+budget multiplies: six holds × twenty attempts is 120 POSTs in thirty seconds from a
 residential IP that **has eaten a 12-hour WAF block from RC before**.
 
 **THE LEAD IS DERIVED FROM THE MEASURED FLIP, and it was SHORTENED 15 s -> 5 s on 2026-09-25.**
@@ -181,31 +181,33 @@ dropping to the slow lane. So the pool can no longer be exhausted before the rel
 long lead produces instead is **SILENCE**, every hold asleep until T. At the old 15 s lead that
 silence runs ~T-9.8 s to T, and **two of this lane's six wins sit inside it.**
 
-**THE TWO CONSTANTS ARE SIZED TOGETHER AND THE MARGIN IS 225 ms.** The discretionary share is
-`40 - 25` = 15, plus one uncharged first attempt per slot, so a full group gets 19 attempts =
-`(4 + 15) / 4 × 1.1 s` = **5.2 s of asking against the 5.0 s lead**. At the 5 s lead the reserve
-is therefore never reached before T at any group size. **Raising `CART_CONCURRENCY` to 6, or the
-reserve to 30, drops the cover to 3.9 s and re-opens that silence** — take either with a lower
-lead or a lower reserve in the same change, and read the guard, which fails on the bump alone.
+**THE TWO CONSTANTS ARE SIZED TOGETHER AND THE MARGIN IS 133 ms.** The discretionary share is
+`40 - 18` = 22, plus one uncharged first attempt per slot, so a full group gets 28 attempts =
+`(6 + 22) / 6 × 1.1 s` = **5.13 s of asking against the 5.0 s lead**. At the 5 s lead the reserve
+is therefore never reached before T at any group size. **Raising `CART_CONCURRENCY` past 6, or the
+reserve past 18, drops the cover below the lead and re-opens that silence** — take either with a
+lower lead or a lower reserve in the same change, and read the guard, which fails on the bump alone.
 
 **HOW MANY HOLDS THE LANE ACTUALLY SERVES — measured, then derived.** A hold's own attempt cycle
 is **1.0-1.3 s** across all ten bursts on record and is independent of group size, because holds
 burst in parallel under `pMap(holds, CART_CONCURRENCY)`. With the reserve in place what matters is
-reach PAST T: `25 / (min(N, 4) / 1.1 s)`.
+reach PAST T: `18 / (min(N, 6) / 1.1 s)`.
 
 | holds | reach past T | covers the measured flip (T-4.2 -> T+1.4)? | note |
 |---|---|---|---|
-| 1 | ~28 s | yes, 26 s spare | the lane's first four releases — which is why this was invisible |
-| 2 | ~14 s | yes | |
-| 3 | ~9 s | yes | at lead 15 s and no reserve this ended at **T-1 s**, observed |
-| 4 | ~7 s | yes | |
-| 5+ | one unguarded attempt, ~30 s late | **no** | `CART_CONCURRENCY` caps the slots |
+| 1 | ~20 s | yes | |
+| 2 | ~9.9 s | yes | |
+| 3 | ~6.6 s | yes | at lead 15 s and no reserve this ended at **T-1 s**, observed |
+| 4 | ~5 s | yes | |
+| 5 | ~4 s | yes | |
+| 6 | ~3.3 s | yes | at the postT floor (3.0 s), with margin |
+| 7+ | one unguarded attempt, ~30 s late | **no** | `CART_CONCURRENCY` caps the slots at 6 |
 
-**So the burst serves about FOUR holds well, against an `RC_HOLD_CAPACITY` of 20.** That gap is
+**So the burst serves about SIX holds well, against an `RC_HOLD_CAPACITY` of 20.** That gap is
 the growth ceiling, and it is `CART_CONCURRENCY` × the reserve, not the cart ceiling — a hold that
-only gets a slot after the first four finish starts with its 30 s window already expired, because
+only gets a slot after the first six finish starts with its 30 s window already expired, because
 `releaseMoment` is group-wide and fixed before the sleep. `worker/cart-burst.test.mts` pins both
-arithmetics and fails against the old lead.
+arithmetics and fails against a bump to either knob alone.
 
 **AND RC DOES RELEASE EARLY — MEASURED TWICE, and this retires the old "never early" reading.**
 `scripts/rc-release-window.mts` polls RC's grid at 2-second resolution across a release:

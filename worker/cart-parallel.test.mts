@@ -57,7 +57,7 @@ test('groups run earliest release first', () => {
 test('the concurrency is BOUNDED, and bounded at what was measured', () => {
   // The probe demonstrated six. It demonstrated nothing about twenty, and the next ceiling
   // is the WAF rather than RC's cart rules — this address has eaten a 12-hour block once.
-  assert.match(code, /const CART_CONCURRENCY = Math\.max\(1, Number\(process\.env\.RC_CART_CONCURRENCY \|\| 4\)\)/);
+  assert.match(code, /const CART_CONCURRENCY = Math\.max\(1, Number\(process\.env\.RC_CART_CONCURRENCY \|\| 6\)\)/);
   const n = Number(/RC_CART_CONCURRENCY \|\| (\d+)/.exec(code)?.[1]);
   assert.ok(n >= 1 && n <= 6,
     `the default must not exceed what --concurrent-mint actually demonstrated (6); got ${n}`);

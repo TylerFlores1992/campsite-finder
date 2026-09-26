@@ -171,9 +171,9 @@ test('the pre-release hold TICKS — three minutes of waiting is not a stall', (
 
 test('the fan-out and both sequential loops tick', () => {
   /**
-   * Twenty holds at CART_CONCURRENCY 4 is five rounds, each bounded at 60s — 300s of entirely
-   * legitimate work against a 240s threshold. Ticking per settled task is what keeps a full
-   * release window from tripping a guard on a morning that worked.
+   * Twenty holds at CART_CONCURRENCY 6 is four rounds, each bounded at 60s — 240s of entirely
+   * legitimate work against a 240s threshold, so ticking per settled task (not the round total)
+   * is what keeps a full release window from tripping a guard on a morning that worked.
    */
   const pmap = RUNNER.slice(RUNNER.indexOf('async function pMap'));
   assert.match(pmap.slice(0, pmap.indexOf('\n}')), /catch \{[^}]*\}\n\s*tick\(\);/,

@@ -130,12 +130,13 @@ export const BURST_WINDOW_MS = Number(process.env.RC_BURST_WINDOW_MS || 30_000);
  * old 15s lead that runs from ~T-9.8s to T, and **two of this lane's six wins (T-0.9s and
  * T-0.5s) sit inside it.**
  *
- * The two constants are therefore sized TOGETHER, with 225ms of margin: `40 - 25` = 15
- * discretionary attempts plus one uncharged first attempt per `pMap` slot is 19, i.e.
- * `(4 + 15) / 4 x 1.1s` = 5.2s of asking against this 5.0s lead — so at 5s the reserve is never
- * reached before T at any group size. **Raising `CART_CONCURRENCY` or the reserve eats that
- * margin** (at 6 slots the cover is 3.9s and the silence re-opens over exactly the win band),
- * and `worker/cart-burst.test.mts` fails on either bump taken alone.
+ * The two constants are therefore sized TOGETHER, with 133ms of margin: `40 - 18` = 22
+ * discretionary attempts plus one uncharged first attempt per `pMap` slot is 28, i.e.
+ * `(6 + 22) / 6 x 1.1s` = 5.13s of asking against this 5.0s lead — so at 5s the reserve is never
+ * reached before T at any group size. **Raising `CART_CONCURRENCY` past 6 or the reserve past 18
+ * eats that margin** (at 7 slots the cover is 4.6s, at reserve 19 it is 4.95s, and the silence
+ * re-opens over exactly the win band), and `worker/cart-burst.test.mts` fails on either bump
+ * taken alone.
  */
 export const BURST_LEAD_MS = Number(process.env.RC_BURST_LEAD_MS || 5_000);
 
@@ -147,7 +148,7 @@ export const BURST_GAP_MS = Number(process.env.RC_BURST_GAP_MS || 500);
  *
  * Shared, not per-hold, and that is the difference between a burst and an incident. Carts
  * run `CART_CONCURRENCY` at a time, so a per-hold budget would multiply by the number of
- * holds — four holds each spending twenty attempts is eighty POSTs in thirty seconds from a
+ * holds — six holds each spending twenty attempts is 120 POSTs in thirty seconds from a
  * residential IP that has eaten a 12-hour block from RC's WAF before.
  */
 export const BURST_BUDGET = Number(process.env.RC_BURST_BUDGET || 40);
@@ -165,7 +166,7 @@ export const BURST_BUDGET = Number(process.env.RC_BURST_BUDGET || 40);
  * that has never once caught a site. `#GBOB` was caught 17 seconds later by the slow lane,
  * which was luck; `#R367` never carted.
  *
- * One hold never trips this: it spends ~14 before T and keeps 26. It is the SHARED pool that
+ * One hold never trips this: at the 5s lead it spends ~5 before T and keeps 35. It is the SHARED pool that
  * makes the pre-T lead scale with the number of holds, while the release moment is the one
  * instant every hold needs at once.
  *
@@ -177,7 +178,7 @@ export const BURST_BUDGET = Number(process.env.RC_BURST_BUDGET || 40);
  * needs. A hold that reaches the reserve early WAITS for T rather than dropping to the slow
  * lane, which is the whole point: it arrives at the release with attempts in hand.
  */
-export const BURST_RELEASE_RESERVE = Number(process.env.RC_BURST_RELEASE_RESERVE || 25);
+export const BURST_RELEASE_RESERVE = Number(process.env.RC_BURST_RELEASE_RESERVE || 18);
 
 /**
  * Is this refusal the one that means "the lock has not lapsed yet"?

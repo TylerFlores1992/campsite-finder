@@ -220,11 +220,11 @@ test('the SHARED budget still reaches T when a full group draws on it', () => {
 });
 
 test('the lead and the reserve are sized TOGETHER, and neither may move alone', () => {
-  // THE TWO FIXES COMPOSE, AND THE MARGIN IS 225ms. At 4 slots the discretionary share plus
-  // the free first attempts covers 5.2s; the lead is 5.0s. That is not slack, it is a
-  // coincidence holding two constants together, and raising EITHER `CART_CONCURRENCY` or
-  // `BURST_RELEASE_RESERVE` eats it: at 6 slots the same share covers only 3.9s and the lane
-  // goes quiet for 1.1s over exactly the band where its two earliest wins happened.
+  // THE TWO FIXES COMPOSE, AND THE MARGIN IS 133ms. At 6 slots with reserve 18 the discretionary
+  // share plus the free first attempts covers 5.13s; the lead is 5.0s. That is not slack, it is a
+  // coincidence holding two constants together, and raising EITHER `CART_CONCURRENCY` past 6 or
+  // `BURST_RELEASE_RESERVE` past 18 eats it: at 7 slots the same share covers only 4.6s and the
+  // lane goes quiet over exactly the band where its two earliest wins happened.
   //
   // This is deliberately a SECOND test rather than another assertion in the one above: the one
   // above is about a configuration being sound, this one is about which knob a future session
@@ -274,8 +274,8 @@ test('`waitedForRelease` is DERIVED from the actual wait, not passed as a consta
 });
 
 test('the budget is opened OUTSIDE the per-hold loop, so holds share it', () => {
-  // Per-hold it multiplies by CART_CONCURRENCY: four holds each spending twenty attempts is
-  // eighty POSTs in thirty seconds.
+  // Per-hold it multiplies by CART_CONCURRENCY: six holds each spending twenty attempts is
+  // 120 POSTs in thirty seconds.
   const src = RUNNER();
   const budget = src.indexOf('let burstBudget = BURST_BUDGET;');
   const pmap = src.indexOf('await pMap(holds, CART_CONCURRENCY');
