@@ -2,7 +2,12 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { currentUserIsAdmin } from '@/lib/admin';
+import { hasAutocartEntitlement } from '@/lib/auth';
+import { RC_HOLD_BETA_OPEN, rcHoldBetaAllows } from '@/lib/autocart-beta';
+import { describeHoldOutcome, holdOutcome, type HoldOutcome } from '@/lib/hold-outcome';
+import { StatusMark, type Level } from '@/components/admin/status-mark';
 import { getAdminUser, type AdminUserWatch } from '../queries';
+import { getSubscriptionHistory, sourceLabel, type SubscriberGroup, type SubscriptionHistory } from '../subscribers';
 
 /**
  * One account, in full.
@@ -22,6 +27,33 @@ export const metadata = {
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
 
+/** Pacific day, for subscription and billing dates — Vercel runs UTC, and a date off by
+ *  one is worse than none because it looks like an answer. */
+const fmtPacific = (iso: string | null | undefined) =>
+  iso
+    ? new Date(iso).toLocaleDateString('en-US', {
+        timeZone: 'America/Los_Angeles',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : null;
+
+const GROUP_MARK: Record<SubscriberGroup, { level: Level; word: string }> = {
+  active: { level: 'ok', word: 'Active' },
+  trialing: { level: 'ok', word: 'Trialing' },
+  cancelling: { level: 'warn', word: 'Cancelling' },
+  lapsed: { level: 'fail', word: 'Lapsed' },
+};
+
+/** `unresolved` is its OWN mark and word — never rounded to a win or a loss. */
+const OUTCOME_MARK: Partial<Record<HoldOutcome, { level: Level; word: string }>> = {
+  claimed: { level: 'ok', word: 'Claimed' },
+  'client-carted': { level: 'ok', word: 'Carted by user' },
+  'client-failed': { level: 'fail', word: 'Lost' },
+  unresolved: { level: 'warn', word: 'Unresolved' },
+};
+
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 
@@ -40,6 +72,29 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
   if (!detail) notFound();
 
   const { user, watches, channels, recentAlerts, holds, favorites, pushTokens } = detail;
+
+  // Entitlement through lib/auth ITSELF, not a restatement: this is the function the
+  // toggle API, the roster feed and the hold action call, so the page cannot disagree
+  // with them. null = the read failed, which renders as unknown and never as "no".
+  const [history, entitled] = await Promise.all([
+    getSubscriptionHistory(user.id).catch((err): SubscriptionHistory | null => {
+      console.error('[admin/user] subscription history failed', err);
+      return null;
+    }),
+    hasAutocartEntitlement(user.id).catch((err): boolean | null => {
+      console.error('[admin/user] entitlement read failed', err);
+      return null;
+    }),
+  ]);
+  const trialLive = !!user.autocart_trial_until && new Date(user.autocart_trial_until) > new Date();
+  const liveRows = history?.rows.filter((r) => r.group !== 'lapsed') ?? [];
+  const entitlementReasons = [
+    user.is_beta ? 'beta flag' : null,
+    trialLive ? `comped trial until ${fmtPacific(user.autocart_trial_until)}` : null,
+    liveRows.some((r) => r.tier === 'autocart') ? 'live Auto-Cart subscription' : null,
+    liveRows.some((r) => r.grandfathered) ? 'grandfathered live subscription' : null,
+  ].filter(Boolean);
+  const storeRow = history?.rows.find((r) => r.provider === 'apple' || r.provider === 'google');
 
   return (
     <main
@@ -166,6 +221,142 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
         </Panel>
       </div>
 
+      <Panel title="Subscription & entitlement" className="mt-4">
+        <div className="grid gap-x-6 md:grid-cols-2">
+          <div>
+            <Row
+              label="Auto-Cart entitled"
+              value={entitled === null ? 'unknown — read failed' : entitled ? 'yes' : 'no'}
+              hint="lib/auth.hasAutocartEntitlement, called live"
+            />
+            <Row
+              label="Because"
+              value={entitlementReasons.length ? entitlementReasons.join(', ') : entitled ? 'unknown' : '—'}
+            />
+            <Row
+              label="Comped Auto-Cart trial"
+              value={
+                user.autocart_trial_until
+                  ? `${trialLive ? 'until' : 'ended'} ${fmtPacific(user.autocart_trial_until)}`
+                  : 'none'
+              }
+            />
+            <Row
+              label="RC hold beta"
+              value={
+                RC_HOLD_BETA_OPEN
+                  ? 'open to everyone entitled'
+                  : rcHoldBetaAllows(user.id)
+                    ? 'on the allowlist'
+                    : 'not on the allowlist'
+              }
+              hint="src/lib/autocart-beta.ts"
+            />
+          </div>
+          <div>
+            <Row label="Subscription rows" value={history ? String(history.rows.length) : 'unknown — read failed'} />
+            {storeRow ? (
+              <Row label="RevenueCat app user id" value={user.id} hint="RevenueCat is told our Clerk id" />
+            ) : null}
+            {user.signup_source ? (
+              <Row label="Signup source" value={JSON.stringify(user.signup_source).slice(0, 80)} />
+            ) : null}
+            {history && history.stripe_state !== 'ok' ? (
+              <Row
+                label="Stripe details"
+                value={history.stripe_state === 'unconfigured' ? 'unknown — not configured' : 'unknown — Stripe read failed'}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        {history && history.rows.length > 0 ? (
+          <ul className="mt-3 space-y-3">
+            {history.rows.map((r) => {
+              const mark = GROUP_MARK[r.group];
+              const f = r.stripe;
+              const tierHow =
+                r.provider === 'stripe'
+                  ? f?.price_tier
+                    ? `from Stripe price ${f.price_id} → ${f.price_tier}${f.price_tier !== r.tier ? ' — DISAGREES with the stored tier' : ''}`
+                    : 'from the Stripe price id on each webhook (price not read here)'
+                  : 'from the store product id on each RevenueCat event (not stored)';
+              const unknown = r.provider === 'stripe' ? 'unknown' : 'unknown — store row';
+              return (
+                <li key={r.id} className="rounded-ch-sm border border-ch-line p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-ch-fine">
+                      <StatusMark level={mark.level} label={`${mark.word} · ${r.status.replace(/_/g, ' ')}`} />
+                    </span>
+                    <span className="text-ch-fine text-ch-muted">{sourceLabel(r.provider)}</span>
+                  </div>
+                  <Row label="Plan" value={`${r.tier === 'autocart' ? 'Auto-Cart' : r.tier === 'base' ? 'Alerts' : r.tier} · ${f?.interval ?? unknown}`} />
+                  <Row label="Tier derived" value={tierHow} />
+                  <Row label="Grandfathered" value={r.grandfathered ? 'yes' : 'no'} />
+                  <Row label="Started" value={fmtPacific(r.created_at) ?? '—'} />
+                  <Row label="Row last updated" value={fmtDateTime(r.updated_at)} />
+                  <Row label="Current period ends" value={fmtPacific(f?.current_period_end) ?? unknown} />
+                  <Row label="Trial ends" value={f ? (fmtPacific(f.trial_end) ?? 'no trial') : unknown} />
+                  {/* Both of Stripe's cancel fields, side by side, because they are
+                      independent: a date with the flag false is the case that went
+                      invisible, and seeing the two disagree is the point. */}
+                  <Row
+                    label="Cancel at period end (flag)"
+                    value={r.cancel_flag ? 'yes' : 'no'}
+                  />
+                  <Row label="Cancel at (date)" value={fmtPacific(r.cancel_at) ?? 'none'} />
+                  {r.cancelling && !r.cancel_flag && r.cancel_at ? (
+                    <p className="py-1 text-ch-fine text-ch-muted">
+                      Dated cancellation with the flag off. Still cancelling: either field is enough.
+                    </p>
+                  ) : null}
+                  {f?.ended_at || f?.canceled_at ? (
+                    <Row label="Ended / canceled (Stripe)" value={fmtPacific(f.ended_at) ?? fmtPacific(f.canceled_at) ?? '—'} />
+                  ) : null}
+                  {f && !f.found ? (
+                    <Row label="In Stripe" value="not returned by Stripe — our record is shown" />
+                  ) : null}
+                  {f?.stripe_status && f.stripe_status !== r.status ? (
+                    <Row label="Stripe says" value={`${f.stripe_status} (ours: ${r.status})`} />
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-ch-fine">
+                    {r.stripe_subscription_id ? (
+                      <a
+                        href={`https://dashboard.stripe.com/subscriptions/${encodeURIComponent(r.stripe_subscription_id)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 break-all font-bold text-ch-green hover:text-ch-green-deep"
+                      >
+                        {r.stripe_subscription_id}
+                        <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
+                      </a>
+                    ) : null}
+                    {r.stripe_customer_id ? (
+                      <a
+                        href={`https://dashboard.stripe.com/customers/${encodeURIComponent(r.stripe_customer_id)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 break-all font-bold text-ch-green hover:text-ch-green-deep"
+                      >
+                        {r.stripe_customer_id}
+                        <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
+                      </a>
+                    ) : null}
+                    {r.store_transaction_id ? (
+                      <span className="break-all font-mono text-ch-muted" title="Store original transaction id">
+                        {r.store_transaction_id}
+                      </span>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : history ? (
+          <p className="mt-3 text-ch-fine text-ch-muted">No subscription rows for this account.</p>
+        ) : null}
+      </Panel>
+
       <Panel title={`Watches (${watches.length})`} className="mt-4">
         {watches.length === 0 ? (
           <p className="text-ch-fine text-ch-muted">No watches on this account.</p>
@@ -211,26 +402,51 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
 
       {holds.length > 0 && (
         <Panel title="ReserveCalifornia holds" className="mt-4">
-          <table className="w-full text-ch-fine">
-            <thead className="text-ch-muted">
-              <tr className="text-left">
-                <th className="py-1 font-medium">Campground</th>
-                <th className="py-1 font-medium">Unit</th>
-                <th className="py-1 font-medium">Release</th>
-                <th className="py-1 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {holds.map((h) => (
-                <tr key={h.id} className="border-t border-ch-line">
-                  <td className="py-1.5 pr-3">{h.campground_name ?? '—'}</td>
-                  <td className="py-1.5 pr-3">{h.unit_id ?? '—'}</td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap">{fmtDateTime(h.release_at)}</td>
-                  <td className="py-1.5">{h.status}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[36rem] text-ch-fine">
+              <thead className="text-ch-muted">
+                <tr className="text-left">
+                  <th className="py-1 font-medium">Campground</th>
+                  <th className="py-1 font-medium">Unit / stay</th>
+                  <th className="py-1 font-medium">Release</th>
+                  <th className="py-1 font-medium">Status</th>
+                  <th className="py-1 font-medium">Outcome</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {holds.map((h) => {
+                  // lib/hold-outcome decides; `released` with no claim is UNRESOLVED
+                  // and is shown as such, never as a win or a loss.
+                  const outcome = holdOutcome(h);
+                  const mark = OUTCOME_MARK[outcome];
+                  return (
+                    <tr key={h.id} className="border-t border-ch-line align-top">
+                      <td className="py-1.5 pr-3">{h.campground_name ?? '—'}</td>
+                      <td className="py-1.5 pr-3">
+                        {h.unit_name ?? h.unit_id ?? '—'}
+                        {h.arrival_date ? (
+                          <span className="block text-ch-muted">
+                            {h.arrival_date}
+                            {h.nights ? ` · ${h.nights}n` : ''}
+                          </span>
+                        ) : null}
+                      </td>
+                      {/* release_at is RC's zone-less PACIFIC wall clock stored as text;
+                          parsing it with Date would read it as UTC and move it 7 hours. */}
+                      <td className="py-1.5 pr-3 whitespace-nowrap">{h.release_at ?? '—'}</td>
+                      <td className="py-1.5 pr-3">
+                        {h.status}
+                        {h.error ? <span className="block text-ch-muted">{h.error.slice(0, 80)}</span> : null}
+                      </td>
+                      <td className="py-1.5" title={describeHoldOutcome(outcome)}>
+                        {mark ? <StatusMark level={mark.level} label={mark.word} /> : 'no hand-off'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </Panel>
       )}
 
