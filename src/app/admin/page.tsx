@@ -8,6 +8,7 @@ import AdminAutoRefresh from '@/components/AdminAutoRefresh';
 import AdminTabs, { type AdminData } from '@/components/admin/AdminTabs';
 import { query, queryOne } from '@/lib/db/client';
 import { listAdminUsers, countTestUsers, CANCELLING } from './users/queries';
+import { listSubscribers, type SubscribersData } from './users/subscribers';
 import { getShardCoverage, getPollerCapacity, type PollerCapacity, type ShardCoverage } from '@/lib/capacity';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 
@@ -355,6 +356,18 @@ export default async function AdminPage() {
   // erroring — the failure stays legible either way.
   const users = await safe(listAdminUsers(), []);
   const testUserCount = await safe(countTestUsers(), 0);
+  // NOT through safe(): its fallback is an empty list, and "no subscribers" and "we could
+  // not read the subscribers" must never render the same. The failure is logged here
+  // and SAID on the panel; the error text itself never reaches the browser.
+  const subscribers: SubscribersData = await listSubscribers().catch((err) => {
+    console.error('[admin] listSubscribers failed', err);
+    return {
+      rows: [],
+      counts: { active: 0, trialing: 0, cancelling: 0, lapsed: 0 },
+      stripe_state: 'failed' as const,
+      db_failed: true,
+    };
+  });
 
   const data: AdminData = {
     clerkTotal,
@@ -381,6 +394,7 @@ export default async function AdminPage() {
     monthLabel,
     users,
     testUserCount,
+    subscribers,
   };
 
   return (

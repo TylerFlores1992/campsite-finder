@@ -162,6 +162,7 @@ const PRESETS: Record<string, Preset> = {
         alertAgg: { sent: 402, sent_7d: 21, failed: 12 },
         cgRows: [{ source: 'ridb', n: 4469 }], cgTotal: 8013, series, mrr: { monthly: 21.5, activeCount: 6 },
         users: [], testUserCount: 5,
+        subscribers: { rows: [], counts: { active: 0, trialing: 0, cancelling: 0, lapsed: 0 }, stripe_state: 'ok' },
         beat: { beat_at: new Date().toISOString(), watches_checked: 13, age_s: 11 },
         workerHealthy: true,
         canaryRows: [
@@ -528,6 +529,7 @@ const PRESETS: Record<string, Preset> = {
         costItems: [], usage: { sms: 311, email: 4200, push: 900 },
         lifetimeUsage: { sms: 2480, email: 31600, push: 7400 },
         monthLabel: 'Jul 2026', users: [], testUserCount: 0,
+        subscribers: { rows: [], counts: { active: 0, trialing: 0, cancelling: 0, lapsed: 0 }, stripe_state: 'ok' },
       };
       export const node = <AdminTabs data={data} />;`,
     frame: 'w-full',
@@ -563,8 +565,33 @@ const PRESETS: Record<string, Preset> = {
         costItems: [], usage: { sms: 0, email: 0, push: 0 },
         lifetimeUsage: { sms: 2480, email: 31600, push: 7400 },
         monthLabel: 'Jul 2026', users: [], testUserCount: 0,
+        subscribers: { rows: [], counts: { active: 0, trialing: 0, cancelling: 0, lapsed: 0 }, stripe_state: 'ok' },
       };
       export const node = <AdminTabs data={data} />;`,
+    frame: 'w-full',
+  },
+  'admin-subscribers': {
+    label: 'Admin — the Subscribers section, one row per group',
+    // Fixture rows only: one per group plus a store row and a Stripe-unknown row, so the
+    // shot shows every mark SHAPE beside its word (the owner is colour-blind) and what
+    // "unknown" looks like when Stripe could not answer.
+    entry: `import SubscribersBox from '@/components/admin/SubscribersBox';
+      const base = { is_beta: false, autocart_trial_until: null, grandfathered: false, stripe_customer_id: 'cus_X',
+        cancel_at: null, cancelling: false, other_rows: 0, autocart_entitled: false, rc_hold_beta: false,
+        started_at: '2026-08-01T12:00:00Z', updated_at: '2026-09-20T12:00:00Z' };
+      const f = (o) => ({ found: true, interval: 'monthly', price_id: 'price_1', price_tier: 'base', start_date: null,
+        current_period_end: '2026-10-01T12:00:00Z', trial_end: null, cancel_at: null, cancel_at_period_end: false,
+        canceled_at: null, ended_at: null, stripe_status: 'active', ...o });
+      const rows = [
+        { ...base, user_id: 'user_a', email: 'alerts-monthly@example.com', status: 'active', tier: 'base', provider: 'stripe', stripe_subscription_id: 'sub_a', group: 'active', stripe: f({}) },
+        { ...base, user_id: 'user_b', email: 'autocart-yearly@example.com', status: 'active', tier: 'autocart', provider: 'stripe', stripe_subscription_id: 'sub_b', group: 'active', autocart_entitled: true, grandfathered: true, rc_hold_beta: true, stripe: f({ interval: 'yearly', price_tier: 'autocart' }) },
+        { ...base, user_id: 'user_c', email: 'play-trial@example.com', status: 'trialing', tier: 'autocart', provider: 'google', stripe_subscription_id: null, group: 'trialing', autocart_entitled: true, is_beta: true, stripe: null },
+        { ...base, user_id: 'user_d', email: 'leaving@example.com', status: 'active', tier: 'autocart', provider: 'stripe', stripe_subscription_id: 'sub_d', group: 'cancelling', cancelling: true, cancel_at: '2026-10-08T14:38:01Z', autocart_entitled: true, stripe: f({ cancel_at: '2026-10-08T14:38:01Z' }) },
+        { ...base, user_id: 'user_e', email: 'gone@example.com', status: 'canceled', tier: 'base', provider: 'stripe', stripe_subscription_id: 'sub_e', group: 'lapsed', autocart_trial_until: '2026-09-25T06:59:59Z', other_rows: 1, stripe: f({ stripe_status: 'canceled', ended_at: '2026-09-02T12:00:00Z' }) },
+        { ...base, user_id: 'user_f', email: 'app-store-expired@example.com', status: 'expired', tier: 'base', provider: 'apple', stripe_subscription_id: null, group: 'lapsed', stripe: null },
+      ];
+      const data = { rows, counts: { active: 2, trialing: 1, cancelling: 1, lapsed: 2 }, stripe_state: 'ok' };
+      export const node = <div className="bg-ch-paper p-3 font-ch-body text-ch-ink"><SubscribersBox data={data} /></div>;`,
     frame: 'w-full',
   },
   'ch-signout-confirm': {
