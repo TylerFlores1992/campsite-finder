@@ -121,7 +121,11 @@ test('the evening trip runs in a throwaway TAB: the login is on the tab, the sta
   const login = body.indexOf('attemptLogin(ctx, tab,');
   const fin = body.indexOf('} finally {');
   const close = body.indexOf("closeTabBounded(tab, { label: 'evening'");
-  assert.ok(open > 0 && stamp > open, 'the tab is opened before tonight is stamped (a failed open spends nothing)');
+  // ANCHORED ON THE STAND-DOWN, not the open: a stamp between `newPage()` and `if (!tab)` still
+  // spends tonight on a tab that never opened (mutation-found).
+  const standDown = body.indexOf('if (!tab) return false;');
+  assert.ok(open > 0 && standDown > open, 'the failed-open stand-down follows the open');
+  assert.ok(stamp > standDown, 'tonight is stamped only after the tab is known to exist');
   assert.ok(end > stamp && login > end, 'the session is ended, then the login runs');
   assert.ok(!/attemptLogin\(ctx, page\b/.test(body), 'never the resident page');
   assert.ok(fin > login && close > fin, 'the tab is closed in the finally');
