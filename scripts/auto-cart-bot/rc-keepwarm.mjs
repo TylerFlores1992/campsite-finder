@@ -2017,6 +2017,10 @@ async function endOktaSession(ctx) {
   let after = await oktaSessionAlive(ctx).catch(() => null);
   if (after?.alive === true) {
     log('   Okta still reports a session — deleting the idx cookie only (DT untouched)');
+    // THE FILTER FORM NEEDS PLAYWRIGHT >= 1.43. Older versions ignore the argument and clear
+    // EVERY cookie in the context — DT included, which is the fresh-profile shape that cost the
+    // household IP twelve hours. The box locks playwright-core 1.61.1 (package.json ^1.49.0).
+    // worker/okta-evening.test.mts counts clearCookies calls across scripts/auto-cart-bot/.
     await ctx.clearCookies({ name: 'idx', domain: 'signin.reservecalifornia.com' }).catch(() => {});
     after = await oktaSessionAlive(ctx).catch(() => null);
   }
@@ -2027,13 +2031,23 @@ async function endOktaSession(ctx) {
  * THE EVENING SIGN-IN. OFF unless RC_EVENING_SIGNIN is "1"/"true" — and the flag check is the
  * FIRST statement, before any I/O, so with it off this function does nothing at all.
  * The decision is `shouldEveningSignin` (okta-evening.mjs, tested); this is its I/O.
- * Returns true if a sign-in was attempted.
+ *
+ * Returns true if it ACTED — opened its tab and touched the Okta session (ended it, or tried
+ * to and stood down because it survived), whether or not the password was then typed. The
+ * caller's `continue` skips the rest of that tick either way, which is right: the session it
+ * would read has just changed underneath it. False means nothing was done.
  */
 async function maybeEveningSignin(ctx, page) {
   if (!eveningSigninEnabled(process.env)) return false;
   const hour = pacificHour();
   if (hour !== EVENING_SIGNIN_HOUR) return false; // cheap pre-check; the decision re-asserts it
   const slot = eveningSlot();
+  // THE CHEAP LOCAL GATES BEFORE ANY I/O, like the warm-up checks its window first. Without
+  // this, every 60s tick of the 20:00 hour after tonight's run would still fetch the feed and
+  // probe Okta `sessions/me` (~55 probes a night from the household IP, each refreshing Okta's
+  // idle timer) only for the decision below to reject on the stamp. The decision re-asserts
+  // both, so this is an early exit, not a second rule.
+  if (eveningDoneTonight(slot) || !hasCredentials()) return false;
   const facts = await feedFacts();
   if (!facts.reachable) return false;
   // THE EARLIER OF THE OFFERED AND THE REQUESTED RELEASE. Zone-less Pacific strings compare

@@ -77,13 +77,14 @@ const arg = (name: string, dflt: string): string => {
 const hours = Math.max(1, Number(arg('hours', '72')) || 72);
 const showAll = process.argv.includes('--all');
 
-const [scans, closes, counts, dumps, bursts, recgovCarts] = await Promise.all([
+const [scans, closes, counts, dumps, bursts, recgovCarts, signins] = await Promise.all([
   recentBotEvents('ramp-scan', hours, showAll ? 50 : 3),
   recentBotEvents('tab-close', hours, showAll ? 500 : 40),
   recentBotEvents('request-counts', hours, showAll ? 200 : 40),
   recentBotEvents('mem-dump', hours, showAll ? 50 : 6),
   recentBotEvents('cart-burst', hours, showAll ? 200 : 40),
   recentBotEvents('recgov-cart', hours, showAll ? 200 : 40),
+  recentBotEvents('rc-signin', hours, showAll ? 200 : 40),
 ]);
 
 const pt = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false });
@@ -145,6 +146,35 @@ if (recgovCarts.length === 0) {
     const x = d(r);
     console.log(`  ${pt(r.at)}  ${String(x.campground ?? '?')} site ${String(x.campsiteId ?? '?')} — ${String(x.stay ?? '?')}`);
     printVerdict('    ', recgovCartReading(x).text);
+  }
+}
+
+/**
+ * RC SIGN-INS (kind `rc-signin`, 2026-09-26). One row per sign-in attempt — which path, what it
+ * actually did, and the Okta `idx` cookie's shape. The open question these rows exist to answer
+ * is whether `idx` is PERSISTENT (survives a browser restart) and how long it lives, so that
+ * leads each line. `idx ?` is "the cookie read did not answer", NEVER "no idx" — an unknown is
+ * not a negative. An empty list before a box update carrying this kind is silence, not quiet.
+ */
+console.log(`RC SIGN-INS: ${signins.length}${showAll ? '' : ' (newest 40; --all for more)'}`);
+if (signins.length === 0) {
+  console.log('  none in this window. Ordinary on a night with no rehearsal, warm-up or auto-login —');
+  console.log('  and on any box older than the rc-signin kind (2026-09-26), which emits nothing at all.');
+} else {
+  const captchas = signins.filter((r) => d(r).outcome === 'captcha').length;
+  console.log(`  ${captchas} CAPTCHA · ${signins.length - captchas} other`);
+  for (const r of signins) {
+    const x = d(r);
+    const idx = x.idx as { present?: boolean; persistent?: boolean | null; expiresInMin?: number | null } | null | undefined;
+    const idxText = idx == null ? 'idx ?'
+      : !idx.present ? 'idx absent'
+      : `idx ${idx.persistent === true ? 'PERSISTENT' : idx.persistent === false ? 'session-only' : '?'}`
+        + `${idx.expiresInMin != null ? ` (${idx.expiresInMin}m)` : ''}`;
+    const okta = x.okta as { alive?: boolean | null; createdAt?: string | null } | null | undefined;
+    const oktaText = okta == null ? '' : ` · okta ${okta.alive === true ? 'ALIVE' : okta.alive === false ? 'GONE' : '?'}`
+      + `${okta.createdAt ? ` created ${pt(okta.createdAt)}` : ''}`;
+    console.log(`  ${pt(r.at)}  ${String(x.label ?? '?').padEnd(10)} ${String(x.outcome ?? '?').padEnd(21)} `
+      + `ok=${x.ok === true} · ${x.outcome === 'captcha' ? 'CAPTCHA · ' : ''}${idxText}${oktaText}`);
   }
 }
 

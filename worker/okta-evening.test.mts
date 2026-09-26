@@ -15,7 +15,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   eveningSigninEnabled, shouldEveningSignin, updateWindow, windowOverlapsSession,
   EVENING_SIGNIN_HOUR, EVENING_UPDATE_WINDOW, OKTA_SESSION_CAP_H, CAP_MARGIN_AFTER_RELEASE_H,
@@ -130,6 +132,72 @@ test('the evening trip runs in a throwaway TAB: the login is on the tab, the sta
   assert.ok(!/attemptLogin\(ctx, page\b/.test(body), 'never the resident page');
   assert.ok(fin > login && close > fin, 'the tab is closed in the finally');
   assert.match(body.slice(fin, close), /reportNativeAlloc\('evening'/, 'and the reading is sent before the close');
+});
+
+test('DT is safe across the WHOLE bot directory: exactly one clearCookies call, and it names idx', () => {
+  // WIDENED FROM ONE FUNCTION (Fable review, 2026-09-26): a second `clearCookies` added anywhere
+  // under scripts/auto-cart-bot/ must fail here, not only one inside endOktaSession. An unfiltered
+  // call — or a filtered one on Playwright < 1.43, which ignores the filter — clears DT too.
+  const root = fileURLToPath(new URL('../scripts/auto-cart-bot/', import.meta.url));
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      if (name === 'node_modules' || name.startsWith('.')) continue;
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.(mjs|cjs|js|mts|ts)$/.test(name)) files.push(p);
+    }
+  };
+  walk(root);
+  assert.ok(files.length > 20, `expected the bot's source files, found ${files.length}`);
+  const calls = files.flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/\.clearCookies\(([^)]*)\)/g)]
+    .map((m) => ({ f, args: m[1] })));
+  assert.equal(calls.length, 1, `exactly one clearCookies call in the bot, found: ${JSON.stringify(calls)}`);
+  assert.match(calls[0].args, /^\{ name: 'idx', domain: 'signin\.reservecalifornia\.com' \}$/);
+  assert.match(calls[0].f, /rc-keepwarm\.mjs$/);
+});
+
+test('a session that survived the DELETE and the idx clear is never signed into: the stand-down RETURNS', () => {
+  // The module's one stated invariant. A password typed into a surviving session reuses it —
+  // buys nothing, spends a login from the household IP. Deleting this `return true` passed every
+  // test until this one (Fable review, 2026-09-26).
+  const kw = readFileSync(new URL('../scripts/auto-cart-bot/rc-keepwarm.mjs', import.meta.url), 'utf8');
+  const start = kw.indexOf('async function maybeEveningSignin(ctx, page) {');
+  assert.ok(start > 0, 'maybeEveningSignin not found');
+  const body = kw.slice(start, kw.indexOf('\n}\n', start));
+  const gate = body.indexOf('if (after?.alive !== false) {');
+  const login = body.indexOf('attemptLogin(ctx, tab,');
+  assert.ok(gate > 0 && login > gate, 'the survived-session gate sits before the login');
+  // The gate's own block, found by its closing brace at the same indentation.
+  const blockEnd = body.indexOf('\n      }\n', gate);
+  assert.ok(blockEnd > gate && blockEnd < login, 'the gate block closes before the login');
+  const block = body.slice(gate, blockEnd);
+  assert.match(block, /\n\s*return true;\s*$/, 'the gate block must END in a return, or it falls through to the password');
+});
+
+test('the evening path does no I/O before its cheap local gates (the done-tonight stamp, credentials)', () => {
+  // ~55 extra Okta `sessions/me` probes a night otherwise, each refreshing Okta's idle timer.
+  const kw = readFileSync(new URL('../scripts/auto-cart-bot/rc-keepwarm.mjs', import.meta.url), 'utf8');
+  const start = kw.indexOf('async function maybeEveningSignin(ctx, page) {');
+  const body = kw.slice(start, kw.indexOf('\n}\n', start));
+  const early = body.indexOf('if (eveningDoneTonight(slot) || !hasCredentials()) return false;');
+  const feed = body.indexOf('await feedFacts()');
+  const probe = body.indexOf('await oktaSessionAlive(ctx)');
+  assert.ok(early > 0, 'the early local gate must exist');
+  assert.ok(feed > early && probe > early, 'the feed fetch and the Okta probe come after it');
+});
+
+test('the rc-signin rows have a reader: the readout fetches the kind and prints idx persistence', () => {
+  // A kind nobody reads is the fix-present-and-inert shape (Fable review, 2026-09-26).
+  const ro = readFileSync(new URL('../scripts/bot-events-readout.mts', import.meta.url), 'utf8');
+  assert.match(ro, /recentBotEvents\('rc-signin', hours,/, 'the readout must fetch rc-signin');
+  const head = ro.indexOf('RC SIGN-INS:');
+  assert.ok(head > 0, 'the section must exist');
+  const sec = ro.slice(head, ro.indexOf('RAMP SCANS:', head));
+  assert.ok(sec.length > 0 && sec.length < 3000, 'the section is bounded by the next one');
+  assert.match(sec, /for \(const r of signins\)/, 'it iterates the fetched rows');
+  assert.match(sec, /PERSISTENT/, 'it prints the idx persistence');
+  assert.match(sec, /x\.outcome === 'captcha'/, 'and flags a CAPTCHA');
 });
 
 // ── 2. FLAG ON: THE WINDOW ENDS BEFORE THE SIGN-IN ──────────────────────────────────────
