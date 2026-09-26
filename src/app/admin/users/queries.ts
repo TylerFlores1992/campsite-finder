@@ -210,7 +210,17 @@ export interface AdminUserHold {
   release_at: string | null;
   offered_at: string | null;
   unit_id: string | null;
+  unit_name: string | null;
+  arrival_date: string | null;
+  nights: number | null;
   campground_name: string | null;
+  carted_at: string | null;
+  claimed_at: string | null;
+  released_at: string | null;
+  error: string | null;
+  /** Fed to lib/hold-outcome — `released` with no claim is AMBIGUOUS, and only that
+   *  derivation may say whether it was won, lost or unresolved. */
+  client_reports: Array<{ stage: string; detail?: Record<string, unknown> | null }> | null;
 }
 
 export interface AdminUserDetail {
@@ -220,6 +230,9 @@ export interface AdminUserDetail {
     onboarded_at: string | null;
     autocart_verified_at: string | null;
     stripe_customer_id: string | null;
+    autocart_trial_until: string | null;
+    /** Where they came from, as recorded at signup (migration 072). Shape varies. */
+    signup_source: Record<string, unknown> | null;
   };
   watches: AdminUserWatch[];
   channels: AdminUserChannel[];
@@ -245,6 +258,8 @@ export async function getAdminUser(id: string): Promise<AdminUserDetail | null> 
             u.sms_consent_at::text      AS sms_consent_at,
             u.onboarded_at::text        AS onboarded_at,
             u.autocart_verified_at::text AS autocart_verified_at,
+            u.autocart_trial_until::text AS autocart_trial_until,
+            u.signup_source,
             sub.status                  AS sub_status,
             sub.tier                    AS sub_tier,
             sub.grandfathered           AS grandfathered,
@@ -309,7 +324,11 @@ export async function getAdminUser(id: string): Promise<AdminUserDetail | null> 
     ),
     query<AdminUserHold>(
       `SELECT h.id, h.status, h.release_at::text AS release_at,
-              h.offered_at::text AS offered_at, h.unit_id, c.name AS campground_name
+              h.offered_at::text AS offered_at, h.unit_id, h.unit_name,
+              h.arrival_date::text AS arrival_date, h.nights,
+              c.name AS campground_name,
+              h.carted_at::text AS carted_at, h.claimed_at::text AS claimed_at,
+              h.released_at::text AS released_at, h.error, h.client_reports
          FROM rc_hold_requests h
          JOIN watches w ON w.id = h.watch_id
          LEFT JOIN campgrounds c ON c.id = w.campground_id

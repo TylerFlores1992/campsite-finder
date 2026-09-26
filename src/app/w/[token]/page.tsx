@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { performAction, previewHold } from '@/lib/notifications/actions';
+import { parseHoldOutcome, performAction, previewHold } from '@/lib/notifications/actions';
 import HoldConfirm from '@/components/v2/HoldConfirm';
 
 // Public one-tap action landing (feature D): a tapped alert link lands here, the
@@ -20,13 +20,21 @@ import HoldConfirm from '@/components/v2/HoldConfirm';
 // tap, because making stop-watching a two-step flow would be worse, not safer.
 export const dynamic = 'force-dynamic';
 
-export default async function WatchActionPage({ params }: { params: Promise<{ token: string }> }) {
+export default async function WatchActionPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ token: string }>;
+  searchParams: Promise<{ r?: string | string[] }>;
+}) {
   const { token } = await params;
+  // `?r=` is set by the hold POST's redirect and only ever picks copy — see HOLD_OUTCOMES.
+  const outcome = parseHoldOutcome((await searchParams).r);
 
   // Read-only. Returns null for every other action and for a dead offer, so the
   // fall-through below is the unchanged one-tap path.
   const preview = await previewHold(token);
-  if (preview) return <HoldConfirm preview={preview} />;
+  if (preview) return <HoldConfirm preview={preview} outcome={outcome} />;
 
   const result = await performAction(token);
 
@@ -55,7 +63,9 @@ export default async function WatchActionPage({ params }: { params: Promise<{ to
       <div className="max-w-md w-full bg-white rounded-2xl border border-ch-line shadow-sm p-8 text-center">
         <div className="text-3xl mb-3">{result.ok ? '✅' : '⚠️'}</div>
         <h1 className="text-lg font-semibold text-ch-ink mb-2">
-          {result.ok ? 'Done' : 'Hmm'}
+          {/* A title of its own where "Done"/"Hmm" would mislead — a hold already in our
+              cart is a success, not a "Hmm". */}
+          {result.title ?? (result.ok ? 'Done' : 'Hmm')}
         </h1>
         <p className="text-ch-ink-2">{result.message}</p>
 

@@ -1,9 +1,13 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
+// The status vocabulary (shape + word + hue) lives in its own module so the Subscribers
+// list can use the same one without importing this whole client bundle back into itself.
+import { LEVEL_MARK, StatusMark, type Level } from '@/components/admin/status-mark';
 import BetaTesters from '@/components/BetaTesters';
 import UsersBox from '@/components/admin/UsersBox';
+import SubscribersBox from '@/components/admin/SubscribersBox';
 import CostsPanel from '@/components/admin/CostsPanel';
 import MetricChart, {
   MetricSwitcher,
@@ -24,6 +28,7 @@ import type { BotCommand as BotCommandRow } from '@/lib/bot-commands';
 // `import type` deliberately: the queries module imports the database client, and a
 // value import would drag it into this client bundle.
 import type { AdminUserRow } from '@/app/admin/users/queries';
+import type { SubscribersData } from '@/app/admin/users/subscribers';
 
 /**
  * Admin dashboard, in the redesign's ch-* system.
@@ -104,6 +109,8 @@ export interface AdminData {
   users: AdminUserRow[];
   /** Hand-inserted test rows left out of `users`, so the exclusion is never silent. */
   testUserCount: number;
+  /** Every subscriber, grouped. Built by admin/users/subscribers.ts. */
+  subscribers: SubscribersData;
 }
 
 import {
@@ -118,7 +125,6 @@ import {
 const TABS = ['Overview', 'Users & Revenue', 'Engagement', 'System Health', 'Costs'] as const;
 type Tab = (typeof TABS)[number];
 
-type Level = 'ok' | 'warn' | 'fail';
 
 
 /** A canary's state. Thresholds come from lib/health-thresholds — see the note there
@@ -282,58 +288,6 @@ function summarise(items: string[], max: number): string {
       : (items[0] ?? '');
   }
   return `${items.slice(0, max).join(', ')} and ${items.length - max} more`;
-}
-
-/**
- * The three levels, in every channel at once: a distinct icon SHAPE, a WORD, and only
- * then a colour. One record so a new status surface can't invent its own vocabulary —
- * the previous version of this file had "green dot / ochre dot / red dot" spelled out
- * inline in three different places, which is exactly how a page ends up legible only
- * to people who can separate those three hues.
- *
- * The shapes are chosen to differ at 12px in silhouette alone: a round tick, a
- * triangle, a round cross. Two triangles for warn and fail would have been prettier
- * and useless.
- */
-const LEVEL_MARK: Record<
-  Level,
-  { Icon: typeof CheckCircle2; word: string; box: string; text: string }
-> = {
-  ok: {
-    Icon: CheckCircle2,
-    word: 'OK',
-    box: 'border-[#BFDDC9] bg-ch-green-soft',
-    text: 'text-ch-green-deep',
-  },
-  warn: {
-    Icon: AlertTriangle,
-    word: 'Warning',
-    box: 'border-[#E7C98C] bg-ch-ochre-soft',
-    text: 'text-ch-ochre-ink',
-  },
-  fail: {
-    Icon: XCircle,
-    word: 'Failing',
-    box: 'border-[#E7BFB4] bg-ch-alert-soft',
-    text: 'text-ch-alert-deep',
-  },
-};
-
-/**
- * The status marker used everywhere on this page.
- *
- * `showWord` only controls the VISIBLE word — it is always present for screen readers,
- * so hiding it never costs the label, just the pixels. Callers that already print the
- * word elsewhere in the row (the Alerting header says "Running"/"Stalled") pass false.
- */
-function StatusMark({ level, showWord = true }: { level: Level; showWord?: boolean }) {
-  const { Icon, word, text } = LEVEL_MARK[level];
-  return (
-    <span className={`inline-flex items-center gap-1 whitespace-nowrap font-bold ${text}`}>
-      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-      {showWord ? word : <span className="sr-only">{word}</span>}
-    </span>
-  );
 }
 
 export default function AdminTabs({ data }: { data: AdminData }) {
@@ -615,6 +569,7 @@ function UsersRevenuePanel({
       <p className="text-ch-fine text-ch-muted">
         {`${usersAgg.new_30d.toLocaleString()} new users in the last 30 days.`}
       </p>
+      <SubscribersBox data={data.subscribers} />
       <UsersBox users={data.users} excludedTestRows={data.testUserCount} />
       <BetaTesters />
     </div>

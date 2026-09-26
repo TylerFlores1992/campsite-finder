@@ -73,17 +73,23 @@ interface LogoProps {
   markSize?: number;
   mono?: boolean;
   className?: string;
+  /**
+   * `false` renders at `markSize` on every screen. The default fluid size shrinks to ~58% on
+   * a phone so a HEADER lockup cannot overflow — right in a nav bar, wrong on a centred page
+   * where the lockup is the only brand on screen and came out smaller than the body text.
+   */
+  fluid?: boolean;
 }
 
 /** Full horizontal lockup: hawk badge mark + two-tone wordmark. */
-export default function Logo({ markSize = 34, mono = false, className }: LogoProps) {
+export default function Logo({ markSize = 34, mono = false, className, fluid = true }: LogoProps) {
   const maxFont = markSize * 0.6;
   // Fluid size: pins to ~58% on phones, reaches full size (`markSize` = desktop max)
   // by ~tablet width. Keeps the header lockup from overflowing a ~360px screen
   // (which pushed the whole page wide and made it open zoomed on mobile). The badge
   // is sized in `em` so it tracks the wordmark.
   const minFont = maxFont * 0.58;
-  const fontSize = `clamp(${minFont.toFixed(1)}px, ${(maxFont * 0.143).toFixed(2)}vw, ${maxFont.toFixed(1)}px)`;
+  const fontSize = !fluid ? `${maxFont.toFixed(1)}px` : `clamp(${minFont.toFixed(1)}px, ${(maxFont * 0.143).toFixed(2)}vw, ${maxFont.toFixed(1)}px)`;
   return (
     <span className={`inline-flex items-center gap-2 ${className ?? ''}`} style={{ fontSize }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}

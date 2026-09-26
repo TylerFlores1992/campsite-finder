@@ -326,15 +326,17 @@ export function StatusLine({ hold }: { hold: MyHold }) {
     case "offered":
       return (
         <>
-          Releases {releaseLabel(hold.releaseAt)}. We can grab it the second it opens — tap
-          below and we&rsquo;ll be waiting.
+          Releases {releaseLabel(hold.releaseAt)}. We can try to cart it for you the second it
+          opens — tap below if you want it.
         </>
       );
     case "requested":
       return (
         <>
+          {/* NOT "nothing to do until then": a user who believes the site is handled stops
+              watching, and this is beta and can miss. */}
           We&rsquo;ll try for this the second it opens, {releaseLabel(hold.releaseAt)}.
-          Nothing to do until then — we&rsquo;ll tell you.
+          We&rsquo;ll tell you either way — keep an alarm set in case we miss.
         </>
       );
     case "carted":

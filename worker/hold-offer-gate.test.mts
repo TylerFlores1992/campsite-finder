@@ -77,10 +77,15 @@ test('the tap tells the truth instead of refusing', () => {
   assert.ok(branch, 'the hold action must branch on bot liveness');
   assert.match(branch, /ok: true/, 'an offline bot must not reject the hold');
   assert.match(branch, /offline|yourself/i, 'and must say so plainly');
-  // The confident copy must be unreachable when the bot is down.
-  const confident = actions.indexOf("We'll grab ${site} the moment it opens");
+  // The confident copy must be unreachable when the bot is down. ANCHORED ON THE OUTCOME, NOT
+  // THE WORDING (2026-09-26): this pinned "We'll grab ${site}…", and softening that copy to
+  // "We'll try for…" (never promise a cart) made the anchor miss and the guard fail on a
+  // change that kept its property. The `outcome: 'held'` marker IS the confident success.
+  const confident = actions.indexOf("outcome: 'held',");
   const gate = actions.indexOf('if (!bot.ok)');
-  assert.ok(gate !== -1 && confident !== -1 && gate < confident);
+  assert.ok(confident !== -1, 'anchor lost: the confident success no longer carries outcome held');
+  assert.equal(actions.indexOf("outcome: 'held',", confident + 1), -1, 'the confident success must be one return');
+  assert.ok(gate !== -1 && gate < confident, 'the liveness gate must come before the confident success');
 });
 
 test('failing to read the heartbeat counts as absent, not as healthy', () => {
