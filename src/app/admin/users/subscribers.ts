@@ -36,7 +36,9 @@ export { SUBSCRIBER_GROUPS, sourceLabel, subscriberGroup, type SubscriberGroup }
  * for a Stripe row Stripe does not return: absence from Stripe is not cancellation, so
  * the group is always OUR database's state and the Stripe facts only ever add detail.
  *
- * Deliberately not `import 'server-only'`, for the reason queries.ts records.
+ * It carries no `import 'server-only'` of its own, but it IS server-only in effect: it imports
+ * `tierForPriceId` from `@/lib/stripe-plans`, which is. So it cannot run from a script the way
+ * queries.ts can, and a client component must keep taking only `import type` from it.
  */
 
 /** Facts only Stripe holds. Every field is nullable because Stripe itself leaves them

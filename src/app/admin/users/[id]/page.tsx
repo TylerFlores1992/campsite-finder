@@ -296,7 +296,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
                   <Row label="Started" value={fmtPacific(r.created_at) ?? '—'} />
                   <Row label="Row last updated" value={fmtDateTime(r.updated_at)} />
                   <Row label="Current period ends" value={fmtPacific(f?.current_period_end) ?? unknown} />
-                  <Row label="Trial ends" value={f ? (fmtPacific(f.trial_end) ?? 'no trial') : unknown} />
+                  <Row label="Trial ends" value={f?.found ? (fmtPacific(f.trial_end) ?? 'no trial') : unknown} />
                   {/* Both of Stripe's cancel fields, side by side, because they are
                       independent: a date with the flag false is the case that went
                       invisible, and seeing the two disagree is the point. */}
