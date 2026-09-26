@@ -91,6 +91,8 @@ import { tokenSecondsNeeded } from './session-coverage.mjs';
 import { planRenewal, recordRenewal, newRenewalState, noteLiveToken, makeSkipLogger } from './renewal-schedule.mjs';
 import { settleBudget, budgetForRelease, MAX_KILL_REFUNDS } from './autologin-budget.mjs';
 import { warmupPlan, warmupWindowOpen } from './autologin-warmup.mjs';
+import { eveningSigninEnabled, shouldEveningSignin, eveningSlot, EVENING_SIGNIN_HOUR } from './okta-evening.mjs';
+import { signinEventDetail } from './signin-telemetry.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
 // get the Pacific / zone-less-wall-clock handling right, which is the part that has been
 // got wrong before — a second implementation here would be a second chance to get it wrong.
@@ -868,7 +870,7 @@ function minutesUntil(releaseAt) {
  * has no use for the extra row. See the route.
  */
 async function feedFacts() {
-  if (!TOKEN) return { nextRelease: null, lastRehearsalAt: null, reachable: false };
+  if (!TOKEN) return { nextRelease: null, nextOfferedRelease: null, lastRehearsalAt: null, reachable: false };
   try {
     const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds?rehearsal=1`, {
       // NOT the hold runner: this GET must not stamp `beat_at`. The keep-warm and the runner
@@ -877,15 +879,18 @@ async function feedFacts() {
       // every 20 minutes would mask a dead runner exactly when a hold is due.
       headers: { authorization: `Bearer ${TOKEN}`, 'x-bot-role': 'rc-keepwarm' },
     });
-    if (!res.ok) return { nextRelease: null, lastRehearsalAt: null, reachable: false };
+    if (!res.ok) return { nextRelease: null, nextOfferedRelease: null, lastRehearsalAt: null, reachable: false };
     const j = await res.json();
     return {
       nextRelease: j?.nextRelease ?? null,
+      // OFFERED counts for the evening sign-in only (okta-evening.mjs). Absent on an older
+      // server, which reads as "no offer" — the evening path then falls back to requested.
+      nextOfferedRelease: j?.nextOfferedRelease ?? null,
       lastRehearsalAt: j?.lastRehearsalAt ?? null,
       reachable: true,
     };
   } catch {
-    return { nextRelease: null, lastRehearsalAt: null, reachable: false };
+    return { nextRelease: null, nextOfferedRelease: null, lastRehearsalAt: null, reachable: false };
   }
 }
 
@@ -1232,6 +1237,7 @@ async function maybeWarmupLogin(ctx, page) {
     // JUDGED ON OKTA, NOT ON THE TOKEN. Re-probed rather than assumed: `ok` means the sign-in
     // returned, and what we actually need to know is whether the thing we came for exists.
     const after = await oktaSessionAlive(ctx).catch(() => null);
+    reportSignin(ctx, 'warmup', r, after);
     if (after?.alive === true) {
       log('  ✓ Okta session established — the sign-in before the release will be the cheap one');
       // TELL THE RESIDENT PAGE, for the same reason maybeAutoLogin does: the tab minted into
@@ -1625,6 +1631,7 @@ async function maybeAutoLogin(ctx, page) {
     log,
   }));
   trace = t;
+  reportSignin(ctx, 'auto-login', r);
   if (r.ok) {
     // SAY WHAT THE TOKEN ACTUALLY IS, rather than asserting the outcome. "the hold is
     // covered" was printed on 2026-08-15 over a session that died seven minutes before the
@@ -1965,6 +1972,123 @@ async function maybeRehearse(ctx, page) {
     : '✗✗ THE UNATTENDED LOGIN IS BROKEN, and there are hours to fix it. See admin → System Health.');
   return true;
 }
+
+/**
+ * ONE `rc-signin` EVENT PER SIGN-IN ATTEMPT (see signin-telemetry.mjs). Fire-and-forget and
+ * never awaited by the caller: a diagnostic must not delay a release-critical sign-in. The
+ * cookie read is local but goes through CDP, so it is bounded — a wedged browser is exactly
+ * when these run. Names and expiries only; `authCookieSummary` never returns a value.
+ */
+function reportSignin(ctx, label, result, okta = null) {
+  void (async () => {
+    const cookies = await Promise.race([
+      authCookieSummary(ctx).catch(() => null),
+      new Promise((res) => setTimeout(() => res(null), 3000)),
+    ]);
+    await reportBotEvent('rc-signin', signinEventDetail({ label, result, cookies, okta }));
+  })().catch(() => {});
+}
+
+/** Tonight's evening-sign-in slot, stamped BEFORE attempting — the same crash-loop rule as
+ *  REHEARSE_ON_DEMAND_STAMP: a file survives the supervisor's restart, memory does not. */
+const EVENING_STAMP = path.join(HERE, 'logs', '.evening-signin-slot');
+function eveningDoneTonight(slot) {
+  try { return fs.readFileSync(EVENING_STAMP, 'utf8').trim() === slot; } catch { return false; }
+}
+function stampEvening(slot) {
+  try {
+    fs.mkdirSync(path.dirname(EVENING_STAMP), { recursive: true });
+    fs.writeFileSync(EVENING_STAMP, slot);
+  } catch { /* the hour gate is the backstop */ }
+}
+
+/**
+ * END THE OKTA SESSION — and ONLY the session. `DELETE /api/v1/sessions/me` through the
+ * profile's own cookie jar; if Okta will not do that, delete the `idx` cookie alone. `DT`
+ * (the device cookie) is NEVER touched: losing it makes the next login look like a fresh
+ * profile, which is what cost the household IP twelve hours on 2026-08-06.
+ * Returns the Okta reading afterwards; the caller refuses to sign in unless it reads GONE.
+ */
+async function endOktaSession(ctx) {
+  const r = await ctx.request.delete('https://signin.reservecalifornia.com/api/v1/sessions/me', {
+    headers: { accept: 'application/json' }, timeout: 20_000, failOnStatusCode: false,
+  }).catch(() => null);
+  log(`   DELETE sessions/me → ${r ? r.status() : 'no answer'}`);
+  let after = await oktaSessionAlive(ctx).catch(() => null);
+  if (after?.alive === true) {
+    log('   Okta still reports a session — deleting the idx cookie only (DT untouched)');
+    await ctx.clearCookies({ name: 'idx', domain: 'signin.reservecalifornia.com' }).catch(() => {});
+    after = await oktaSessionAlive(ctx).catch(() => null);
+  }
+  return after;
+}
+
+/**
+ * THE EVENING SIGN-IN. OFF unless RC_EVENING_SIGNIN is "1"/"true" — and the flag check is the
+ * FIRST statement, before any I/O, so with it off this function does nothing at all.
+ * The decision is `shouldEveningSignin` (okta-evening.mjs, tested); this is its I/O.
+ * Returns true if a sign-in was attempted.
+ */
+async function maybeEveningSignin(ctx, page) {
+  if (!eveningSigninEnabled(process.env)) return false;
+  const hour = pacificHour();
+  if (hour !== EVENING_SIGNIN_HOUR) return false; // cheap pre-check; the decision re-asserts it
+  const slot = eveningSlot();
+  const facts = await feedFacts();
+  if (!facts.reachable) return false;
+  // THE EARLIER OF THE OFFERED AND THE REQUESTED RELEASE. Zone-less Pacific strings compare
+  // lexically in the same order they compare in time.
+  const rel = [facts.nextOfferedRelease, facts.nextRelease].filter(Boolean).sort()[0] ?? null;
+  const okta = await oktaSessionAlive(ctx).catch(() => null);
+  const decision = shouldEveningSignin({
+    enabled: true,
+    pacificHour: hour,
+    hoursToRelease: hoursUntilRelease(rel),
+    hasCredentials: hasCredentials(),
+    doneTonight: eveningDoneTonight(slot),
+    minutesSinceAbnormalExit: minutesSinceAbnormalExit(),
+    okta,
+  });
+  if (!decision.run) {
+    if (!eveningDoneTonight(slot) && eveningSkipLogged !== slot) {
+      eveningSkipLogged = slot;
+      log(`evening sign-in: not tonight — ${decision.why}`);
+    }
+    return false;
+  }
+  stampEvening(slot);
+  log(`── EVENING SIGN-IN: ${decision.why}`);
+  if (decision.endSession) {
+    const after = await endOktaSession(ctx);
+    if (after?.alive !== false) {
+      // NOT GONE (or unknown) → do not sign in: a password sign-in into a surviving session
+      // would reuse it and buy nothing, at the cost of a login from this address.
+      log(`   ✗ could not confirm the Okta session ended (okta=${after?.alive}) — standing down tonight`);
+      reportSignin(ctx, 'evening', { ok: false, reason: 'the Okta session did not end — no sign-in attempted' }, after);
+      return true;
+    }
+  }
+  await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
+  await dropStoredToken(page).catch(() => {});
+  const r = await attemptLogin(ctx, page, {
+    homeUrl: RC_HOME,
+    isLive: async () => (await sessionLive(ctx, page)).live === true,
+    log,
+    humanPresent: false,
+  });
+  const okAfter = await oktaSessionAlive(ctx).catch(() => null);
+  reportSignin(ctx, 'evening', r, okAfter);
+  log(r.ok
+    ? `   ✓ evening sign-in: ${r.reason} — Okta ${okAfter?.alive === true ? `ALIVE, created ${okAfter.createdAt ?? '?'}` : `reads ${okAfter?.alive}`}`
+    : `   ✗ evening sign-in failed: ${r.reason}`);
+  // IT IS A PASSWORD SIGN-IN, SO IT IS ALSO TONIGHT'S REHEARSAL — recorded as one, so the
+  // 20h gap stops the nightly rehearsal spending a second login on the same question.
+  if (r.passwordSubmitted || r.captcha) await reportRehearsal(r.ok === true, `evening sign-in: ${r.reason}`, null);
+  // A live-but-short session is never reported dead (the 2026-08-16 07:33 phone call).
+  if (r.ok || !r.sessionLive) await reportSession(r.ok ? 'warm' : 'dead', `evening sign-in: ${r.reason}`, okAfter ?? undefined);
+  return true;
+}
+let eveningSkipLogged = null;
 
 async function reportRehearsal(ok, detail, skippedWhy) {
   if (!TOKEN) return;
@@ -2386,6 +2510,10 @@ async function runLoginRehearsal(ctx, page, { humanPresent, tag }) {
     // maybeAutoLogin deliberately do the opposite: unattended, a challenge is a full stop.
     humanPresent,
   }), { log });
+  // THE OUTCOME, STORED. A `captcha` here from the nightly or on-demand rehearsal is what pages
+  // the owner (server-side, src/lib/rc-signin-page.ts) — the T−25 voice call stays the last
+  // resort for the morning.
+  reportSignin(ctx, tag, r);
   // SAY WHETHER WE ACTUALLY ASKED. Zero rewrites means the interception never fired, which is
   // a different fault from Okta ignoring the parameter — and without this line the two
   // produce the identical inconclusive run, which is the shape this file keeps paying for.
@@ -3699,6 +3827,15 @@ async function warmResident() {
           // a second sign-in from this address for one release — which is the budget the
           // one-attempt-per-release rule exists to protect. (rehearsal.mjs also refuses
           // within six hours of a release, so this ordering is a belt on top of a brace.)
+          // THE EVENING SIGN-IN (okta-evening.mjs), FLAG-GATED AND OFF BY DEFAULT. Before the
+          // rehearsal because both live in the 20:00 hour and this one is a real password
+          // sign-in: when it runs, the rehearsal then sees a live session and stands down,
+          // so the address spends ONE login that evening, not two.
+          mark('evening sign-in');
+          if (await maybeEveningSignin(ctx, page).catch((e) => { log(`evening sign-in error: ${e.message}`); return false; })) {
+            oktaTrip = 'the evening sign-in';
+            continue;
+          }
           mark('login rehearsal');
           if (await maybeRehearse(ctx, page).catch((e) => { log(`rehearsal error: ${e.message}`); return false; })) {
             oktaTrip = 'the login rehearsal';

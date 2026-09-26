@@ -886,7 +886,9 @@ export async function oktaSessionAlive(ctx) {
     if (status === 404 || status === 401) return { alive: false, status, expiresAt: null };
     if (!r.ok()) return { alive: null, status, expiresAt: null };
     const j = await r.json().catch(() => null);
-    return { alive: true, status, expiresAt: (j && j.expiresAt) || null };
+    // `createdAt` too: the believed hard cap counts from the sign-in that CREATED the
+    // session, and the evening sign-in (okta-evening.mjs) can only judge it from this.
+    return { alive: true, status, expiresAt: (j && j.expiresAt) || null, createdAt: (j && j.createdAt) || null };
   } catch (e) {
     return { alive: null, status: 0, expiresAt: null, why: String(e && e.message).slice(0, 120) };
   }

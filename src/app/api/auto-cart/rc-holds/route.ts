@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, lastRehearsalAttempt, reportCartFailure, nextHoldRelease, holdAtRisk, beatIsFromRunner, isRealUnitId, type HoldRequest } from '@/lib/rc-holds';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, lastRehearsalAttempt, reportCartFailure, nextHoldRelease, nextOfferedRelease, holdAtRisk, beatIsFromRunner, isRealUnitId, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { markBotUpdateApplied, noteBotUpdateAttempt, claimBotUpdate } from '@/lib/bot-update';
@@ -8,6 +8,9 @@ import { botControlFor } from '@/lib/bot-control';
 import { recordMemorySample } from '@/lib/chromium-memory';
 import { recordNativeAlloc } from '@/lib/native-alloc';
 import { recordBotEvent } from '@/lib/bot-events';
+import { captchaPagePlan, captchaSmsBody } from '@/lib/rc-signin-page';
+import { sendSms } from '@/lib/notifications/sms';
+import { sendEmail } from '@/lib/notifications/email';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -132,7 +135,7 @@ export async function GET(req: NextRequest) {
   // row it never reads. At 08:00:00 the answer that carts a site is the only thing this
   // response is for.
   const wantRehearsal = req.nextUrl.searchParams.get('rehearsal') === '1';
-  const [cart, stale, claims, nextRelease, control, rehearsal, rehearsalAttempt] = await Promise.all([
+  const [cart, stale, claims, nextRelease, control, rehearsal, rehearsalAttempt, offeredRelease] = await Promise.all([
     dueHolds(lead), expireStaleHolds(), pendingClaims(),
     // For the keep-warm, not the runner: it signs in shortly before this, because RC
     // issues no renewable session and a token only lasts an hour. See rc-autologin.mjs.
@@ -157,6 +160,9 @@ export async function GET(req: NextRequest) {
     // written. A skip used to stamp `ran_at` and so satisfied the minimum gap it was
     // supposed to be measured against — see `lastRehearsalAttempt`.
     wantRehearsal ? lastRehearsalAttempt() : Promise.resolve(null),
+    // The keep-warm's evening sign-in (flag-gated, off by default) counts OFFERED holds too;
+    // see `nextOfferedRelease`. Keep-warm only — the runner never reads it.
+    wantRehearsal ? nextOfferedRelease() : Promise.resolve(null),
   ]);
 
   // `claim` is separated from `release` on purpose. A stale release is merely overdue;
@@ -222,6 +228,7 @@ export async function GET(req: NextRequest) {
     // twelve hours of IP block on 2026-08-06.
     // NOT `rehearsal?.ran_at` — that is the last row WRITTEN, which a skip also writes.
     lastRehearsalAt: rehearsalAttempt?.ran_at ?? null,
+    nextOfferedRelease: offeredRelease,
   });
 }
 
@@ -333,6 +340,9 @@ export async function POST(req: NextRequest) {
   // hours before anyone reads them. Returns before the hold work for the same reason too.
   if (body?.event && typeof body.event === 'object') {
     await recordBotEvent(body.event, typeof body.source === 'string' ? body.source : null);
+    // A CAPTCHA IN THE EVENING PAGES THE OWNER. See src/lib/rc-signin-page.ts. After the
+    // write, in `after`, so neither the page nor its failure can delay or fail this report.
+    schedulePageForSigninEvent(body.event);
     return NextResponse.json({ ok: true, state: 'event-recorded' });
   }
 
@@ -566,6 +576,47 @@ async function alarmSessionDead(why: string | null, fault: RcSessionFault = 'dea
     `[rc-holds] session-dead alarm for hold ${at.hold.id} (releases ${at.hold.release_at}): ` +
     `${r.placed ? 'calling' : `not called — ${r.error}`}${why ? ` | ${why}` : ''}`,
   );
+}
+
+/**
+ * Page the owner about a sign-in CAPTCHA — the reuse of the health pager's destinations
+ * (`scripts/health-page.mts`): `AUTOCART_ALARM_PHONE`, else `HEALTH_ALERT_PHONE`, for the
+ * text; `HEALTH_ALERT_EMAIL`, else the first `ADMIN_EMAILS`, for the email. No destination is
+ * logged, never guessed. At most one page per 30 minutes per instance — the sources are a
+ * once-a-night rehearsal and a once-a-night evening sign-in, so this is a backstop, not the
+ * rate limit.
+ */
+let lastCaptchaPageAt = 0;
+function schedulePageForSigninEvent(event: { kind?: unknown; detail?: unknown }): void {
+  if (event.kind !== 'rc-signin') return;
+  const detail = event.detail;
+  after(() => pageOwnerForSigninCaptcha(detail).catch((e) => console.error('[rc-holds] captcha page failed:', e)));
+}
+async function pageOwnerForSigninCaptcha(detail: unknown): Promise<void> {
+  const hour = Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour: '2-digit', hour12: false,
+  }).format(new Date())) % 24;
+  const plan = captchaPagePlan(detail, hour);
+  if (!plan.page) return;
+  if (Date.now() - lastCaptchaPageAt < 30 * 60_000) {
+    console.log('[rc-holds] captcha page suppressed — paged within 30m');
+    return;
+  }
+  lastCaptchaPageAt = Date.now();
+  const label = String((detail as { label?: unknown })?.label ?? 'rehearsal');
+  const body = captchaSmsBody(label);
+  const phone = process.env.AUTOCART_ALARM_PHONE || process.env.HEALTH_ALERT_PHONE || null;
+  const email = process.env.HEALTH_ALERT_EMAIL
+    || (process.env.ADMIN_EMAILS ?? 'tylerflores1992@gmail.com').split(',')[0]?.trim() || null;
+  if (plan.sms && phone) await sendSms({ to: phone, body }).catch((e) => console.error('[rc-holds] captcha sms failed:', e));
+  if (plan.email && email) {
+    await sendEmail({
+      to: email,
+      subject: 'CampHawk: the RC sign-in hit a CAPTCHA',
+      html: `<p>${body}</p><p>${plan.why}. The morning voice call (T-25) is still armed as the last resort.</p>`,
+    }).catch((e) => console.error('[rc-holds] captcha email failed:', e));
+  }
+  console.log(`[rc-holds] captcha page: ${plan.why}${plan.sms && !phone ? ' (no phone configured)' : ''}`);
 }
 
 /**

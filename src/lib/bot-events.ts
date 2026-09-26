@@ -38,6 +38,13 @@
  *                 roots, size histogram and OWNER attribution. A small `shared_memory` total
  *                 beside a 32 GB mapped process is a reading too — see rc-mem-dump.mjs.
  *
+ *   `rc-signin`   rc-keepwarm made an RC sign-in attempt (rehearsal / on-demand / test-login /
+ *                 auto-login / warmup / evening) and is reporting what it actually did —
+ *                 `captcha`, `password-form`, `cookie-answered`, … (scripts/auto-cart-bot/
+ *                 signin-telemetry.mjs) — plus the `idx` cookie's persistent flag and expiry,
+ *                 never its value. A `captcha` from the rehearsal or the evening sign-in pages
+ *                 the owner (src/lib/rc-signin-page.ts).
+ *
  * THE RULES ARE THE SAME AS `native-alloc.ts`, ONE TABLE OVER: the kind is allow-listed so a
  * caller with the token cannot put arbitrary text on an admin readout; the detail is capped;
  * the text is capped and stripped of control characters, because Postgres text cannot hold a
@@ -47,7 +54,7 @@
  */
 import { mutate, query } from '@/lib/db/client';
 
-export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts', 'mem-dump', 'cart-burst', 'recgov-cart'] as const;
+export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts', 'mem-dump', 'cart-burst', 'recgov-cart', 'rc-signin'] as const;
 export type BotEventKind = (typeof BOT_EVENT_KINDS)[number];
 const KINDS = new Set<string>(BOT_EVENT_KINDS);
 

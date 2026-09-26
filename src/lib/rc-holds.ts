@@ -485,6 +485,25 @@ export async function nextHoldRelease(): Promise<string | null> {
 }
 
 /**
+ * The next release with a hold OFFERED, REQUESTED, CARTED or CLAIMING on it — or null.
+ *
+ * For the keep-warm's EVENING SIGN-IN only (scripts/auto-cart-bot/okta-evening.mjs), which is
+ * flag-gated and off by default. `nextHoldRelease` deliberately leaves `offered` out — nothing
+ * carts an offer — but an offer is tapped in the MORNING and the Okta session it will need is
+ * the one minted the evening before. Future releases only; fixtures excluded like its sibling.
+ */
+export async function nextOfferedRelease(): Promise<string | null> {
+  const [row] = await query<{ release_at: string }>(
+    `SELECT release_at FROM rc_hold_requests
+      WHERE status IN ('offered', 'requested', 'carted', 'claiming')
+        AND ${REAL_UNIT}
+        AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+      ORDER BY release_at ASC LIMIT 1`,
+  ).catch(() => []);
+  return row?.release_at ?? null;
+}
+
+/**
  * A hold that is about to release, with the phone of whoever loses it — or null.
  *
  * THIS IS THE ALARM'S TRIGGER, and the window is the whole design. A dead RC session at

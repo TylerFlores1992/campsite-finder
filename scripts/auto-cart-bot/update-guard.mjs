@@ -254,7 +254,14 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
     }
   }
 
-  const verdict = safeToUpdate({ nextRelease, feedReachable, requested, force });
+  // THE WINDOW, per RC_EVENING_SIGNIN (okta-evening.mjs). Flag off → DEFAULTS, i.e. exactly
+  // the 02:00-05:00 this always passed. Flag on → an evening window that ENDS before the
+  // 20:00 sign-in, so an unrequested update can never land between the fresh Okta session
+  // and the 08:00 release. `requested` and the six-hour release refusal are untouched: a
+  // REQUESTED update in that span still ends the session, and that is a rule for people.
+  const { eveningSigninEnabled, updateWindow } = await import('./okta-evening.mjs');
+  const win = updateWindow({ eveningSignin: eveningSigninEnabled(process.env), defaults: DEFAULTS });
+  const verdict = safeToUpdate({ nextRelease, feedReachable, requested, force, ...win });
   // THE VERDICT LINE IS THE CONTRACT, not the exit code - auto-update.ps1 reads this text.
   // A crash on the way out can corrupt an exit status; it cannot un-print a line.
   console.log(`[update-guard] ${verdict.ok ? 'PROCEED' : 'SKIP'} - ${verdict.reason}`);

@@ -486,7 +486,7 @@ export async function attemptLogin(
     await page.waitForTimeout(4000);
     if (await acceptable()) {
       step('already signed in — nothing to do');
-      return { ok: true, reason: 'already signed in' };
+      return { ok: true, alreadyLive: true, reason: 'already signed in' };
     }
 
     // LIVE BUT NOT GOOD ENOUGH. There is a session, so RC renders no sign-in link and the
@@ -521,7 +521,7 @@ export async function attemptLogin(
     // three retries on 2026-08-07 while the button reported visible and enabled.
     if (await captchaChallenge(page)) {
       if (!humanPresent) {
-        return { ok: false, reason: 'ReserveCalifornia is showing a CAPTCHA — it needs you to sign in by hand' };
+        return { ok: false, captcha: true, reason: 'ReserveCalifornia is showing a CAPTCHA — it needs you to sign in by hand' };
       }
       step('a CAPTCHA is on screen — SOLVE IT IN THE WINDOW, waiting up to 5 minutes…');
       const solved = await findIn(page, EMAIL_SELECTORS, 300_000);
@@ -691,7 +691,7 @@ export async function attemptLogin(
     for (let attempt = 1; attempt <= 3 && !pw; attempt++) {
       if (await captchaChallenge(page)) {
         if (!humanPresent) {
-          return { ok: false, reason: 'a CAPTCHA appeared during sign-in — it needs you to sign in by hand' };
+          return { ok: false, captcha: true, reason: 'a CAPTCHA appeared during sign-in — it needs you to sign in by hand' };
         }
         step('a CAPTCHA appeared — SOLVE IT IN THE WINDOW, waiting up to 5 minutes…');
         pw = await findIn(page, PASSWORD_SELECTORS, 300_000);
@@ -750,12 +750,12 @@ export async function attemptLogin(
       waited += 3;
       if (waited % 15 === 0) step(`waiting for the session… ${waited}s`);
       if (await captchaChallenge(page)) {
-        return { ok: false, reason: 'a CAPTCHA appeared after the password — it needs you to sign in by hand' };
+        return { ok: false, captcha: true, passwordSubmitted: true, reason: 'a CAPTCHA appeared after the password — it needs you to sign in by hand' };
       }
-      if ((await isLive()) === true) return { ok: true, reason: 'signed in' };
+      if ((await isLive()) === true) return { ok: true, passwordSubmitted: true, reason: 'signed in' };
     }
     // No session and no CAPTCHA. Ask RC why before guessing.
-    return { ok: false, reason: await withBanner('sign-in did not complete') };
+    return { ok: false, passwordSubmitted: true, reason: await withBanner('sign-in did not complete') };
   } catch (err) {
     return { ok: false, reason: `sign-in error: ${String(err.message).slice(0, 120)}` };
   }

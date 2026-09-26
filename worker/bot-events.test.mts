@@ -41,6 +41,10 @@ test('the kind is allow-listed — anything else stores as NULL, never as what t
   // unanswerable ten hours after a real job gave up on a site that was still open.
   // src/lib/autocart-cart-retry.test.mts carries that account.
   //
+  // `rc-signin` on 2026-09-26: whether a sign-in met a CAPTCHA, typed the password or was
+  // answered from the Okta `idx` cookie is what the evening-sign-in work turns on, and it lived
+  // only in the box console. scripts/auto-cart-bot/signin-telemetry.mjs defines the words.
+  //
   // AND NOTE WHAT THIS COSTS, BECAUSE IT IS NOT OBVIOUS FROM HERE: the kind list lives in
   // `src/lib/bot-events.ts`, which is NOT in `worker-deploy.yml`'s `paths:` — but this guard
   // lives under `worker/**`, which is the FIRST entry in that list. So adding a kind fires a
@@ -48,7 +52,7 @@ test('the kind is allow-listed — anything else stores as NULL, never as what t
   // the trap `docs/LANES.md` records twice; it is stated here so the next person reads it
   // before writing "no worker deploy" in a PR body.
   assert.deepEqual([...BOT_EVENT_KINDS].sort(),
-    ['cart-burst', 'mem-dump', 'ramp-scan', 'recgov-cart', 'request-counts', 'tab-close']);
+    ['cart-burst', 'mem-dump', 'ramp-scan', 'rc-signin', 'recgov-cart', 'request-counts', 'tab-close']);
 });
 
 test('text loses every control character except newline and tab, and is capped', () => {
